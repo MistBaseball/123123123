@@ -31,7 +31,7 @@ import {
   CalendarDays,
   Sparkles,
 } from "lucide-react";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { TrainingMinigame } from "@/components/game/Minigames";
 import {
   Dialog,
   DialogContent,
@@ -57,6 +57,9 @@ import {
   SWING_SWEET,
   BLESSINGS,
   DAY_ACTIONS,
+  STAT_BASE,
+  STAT_CAP,
+  STAT_POINTS,
   batReach,
   clamp,
   pitchMovement,
@@ -196,10 +199,10 @@ function Scoreboard({ s }: { s: GameState }) {
   return (
     <div className="scoreboard">
       <div className="board-match">
-        <span className="live-label">{s.mode === "match" ? "EXHIBITION" : "PRACTICE"}</span>
+        <span className="live-label">{s.mode === "match" ? "SEASON" : "PRACTICE"}</span>
         <span>
           {s.mode === "match"
-            ? `${s.maxInnings}이닝 연습 경기`
+            ? `${s.maxInnings}이닝 시즌 경기`
             : s.mode === "bullpen"
               ? "불펜 피칭"
               : "배팅 케이지"}
@@ -558,11 +561,11 @@ function CareerView({ engine, s }: { engine: BaseballEngine; s: GameState }) {
   const c = s.career;
   const [name, setName] = useState(c.name);
   return (
-    <section className="career-view">
-      <div className="section-intro">
+    <section className="career-view embedded">
+      <div className="section-intro shop-intro">
         <div>
           <span className="eyebrow">ROAD TO THE PROS</span>
-          <h1>내 이름을, 다음 라인업에.</h1>
+          <h2>나의 선수 · 진로</h2>
           <p>고교 마지막 시즌. 하루의 선택이 내일의 선수를 만듭니다.</p>
         </div>
         <span className="season-stamp">
@@ -716,7 +719,7 @@ const trainings = [
     icon: Target,
     name: "불펜 피칭",
     desc: "모서리를 찌르는 한 구",
-    gain: "제구 +1",
+    gain: "제구 +0~2",
     cost: 18,
   },
   {
@@ -724,7 +727,7 @@ const trainings = [
     icon: Dumbbell,
     name: "하체·코어",
     desc: "강한 하체에서 나오는 구속",
-    gain: "구속 +1",
+    gain: "구속 +0~2",
     cost: 22,
   },
   {
@@ -732,7 +735,7 @@ const trainings = [
     icon: Wind,
     name: "변화구 그립",
     desc: "회전으로 만드는 다른 궤적",
-    gain: "구위 +1",
+    gain: "구위 +0~2",
     cost: 18,
   },
   {
@@ -740,7 +743,7 @@ const trainings = [
     icon: Activity,
     name: "러닝",
     desc: "마지막 이닝까지 흔들림 없이",
-    gain: "체력 능력 +1",
+    gain: "체력 능력 +0~2",
     cost: 16,
   },
   {
@@ -748,16 +751,23 @@ const trainings = [
     icon: Crosshair,
     name: "타격 훈련",
     desc: "공을 끝까지 보고 정확하게",
-    gain: "컨택 +1",
+    gain: "컨택 +0~2",
     cost: 20,
   },
-  { id: "power", icon: Zap, name: "장타 훈련", desc: "배트에 싣는 힘", gain: "파워 +1", cost: 22 },
+  {
+    id: "power",
+    icon: Zap,
+    name: "장타 훈련",
+    desc: "배트에 싣는 힘",
+    gain: "파워 +0~2",
+    cost: 22,
+  },
   {
     id: "study",
     icon: BookOpen,
     name: "수업·영상 분석",
     desc: "책상에서도 이어지는 야구",
-    gain: "컨디션 +4",
+    gain: "컨디션 +2~6",
     cost: 6,
   },
   {
@@ -769,56 +779,74 @@ const trainings = [
     cost: -38,
   },
 ];
-function TrainingView({
+function LifeView({
   engine,
   s,
   onPlay,
+  onPractice,
 }: {
   engine: BaseballEngine;
   s: GameState;
   onPlay: () => void;
+  onPractice: (mode: Mode) => void;
 }) {
   const c = s.career,
-    out = c.actions <= 0;
+    out = c.actions <= 0,
+    live = engine.matchActive;
+  const [game, setGame] = useState<string | null>(null);
+  const step = live || out ? 1 : 0;
+  const headline = live
+    ? "경기가 한창입니다. 그라운드로 돌아가세요."
+    : out
+      ? "오전 훈련 끝. 이제 경기장으로 향할 시간."
+      : c.actions === DAY_ACTIONS
+        ? "새로운 아침. 오늘은 무엇을 쌓을까?"
+        : "땀이 식기 전에, 하나 더?";
   return (
-    <section className="training-view">
+    <section className="training-view life-view">
       <div className="section-intro">
         <div>
-          <span className="eyebrow">A LITTLE BETTER, EVERY DAY</span>
-          <h1>오늘은 무엇을 쌓을까요?</h1>
+          <span className="eyebrow">고교 3학년 · 마지막 시즌 · {c.name}</span>
+          <h1>{headline}</h1>
           <p>
-            {engine.matchActive
-              ? "경기 진행 중입니다. 경기를 마치거나 불펜으로 전환한 뒤 훈련하세요."
-              : `하루 행동력 ${DAY_ACTIONS}. 훈련·수업·휴식에 1씩 쓰고, 경기를 치르면 다음 날이 됩니다.`}
+            아침에는 행동력 {DAY_ACTIONS}으로 훈련·수업·휴식을 하고, 오후에는 시즌 경기를 치릅니다.
+            경기가 끝나면 밤이 지나고 다음 날이 시작됩니다.
           </p>
         </div>
         <span className="season-stamp">
-          시즌 훈련 <b>DAY {String(c.day).padStart(2, "0")}</b>
+          시즌 <b>DAY {String(c.day).padStart(2, "0")}</b>
         </span>
       </div>
-      <div className="day-plan" aria-label={`DAY ${c.day} 일정`}>
-        <CalendarDays size={20} />
-        <strong>DAY {c.day}</strong>
-        <ol>
-          <li className={out ? "done" : "now"}>
-            <b>1</b> 훈련 · 행동력
-            <span className="action-pips" aria-label={`행동력 ${c.actions}/${DAY_ACTIONS}`}>
-              {Array.from({ length: DAY_ACTIONS }, (_, i) => (
-                <i key={i} className={i < c.actions ? "on" : ""} />
-              ))}
-            </span>
-            {c.actions}/{DAY_ACTIONS}
-          </li>
-          <li className={out ? "now" : ""}>
-            <b>2</b> 시즌 경기 · XP 획득
-          </li>
-          <li>
-            <b>3</b> 구종 상점에서 XP 사용
-          </li>
-        </ol>
-        <button className="primary-button" onClick={onPlay}>
-          <Play size={16} />
-          {engine.matchActive ? "경기로 돌아가기" : "오늘의 경기 시작"}
+      <div className="life-timeline" aria-label={`DAY ${c.day} 하루 흐름`}>
+        <div className={`life-step ${step === 0 ? "now" : "done"}`}>
+          <span>아침 · 훈련</span>
+          <strong>
+            행동력 {c.actions}/{DAY_ACTIONS}
+          </strong>
+          <span className="action-pips" aria-hidden="true">
+            {Array.from({ length: DAY_ACTIONS }, (_, i) => (
+              <i key={i} className={i < c.actions ? "on" : ""} />
+            ))}
+          </span>
+        </div>
+        <ChevronRight className="life-arrow" size={18} />
+        <div className={`life-step ${step === 1 ? "now" : ""}`}>
+          <span>오후 · 시즌 경기</span>
+          <strong>{live ? "경기 중" : "하늘고 vs 한빛고"}</strong>
+          <small>삼진·안타·승리로 XP</small>
+        </div>
+        <ChevronRight className="life-arrow" size={18} />
+        <div className="life-step">
+          <span>밤 · 휴식</span>
+          <strong>다음 날로</strong>
+          <small>체력 +25 · 행동력 {DAY_ACTIONS}</small>
+        </div>
+        <button className="primary-button life-cta" onClick={onPlay}>
+          <span>
+            <Play size={16} />
+            {live ? "경기로 돌아가기" : "경기장으로 향하기"}
+          </span>
+          {!live && !out && <small>남은 행동력은 사라집니다</small>}
         </button>
       </div>
       <div className="condition-bar">
@@ -854,8 +882,12 @@ function TrainingView({
           <button
             className={`training-card ${t.id === "rest" ? "rest-card" : ""}`}
             key={t.id}
-            disabled={c.energy < t.cost || engine.matchActive || out}
+            disabled={c.energy < t.cost || live || out}
             onClick={() => {
+              if (t.id !== "rest") {
+                setGame(t.id);
+                return;
+              }
               const r = engine.train(t.id);
               r.ok ? toast.success(r.message) : toast.error(r.message);
             }}
@@ -873,6 +905,27 @@ function TrainingView({
             </div>
           </button>
         ))}
+      </div>
+      <TrainingMinigame
+        kind={game}
+        name={trainings.find((t) => t.id === game)?.name ?? ""}
+        onCancel={() => setGame(null)}
+        onFinish={(q) => {
+          const r = engine.train(game!, q);
+          setGame(null);
+          r.ok ? toast.success(r.message) : toast.error(r.message);
+        }}
+      />
+      <div className="practice-row">
+        <span>
+          <Target size={16} /> 자율 연습 <small>행동력·XP 없이 조작 연습</small>
+        </span>
+        <button className="subtle-button" onClick={() => onPractice("bullpen")}>
+          불펜 피칭
+        </button>
+        <button className="subtle-button" onClick={() => onPractice("batting")}>
+          배팅 케이지
+        </button>
       </div>
       <div className="section-intro shop-intro">
         <div>
@@ -932,16 +985,164 @@ function TrainingView({
       <div className="training-note">
         <BookOpen size={18} />
         <p>
-          훈련·수업·휴식은 행동력을 1씩 씁니다. 훈련한 능력은 다음 투구와 타격부터 반영됩니다. 낮은
-          체력은 구속과 제구에, 낮은 컨디션은 집중력에 영향을 줍니다. 컨택이 오르면 타격 때 보이는
-          공의 도착 범위가 작아집니다. 경기를 마치면 밤사이 체력이 25 회복되고 행동력이 다시{" "}
-          {DAY_ACTIONS}이 됩니다.
+          훈련·수업·휴식은 행동력을 1씩 씁니다. 훈련은 미니게임 결과(아쉬움·좋음·완벽)에 따라
+          능력치가 +0~+2 오르고, 다음 투구와 타격부터 반영됩니다. 낮은 체력은 구속과 제구에, 낮은
+          컨디션은 집중력에 영향을 줍니다. 컨택이 오르면 타격 때 보이는 공의 도착 범위가 작아집니다.
+          경기를 마치면 밤사이 체력이 25 회복되고 행동력이 다시 {DAY_ACTIONS}이 됩니다.
         </p>
       </div>
+      <CareerView engine={engine} s={s} />
     </section>
   );
 }
 
+const PRESETS: { name: string; desc: string; add: Career["stats"] }[] = [
+  {
+    name: "정통파 에이스",
+    desc: "빠른 공과 체력으로 윽박지르는 투수",
+    add: { velocity: 30, control: 15, movement: 15, stamina: 20, contact: 10, power: 10 },
+  },
+  {
+    name: "기교파",
+    desc: "제구와 변화로 타자를 요리하는 투수",
+    add: { velocity: 10, control: 30, movement: 30, stamina: 15, contact: 10, power: 5 },
+  },
+  {
+    name: "투타 겸업",
+    desc: "마운드와 타석 모두에서 빛나는 선수",
+    add: { velocity: 18, control: 16, movement: 16, stamina: 10, contact: 20, power: 20 },
+  },
+];
+const statKeys = Object.keys(statNames) as (keyof Career["stats"])[];
+/** First screen: choose a name and spread the starting stat points. */
+function CreationDialog({ engine, s }: { engine: BaseballEngine; s: GameState }) {
+  const [name, setName] = useState("");
+  const [stats, setStats] = useState<Career["stats"]>(() => {
+    const p = PRESETS[0].add;
+    return Object.fromEntries(statKeys.map((k) => [k, STAT_BASE + p[k]])) as Career["stats"];
+  });
+  const left = STAT_POINTS - statKeys.reduce((a, k) => a + stats[k] - STAT_BASE, 0);
+  const bump = (k: keyof Career["stats"], d: number) =>
+    setStats((st) => {
+      const v = st[k] + d;
+      if (v < STAT_BASE || v > STAT_CAP || (d > 0 && left < d)) return st;
+      return { ...st, [k]: v };
+    });
+  return (
+    <Dialog open={!s.career.created}>
+      <DialogContent className="creation-dialog" showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>새 선수 등록</DialogTitle>
+          <DialogDescription>
+            하늘고 3학년, 마지막 시즌을 앞둔 투수. 이름을 정하고 능력치 {STAT_POINTS}포인트를 나눠
+            주세요. 각 능력은 {STAT_BASE}에서 시작해 최대 {STAT_CAP}까지 올릴 수 있습니다.
+          </DialogDescription>
+        </DialogHeader>
+        <label className="creation-name">
+          선수 이름
+          <input
+            maxLength={12}
+            value={name}
+            placeholder="예: 김하늘"
+            onChange={(e) => setName(e.target.value)}
+          />
+        </label>
+        <div className="creation-presets">
+          {PRESETS.map((p) => (
+            <button
+              key={p.name}
+              className="subtle-button"
+              onClick={() =>
+                setStats(
+                  Object.fromEntries(
+                    statKeys.map((k) => [k, STAT_BASE + p.add[k]]),
+                  ) as Career["stats"],
+                )
+              }
+            >
+              <strong>{p.name}</strong>
+              <small>{p.desc}</small>
+            </button>
+          ))}
+        </div>
+        <div className="creation-stats">
+          {statKeys.map((k) => (
+            <div key={k} className="creation-stat">
+              <span>{statNames[k]}</span>
+              <button aria-label={`${statNames[k]} 내리기`} onClick={() => bump(k, -5)}>
+                −
+              </button>
+              <b>{stats[k]}</b>
+              <button aria-label={`${statNames[k]} 올리기`} onClick={() => bump(k, 5)}>
+                +
+              </button>
+              <Progress value={((stats[k] - STAT_BASE) / (STAT_CAP - STAT_BASE)) * 100} />
+            </div>
+          ))}
+        </div>
+        <p className={`creation-left ${left === 0 ? "done" : ""}`}>
+          남은 포인트 <b>{left}</b>
+          {left > 0 ? " · 모두 분배해야 등록할 수 있습니다" : " · 준비 완료"}
+        </p>
+        <button
+          className="primary-button"
+          disabled={left !== 0 || !name.trim()}
+          onClick={() => {
+            const r = engine.createPlayer(name, stats);
+            r.ok ? toast.success(`${name.trim()} 선수, 하늘고 입단!`) : toast.error(r.message);
+          }}
+        >
+          이 선수로 시즌 시작 <ChevronRight size={16} />
+        </button>
+      </DialogContent>
+    </Dialog>
+  );
+}
+/** End of the day: a short recap before the next morning. */
+function NightDialog({
+  s,
+  recap,
+  onClose,
+}: {
+  s: GameState;
+  recap: { day: number; message: string; score: string; xp: number } | null;
+  onClose: () => void;
+}) {
+  return (
+    <Dialog open={!!recap} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="night-dialog">
+        <DialogHeader>
+          <DialogTitle>
+            <Moon size={18} /> DAY {recap?.day}, 하루가 저물었다
+          </DialogTitle>
+          <DialogDescription>
+            기숙사 불이 꺼지고, 오늘의 경기가 머릿속에서 다시 재생된다.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="night-recap">
+          <div>
+            <span>오늘의 경기</span>
+            <strong>{recap?.message}</strong>
+            <small>{recap?.score}</small>
+          </div>
+          <div>
+            <span>획득 경험치</span>
+            <strong>+{recap?.xp} XP</strong>
+            <small>보유 {s.career.xp} XP</small>
+          </div>
+          <div>
+            <span>밤사이 회복</span>
+            <strong>체력 {Math.round(s.career.energy)}</strong>
+            <small>행동력 {DAY_ACTIONS} 충전</small>
+          </div>
+        </div>
+        <button className="primary-button" onClick={onClose}>
+          DAY {s.career.day} 아침 맞이하기 <ChevronRight size={16} />
+        </button>
+      </DialogContent>
+    </Dialog>
+  );
+}
 /** Starting roulette: "a blessing from the baseball gods" grants one random pitch. */
 function BlessingDialog({ engine, s }: { engine: BaseballEngine; s: GameState }) {
   const [phase, setPhase] = useState<"idle" | "spinning" | "done">("idle");
@@ -949,7 +1150,7 @@ function BlessingDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
   const [offset, setOffset] = useState(0);
   const won = PITCHES.find((p) => p.id === s.career.blessing);
   const tier = BLESSINGS.find((b) => b.id === s.career.blessing)?.tier;
-  const open = s.career.blessing === "" || phase !== "idle";
+  const open = (s.career.created && s.career.blessing === "") || phase !== "idle";
   const CARD = 128;
   const spin = () => {
     const id = engine.receiveBlessing();
@@ -1050,7 +1251,13 @@ function BlessingDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
 export default function DiamondGame() {
   const [engine] = useState(() => new BaseballEngine());
   const s = useSyncExternalStore(engine.subscribe, engine.getSnapshot, engine.getSnapshot);
-  const [view, setView] = useState("training"),
+  const [view, setView] = useState<"life" | "game">("life"),
+    [recap, setRecap] = useState<{
+      day: number;
+      message: string;
+      score: string;
+      xp: number;
+    } | null>(null),
     [help, setHelp] = useState(false),
     [settings, setSettings] = useState(false),
     [manualPause, setManualPause] = useState(false),
@@ -1267,7 +1474,9 @@ export default function DiamondGame() {
   return (
     <main className="diamond-app">
       <Toaster theme="dark" position="bottom-center" />
+      <CreationDialog engine={engine} s={s} />
       <BlessingDialog engine={engine} s={s} />
+      <NightDialog s={s} recap={recap} onClose={() => setRecap(null)} />
       <header className="app-header">
         <a
           className="brand"
@@ -1275,7 +1484,7 @@ export default function DiamondGame() {
           aria-label="다이아몬드 로드"
           onClick={(e) => {
             e.preventDefault();
-            setView("game");
+            setView("life");
           }}
         >
           <span className="brand-mark">D</span>
@@ -1284,21 +1493,23 @@ export default function DiamondGame() {
             <small>고교 에이스</small>
           </span>
         </a>
-        <Tabs value={view} onValueChange={setView} className="main-nav">
-          <TabsList variant="line">
-            <TabsTrigger value="game">
-              <Flag />
-              플레이
-            </TabsTrigger>
-            <TabsTrigger value="training">
-              <Dumbbell />
-              훈련
-            </TabsTrigger>
-            <TabsTrigger value="career">
-              <Trophy />내 선수
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <button
+          className="life-status"
+          onClick={() => setView("life")}
+          aria-label="오늘 하루 일정 보기"
+        >
+          <CalendarDays size={16} />
+          <b>DAY {s.career.day}</b>
+          <span>
+            {view === "game" && s.mode !== "match"
+              ? "자율 연습 중"
+              : engine.matchActive || (view === "game" && s.mode === "match")
+                ? "오후 · 시즌 경기"
+                : s.career.actions > 0
+                  ? `아침 · 행동력 ${s.career.actions}/${DAY_ACTIONS}`
+                  : "오후 · 경기 전"}
+          </span>
+        </button>
         <div className="header-actions">
           <span className="prototype-tag">
             PLAYABLE PROTOTYPE <b>04</b>
@@ -1314,18 +1525,14 @@ export default function DiamondGame() {
       <div className="game-view" hidden={view !== "game"}>
         <div className="mode-row">
           <div className="mode-buttons">
-            {modes.map((m) => (
-              <button
-                key={m.id}
-                className={s.mode === m.id ? "active" : ""}
-                onClick={() => {
-                  if (s.mode !== m.id) newGame(m.id);
-                }}
-              >
-                {m.label}
-                <span>{m.sub}</span>
-              </button>
-            ))}
+            <button className="back-to-day" onClick={() => setView("life")}>
+              ← 하루 일정
+              <span>{s.mode === "match" ? "경기는 일시 정지" : "연습 끝내기"}</span>
+            </button>
+            <button className="active">
+              {modes.find((m) => m.id === s.mode)!.label}
+              <span>{modes.find((m) => m.id === s.mode)!.sub}</span>
+            </button>
           </div>
           <span className="park-label">
             <Flag size={14} />
@@ -1432,8 +1639,6 @@ export default function DiamondGame() {
                   {!manualPause && s.phase === "finished" && (
                     <p>
                       경험치 <b>+{s.lastXpGain} XP</b> 획득 · 보유 {s.career.xp} XP
-                      <br />
-                      DAY {s.career.day} 시작: 훈련 1회 → 다음 경기
                     </p>
                   )}
                   <button
@@ -1441,7 +1646,16 @@ export default function DiamondGame() {
                     onClick={() => {
                       if (manualPause) setManualPause(false);
                       else if (s.phase === "between") engine.continueInning();
-                      else newGame("match");
+                      else {
+                        setRecap({
+                          day: s.career.day - 1,
+                          message: s.message,
+                          score: `하늘고 ${s.score[1]} : ${s.score[0]} 한빛고`,
+                          xp: s.lastXpGain,
+                        });
+                        engine.start("match");
+                        setView("life");
+                      }
                     }}
                   >
                     <Play size={17} />
@@ -1451,13 +1665,8 @@ export default function DiamondGame() {
                         ? s.half === "top"
                           ? "타격 시작"
                           : "다음 이닝 투구"
-                        : "새 경기"}
+                        : "하루 마무리하기"}
                   </button>
-                  {s.phase === "finished" && !manualPause && (
-                    <button className="subtle-button" onClick={() => setView("training")}>
-                      훈련 · 구종 상점으로
-                    </button>
-                  )}
                 </div>
               )}
             </div>
@@ -1714,8 +1923,8 @@ export default function DiamondGame() {
           </button>
         </div>
       </div>
-      {view === "training" && (
-        <TrainingView
+      {view === "life" && (
+        <LifeView
           engine={engine}
           s={s}
           onPlay={() => {
@@ -1723,9 +1932,13 @@ export default function DiamondGame() {
             if (!engine.matchActive && (s.mode !== "match" || s.phase === "finished"))
               newGame("match");
           }}
+          onPractice={(mode) => {
+            if (engine.matchActive) setPending(mode);
+            else engine.start(mode, innings);
+            setView("game");
+          }}
         />
       )}
-      {view === "career" && <CareerView engine={engine} s={s} />}
       <footer className="app-footer">
         <span>
           DIAMOND ROAD <b>·</b> WEB PLAYTEST 04
@@ -1757,10 +1970,11 @@ export default function DiamondGame() {
               자동 수비를 끄면 WASD로 움직이고 1–4로 송구 베이스를 정합니다.
             </p>
             <p>
-              <b>04 하루 일정</b> 처음 시작하면 야구의 신이 구종 하나를 룰렛으로 내려 줍니다. 하루
-              행동력은 5. 훈련·수업·휴식에 1씩 쓰고 시즌 경기를 치르면 다음 날이 됩니다. 경기에서
-              삼진·아웃·안타·득점·승리로 경험치(XP)를 모아 훈련 탭의 구종 상점에서 새 구종을 삽니다.
-              3경기를 마치면 시즌 진로를 확인할 수 있습니다.
+              <b>04 하루 일정</b> 처음에는 이름과 능력치를 정하고, 야구의 신이 구종 하나를 룰렛으로
+              내려 줍니다. 하루는 아침 → 오후 → 밤으로 흐릅니다. 아침에는 행동력 5로 훈련
+              미니게임·수업 퀴즈·휴식을 하고(결과에 따라 +0~+2), 오후에는 시즌 경기를 치릅니다.
+              경기가 끝나면 하루를 마무리하고 다음 날 아침이 됩니다. 경기 XP로 구종 상점에서 새
+              구종을 삽니다.
             </p>
           </div>
           <details className="prototype-notes">
@@ -1867,7 +2081,7 @@ export default function DiamondGame() {
               ) {
                 engine.resetCareer();
                 setSettings(false);
-                setView("training");
+                setView("life");
               }
             }}
           >

@@ -103,6 +103,19 @@ export const batReach = (contact: number, style: "contact" | "power" | "bunt") =
   (0.12 + clamp(contact, 0, 99) * 0.001) * (style === "power" ? 0.75 : style === "bunt" ? 1.3 : 1);
 /** Actions (training, rest, study) available each day before the day's match. */
 export const DAY_ACTIONS = 5;
+export const STAT_NAMES: Record<keyof Career["stats"], string> = {
+  velocity: "구속",
+  control: "제구",
+  movement: "구위",
+  stamina: "체력",
+  contact: "컨택",
+  power: "파워",
+};
+const statLabel = (k: keyof Career["stats"]) => STAT_NAMES[k];
+/** Player creation: every stat starts at STAT_BASE and STAT_POINTS are spread freely. */
+export const STAT_BASE = 45;
+export const STAT_POINTS = 100;
+export const STAT_CAP = 80;
 /** Starting-pitch roulette: rarer pitches have smaller weights. */
 export const BLESSINGS: { id: PitchId; weight: number; tier: string }[] = [
   { id: "slider", weight: 30, tier: "축복" },
@@ -259,6 +272,8 @@ export type Career = {
   actions: number;
   /** Pitch granted by the starting roulette ("" = not received yet). */
   blessing: string;
+  /** Name and starting stats were chosen on the creation screen. */
+  created: boolean;
 };
 export const newCareer = (): Career => ({
   version: 1,
@@ -280,6 +295,7 @@ export const newCareer = (): Career => ({
   pitches: ["fastball"],
   actions: DAY_ACTIONS,
   blessing: "",
+  created: false,
 });
 export type Flight = {
   start: Vec;
@@ -548,6 +564,8 @@ export class BaseballEngine {
         clean.blessing =
           typeof c.blessing === "string" ? c.blessing : Array.isArray(c.pitches) ? "" : "legacy";
         delete (clean as Partial<{ trainedDay: number }>).trainedDay;
+        // Players saved before the creation screen existed keep their name and stats.
+        clean.created = typeof c.created === "boolean" ? c.created : true;
         this.state.career = clean;
         this.state.energy = clean.energy;
       }
@@ -1001,6 +1019,20 @@ export class BaseballEngine {
       error: false,
       sacrifice: false,
     };
+    if (ground) {
+      // Grounders are chased by whoever can cut the rolling ball off first.
+      const l = s.live;
+      let soonest = Infinity;
+      DEFENSE.forEach((p, i) => {
+        if (i === 1) return;
+        const t = this.interceptTime(l, p);
+        if (t < soonest) {
+          soonest = t;
+          l.fielder = i;
+        }
+      });
+      l.fielderPos = l.defenders[l.fielder];
+    }
     s.phase = "inplay";
     // In-play text only describes the ball; the verdict comes when the fielder acts.
     s.message = hr ? "담장을 향해!" : ground ? "땅볼 타구" : "뜬공 타구";
@@ -1034,7 +1066,20 @@ export class BaseballEngine {
     this.emit();
     return true;
   }
-  private liveBall(l: LivePlay, time: number) {
+  private liveBall(l: LivePlay, time: number): Vec {
+    if (time > l.flightTime && l.resultBases < 4) {
+      // After landing the ball keeps rolling and slows down on the grass.
+      const len = Math.hypot(l.land.x - l.start.x, l.land.z - l.start.z) || 1,
+        dirX = (l.land.x - l.start.x) / len,
+        dirZ = (l.land.z - l.start.z) / len,
+        v0 = (len / l.flightTime) * (l.ground ? 1.15 : 0.3),
+        decel = l.ground ? 5 : 6,
+        tau = Math.min(time - l.flightTime, v0 / decel),
+        roll = v0 * tau - 0.5 * decel * tau * tau,
+        maxRoll = Math.max(0, 104 - Math.hypot(l.land.x, l.land.z));
+      const d = Math.min(roll, maxRoll);
+      return V(l.land.x + dirX * d, 0.12, l.land.z + dirZ * d);
+    }
     const u = clamp(time / l.flightTime, 0, 1);
     return V(
       lerp(l.start.x, l.land.x, u),
@@ -1043,6 +1088,25 @@ export class BaseballEngine {
         : lerp(l.start.y, l.land.y, u) + Math.sin(u * Math.PI) * l.height,
       lerp(l.start.z, l.land.z, u),
     );
+  }
+  private interceptTime(l: LivePlay, from: Vec) {
+    for (let t = 0.05; t <= 12; t += 0.05) {
+      const p = this.liveBall(l, t);
+      if (Math.hypot(p.x - from.x, p.z - from.z) / FIELDER_SPEED + FIELDER_REACTION <= t) return t;
+    }
+    return Infinity;
+  }
+  /** Earliest point on the ball's ground path the chasing fielder can reach in time. */
+  private interceptPoint(l: LivePlay) {
+    const wait = Math.max(0, FIELDER_REACTION - l.elapsed);
+    for (let dt = 0.05; dt <= 12; dt += 0.05) {
+      const t = l.elapsed + dt;
+      if (t < Math.min(l.flightTime, l.elapsed + 0.05) && !l.ground) continue;
+      const p = this.liveBall(l, t);
+      if (Math.hypot(p.x - l.fielderPos.x, p.z - l.fielderPos.z) / FIELDER_SPEED + wait <= dt)
+        return p;
+    }
+    return this.liveBall(l, l.elapsed + 12);
   }
   private moveFielder(p: Vec, target: Vec, dt: number, speed = 8.2) {
     const d = Math.hypot(target.x - p.x, target.z - p.z),
@@ -1073,22 +1137,36 @@ export class BaseballEngine {
       null
     );
   }
+  /** Throw flight time; it never lands before the covering fielder reaches the bag. */
+  private throwTime(l: LivePlay, base: number) {
+    const bag = BASES[base - 1],
+      cover = l.defenders[this.receiver(base, l.fielder)],
+      eta = Math.max(0, Math.hypot(cover.x - bag.x, cover.z - bag.z) - 0.9) / 8.2;
+    return Math.max(0.22, distance(l.fielderPos, bag) / 29, eta + 0.02);
+  }
   private chooseThrow(l: LivePlay, forceOnly = false) {
     const options: { base: number; priority: number }[] = [];
     for (let base = 1; base <= 4; base++) {
       const forced = this.forcedRunner(l, base),
         r = forced ?? (!forceOnly ? this.candidateRunner(l, base) : null);
       if (!r) continue;
-      const travel = Math.max(0.22, distance(l.fielderPos, BASES[base - 1]) / 29),
+      const travel = this.throwTime(l, base),
         arrival = (base - r.progress) / r.pace;
       if (travel + 0.08 < arrival) options.push({ base, priority: (forced ? 10 : 0) + base });
     }
-    return options.sort((a, b) => b.priority - a.priority)[0]?.base ?? 0;
+    const best = options.sort((a, b) => b.priority - a.priority)[0]?.base;
+    if (best || forceOnly) return best ?? 0;
+    // No sure out: still throw ahead of the lead runner who is still running.
+    const running = l.runners
+      .filter((r) => !r.out && r.progress < r.target - 1e-6)
+      .sort((a, b) => b.progress - a.progress)[0];
+    return running ? Math.min(4, Math.floor(running.progress + 1e-9) + 1) : 0;
   }
   private beginThrow(l: LivePlay, base: number) {
     if (!base) {
       l.state = "보유";
       l.throwBase = 0;
+      this.state.detail = "주자가 모두 베이스에 도착 · 공을 내야로 돌려보냅니다";
       return;
     }
     const r = this.candidateRunner(l, base);
@@ -1097,7 +1175,7 @@ export class BaseballEngine {
       base,
       receiver: this.receiver(base, l.fielder),
       startedAt: l.elapsed,
-      duration: Math.max(0.22, distance(l.fielderPos, BASES[base - 1]) / 29),
+      duration: this.throwTime(l, base),
       receivedAt: null,
       runnerId: r?.id ?? null,
     };
@@ -1192,7 +1270,8 @@ export class BaseballEngine {
     }
     if (l.fieldedAt === null) {
       const oldPos = { ...l.fielderPos },
-        target = !l.ground && !l.bounced ? l.catchPoint : l.land;
+        // Before landing: run to the catch point. After it lands: cut off the rolling ball.
+        target = !l.ground && !l.bounced ? l.catchPoint : this.interceptPoint(l);
       if (!s.autoField && !this.batting) {
         const dx = (this.keys.has("d") ? 1 : 0) - (this.keys.has("a") ? 1 : 0),
           dz = (this.keys.has("w") ? 1 : 0) - (this.keys.has("s") ? 1 : 0),
@@ -1253,7 +1332,7 @@ export class BaseballEngine {
       ) {
         l.fieldedAt = l.elapsed;
         l.state = "포구";
-        s.detail = "땅볼 포구 · 송구할 주자 확인";
+        s.detail = "공을 잡았습니다 · 곧바로 송구";
       }
     }
     if (l.fieldedAt !== null) {
@@ -1319,7 +1398,7 @@ export class BaseballEngine {
         (l.throw?.receivedAt != null ||
           l.state === "보유" ||
           // Never announce the result while the ball is still loose (safety timeout only).
-          (l.fieldedAt === null && l.elapsed > l.flightTime + 8)))
+          (l.fieldedAt === null && l.elapsed > l.flightTime + 15)))
     )
       this.resolvePlay();
   }
@@ -1537,7 +1616,8 @@ export class BaseballEngine {
       (s.pitchCount[0] + s.pitchCount[1] > 0 || s.order[0] + s.order[1] > 0 || s.phase === "windup")
     );
   }
-  train(kind: string) {
+  /** quality 0–1 comes from the training minigame (0.6 = an ordinary session). */
+  train(kind: string, quality = 0.6) {
     if (this.matchActive)
       return {
         ok: false,
@@ -1568,6 +1648,10 @@ export class BaseballEngine {
     if (c.energy < o.cost) return { ok: false, message: "체력이 부족합니다. 먼저 휴식하세요." };
     if (o.stat && c.stats[o.stat] >= 99)
       return { ok: false, message: "이미 최고 능력치입니다. 다른 훈련을 선택하세요." };
+    const q = clamp(Number.isFinite(quality) ? quality : 0, 0, 1),
+      grade = q >= 0.85 ? "완벽" : q >= 0.4 ? "좋음" : "아쉬움";
+    if (o.stat) o.gain = q >= 0.85 ? 2 : q >= 0.4 ? 1 : 0;
+    else if (kind === "study") o.gain = Math.round(2 + q * 4);
     c.energy = clamp(c.energy - o.cost, 0, 100);
     c.actions--;
     c.xp += kind === "rest" ? 2 : 5;
@@ -1575,16 +1659,18 @@ export class BaseballEngine {
     else c.form = clamp(c.form + o.gain, 0, 100);
     if (o.stat) c.form = clamp(c.form - 2, 0, 100);
     c.scout = clamp(c.scout + (o.stat ? 0.5 : 0), 0, 100);
-    c.history = [`${c.day}일차 · ${o.name}${o.stat ? ` +${o.gain}` : ""}`, ...c.history].slice(
-      0,
-      12,
-    );
+    c.history = [
+      `${c.day}일차 · ${o.name}${o.stat ? ` (${grade}) +${o.gain}` : ""}`,
+      ...c.history,
+    ].slice(0, 12);
     s.energy = c.energy;
     this.persist();
     this.emit();
     return {
       ok: true,
-      message: `${o.name} 완료${o.stat ? ` · 능력치 +${o.gain}` : ""} · 남은 행동력 ${c.actions}/${DAY_ACTIONS}`,
+      grade,
+      gain: o.gain,
+      message: `${o.name} ${o.stat ? `${grade} · ${statLabel(o.stat)} +${o.gain}` : "완료"} · 남은 행동력 ${c.actions}/${DAY_ACTIONS}`,
     };
   }
   /** Starting roulette: grants one random pitch once per career. Returns the pitch or null. */
@@ -1605,6 +1691,26 @@ export class BaseballEngine {
     this.persist();
     this.emit();
     return pick.id;
+  }
+  /** Creation screen: validates the point spread, then starts the career. */
+  createPlayer(name: string, stats: Career["stats"]) {
+    const keys = Object.keys(newCareer().stats) as (keyof Career["stats"])[],
+      spent = keys.reduce((a, k) => a + (stats[k] - STAT_BASE), 0);
+    if (
+      !keys.every(
+        (k) => Number.isInteger(stats[k]) && stats[k] >= STAT_BASE && stats[k] <= STAT_CAP,
+      ) ||
+      spent > STAT_POINTS
+    )
+      return { ok: false, message: "능력치 분배가 올바르지 않습니다." };
+    const c = this.state.career;
+    c.name = name.trim().slice(0, 12) || "나의 선수";
+    c.stats = { ...stats };
+    c.created = true;
+    c.history = [`${c.name}, 고교 3학년 마지막 시즌을 시작하다.`];
+    this.persist();
+    this.emit();
+    return { ok: true, message: "선수 등록 완료" };
   }
   resetCareer() {
     this.state.career = newCareer();

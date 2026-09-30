@@ -650,4 +650,75 @@ check("Balls in play: fly outs are not dominant and the result waits for the fie
   assert(out.fly / out.total < 0.45, `fly out rate ${out.fly / out.total}`);
   assert(out.hit / out.total > 0.25, `hit rate ${out.hit / out.total}`);
 });
+check("Landed balls keep rolling; a throw is caught the moment it reaches the bag", () => {
+  let rolled = 0,
+    throws = 0;
+  for (let i = 1; i <= 300; i++) {
+    const g = new BaseballEngine(newCareer(), seed(i * 13 + 5));
+    const r = seed(i * 7 + 3);
+    r();
+    g.state.bases = [r() < 0.4, r() < 0.3, false];
+    g.contact(0.21 + r() * 0.75, (r() - 0.5) * 0.2);
+    const l = g.state.live;
+    if (l.resultBases < 4) {
+      const after = g.liveBall(l, l.flightTime + 0.6);
+      if (Math.hypot(after.x, after.z) > Math.hypot(l.land.x, l.land.z) + 0.5) rolled++;
+    }
+    let n = 0;
+    while (g.state.phase === "inplay" && n++ < 5000) {
+      g.tick(1 / 60);
+      const t = l.throw;
+      if (t && l.elapsed >= t.startedAt + t.duration + 1e-6) {
+        assert.notEqual(t.receivedAt, null, "ball reached the bag with nobody to catch it");
+        throws++;
+      }
+    }
+  }
+  assert(rolled > 250, `balls rolled after landing: ${rolled}`);
+  assert(throws > 0);
+});
+check("A fielder still throws when the runner is close; holds only when everyone is safe", () => {
+  const g = new BaseballEngine(newCareer(), () => 0.5);
+  g.contact(0.3);
+  const l = g.state.live;
+  l.elapsed = 1;
+  l.fieldedAt = 0.9;
+  l.state = "포구";
+  Object.assign(l.fielderPos, V(0, 0, 40));
+  l.runners[0].progress = 0.97;
+  assert.equal(g.chooseThrow(l), 1, "late throw to first instead of standing still");
+  l.runners[0].progress = 1;
+  l.runners[0].target = 1;
+  assert.equal(g.chooseThrow(l), 0);
+});
+check("Creation spends exactly the stat budget; minigame quality sets the training gain", () => {
+  const g = new BaseballEngine();
+  assert.equal(g.state.career.created, false);
+  const even = {
+    velocity: 62,
+    control: 62,
+    movement: 62,
+    stamina: 61,
+    contact: 61,
+    power: 62,
+  };
+  assert(!g.createPlayer("과다", { ...even, power: 80 }).ok, "over budget");
+  assert(!g.createPlayer("범위", { ...even, velocity: 90, control: 34 }).ok, "outside 45–80");
+  assert(g.createPlayer("  김하늘  ", even).ok);
+  assert.equal(g.state.career.name, "김하늘");
+  assert(g.state.career.created);
+  assert.deepEqual(g.state.career.stats, even);
+  for (const [q, gain] of [
+    [0.1, 0],
+    [0.6, 1],
+    [0.95, 2],
+  ]) {
+    const before = g.state.career.stats.contact;
+    g.state.career.energy = 100;
+    g.state.career.actions = DAY_ACTIONS;
+    const r = g.train("batting", q);
+    assert(r.ok);
+    assert.equal(g.state.career.stats.contact - before, gain);
+  }
+});
 console.log(`\n${passed} gameplay checks passed.`);

@@ -2903,3 +2903,467 @@ kbd {
 .blessing-odds .tier-은총 {
   color: #9fd0f0;
 }
+/* ---- One continuous day: header status, timeline, practice row ---- */
+.life-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border-radius: 20px;
+  border: 1px solid #4c5c5f;
+  background: #172832;
+  color: #d8e0db;
+  font-size: 0.8125rem;
+}
+.life-status b {
+  color: #e0ba76;
+}
+.life-status:hover {
+  border-color: #e0ba76;
+}
+.life-timeline {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 16px;
+  margin-bottom: 18px;
+  border-radius: 8px;
+  border: 1px solid #3f5a63;
+  background: linear-gradient(90deg, #22384366, #1d344000);
+}
+.life-step {
+  display: grid;
+  gap: 4px;
+  min-width: 150px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  background: #ffffff08;
+  color: #9bb1bb;
+  font-size: 0.8125rem;
+}
+.life-step strong {
+  font-size: 1rem;
+  color: #dfe6e0;
+}
+.life-step small {
+  font-size: 0.75rem;
+}
+.life-step.now {
+  background: #e8b65a22;
+  box-shadow: inset 0 0 0 1px #e8b65a99;
+  color: #f4d48c;
+}
+.life-step.done {
+  opacity: 0.6;
+}
+.life-arrow {
+  align-self: center;
+  color: #5d7278;
+}
+.life-cta {
+  margin: 0 0 0 auto !important;
+  width: auto !important;
+  min-width: 200px;
+  align-self: center;
+  display: flex !important;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+.life-cta > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.life-cta small {
+  font-size: 0.7rem;
+  font-weight: 400;
+  opacity: 0.75;
+}
+.practice-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+  padding: 12px 16px;
+  border-radius: 7px;
+  background: #1a2c35;
+  color: #c9d3cf;
+  font-size: 0.875rem;
+}
+.practice-row > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+}
+.practice-row small {
+  color: #8da7b2;
+  font-size: 0.75rem;
+}
+.practice-row .subtle-button {
+  width: auto;
+  margin: 0;
+  padding: 8px 14px;
+}
+.career-view.embedded {
+  padding: 0;
+  min-height: 0;
+}
+.back-to-day {
+  color: #f4d48c !important;
+}
+@media (max-width: 680px) {
+  .life-arrow {
+    display: none;
+  }
+  .life-step {
+    flex: 1 1 100%;
+  }
+  .life-cta {
+    width: 100% !important;
+    margin: 4px 0 0 !important;
+  }
+  .life-status span {
+    display: none;
+  }
+}
+/* ---- Player creation ---- */
+.creation-dialog {
+  max-width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+.creation-name {
+  display: grid;
+  gap: 6px;
+  font-size: 0.8125rem;
+  color: #b8c6c1;
+}
+.creation-name input {
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid #4c5c5f;
+  background: #101b23;
+  color: #eceee7;
+  font-size: 1rem;
+}
+.creation-presets {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.creation-presets button {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 9px;
+  text-align: left;
+}
+.creation-presets strong {
+  font-size: 0.875rem;
+  color: #f0ca85;
+}
+.creation-presets small {
+  font-size: 0.7rem;
+  color: #9eb3ba;
+  line-height: 1.4;
+}
+.creation-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+}
+.creation-stat {
+  display: grid;
+  grid-template-columns: 1fr 26px 34px 26px;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.875rem;
+  color: #d5dfdb;
+}
+.creation-stat > b {
+  text-align: center;
+  color: #f0ca85;
+}
+.creation-stat > button {
+  height: 26px;
+  border-radius: 5px;
+  border: 1px solid #4c5c5f;
+  background: #1e333e;
+  color: #eceee7;
+}
+.creation-stat > [data-slot="progress"] {
+  grid-column: 1 / -1;
+  height: 4px;
+}
+.creation-left {
+  font-size: 0.8125rem;
+  color: #e9a58f;
+  text-align: center;
+}
+.creation-left.done {
+  color: #9fc9a8;
+}
+@media (max-width: 480px) {
+  .creation-presets,
+  .creation-stats {
+    grid-template-columns: 1fr;
+  }
+}
+/* ---- End-of-day recap ---- */
+.night-dialog {
+  background: radial-gradient(circle at 80% 0%, #243a55 0%, #121d27 70%);
+}
+.night-dialog [data-slot="dialog-title"] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #c9d8f5;
+}
+.night-recap {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.night-recap > div {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border-radius: 6px;
+  background: #ffffff0a;
+  font-size: 0.75rem;
+  color: #9bb1bb;
+}
+.night-recap strong {
+  font-size: 1.05rem;
+  color: #eceee7;
+}
+@media (max-width: 480px) {
+  .night-recap {
+    grid-template-columns: 1fr;
+  }
+}
+/* ---- Training minigames ---- */
+.minigame-dialog {
+  max-width: min(520px, calc(100vw - 32px));
+}
+.mg-intro,
+.mg-result {
+  display: grid;
+  gap: 10px;
+  text-align: center;
+}
+.mg-intro p,
+.mg-result p {
+  font-size: 0.8125rem;
+  color: #b8c6c1;
+  margin: 0;
+}
+.mg-intro button,
+.mg-result button {
+  margin: 0;
+}
+.mg-stage {
+  display: grid;
+  gap: 12px;
+  user-select: none;
+  touch-action: manipulation;
+}
+.mg-score {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 0.875rem;
+  color: #c9d3cf;
+  margin: 0;
+}
+.mg-score b {
+  color: #f0ca85;
+}
+.mg-score .good {
+  color: #9fc9a8;
+}
+.mg-score .great {
+  color: #f4d48c;
+  font-weight: 700;
+}
+.mg-zone {
+  position: relative;
+  height: 220px;
+  border-radius: 6px;
+  background:
+    linear-gradient(#ffffff10 1px, transparent 1px) 0 0 / 33.33% 33.33%,
+    linear-gradient(90deg, #ffffff10 1px, transparent 1px) 0 0 / 33.33% 33.33%,
+    #12232b;
+  border: 1px solid #c7ccb6aa;
+}
+.mg-target {
+  position: absolute;
+  width: 38px;
+  height: 38px;
+  margin: -19px 0 0 -19px;
+  border-radius: 50%;
+  border: 3px solid #f0be60;
+  background: radial-gradient(#f0be60 0 22%, #f0be6033 23% 60%, transparent 61%);
+  animation: mg-pop 0.95s linear forwards;
+  cursor: crosshair;
+}
+@keyframes mg-pop {
+  from {
+    transform: scale(1.2);
+  }
+  to {
+    transform: scale(0.45);
+    opacity: 0.4;
+  }
+}
+.mg-power,
+.mg-lane,
+.mg-track {
+  position: relative;
+  height: 34px;
+  border-radius: 6px;
+  background: #ffffff14;
+  overflow: hidden;
+}
+.mg-power i,
+.mg-lane i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+.mg-power-good {
+  left: 75%;
+  right: 10%;
+  background: #e9bc6766;
+}
+.mg-power-max {
+  left: 90%;
+  right: 0;
+  background: #e8795a;
+}
+.mg-power b,
+.mg-lane b {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  width: 5px;
+  margin-left: -2px;
+  border-radius: 3px;
+  background: #fff;
+  box-shadow: 0 0 6px #000;
+}
+.mg-lane-zone {
+  left: 67%;
+  width: 16%;
+  background: #e9bc6755;
+  box-shadow: inset 0 0 0 1px #e9bc67;
+}
+.mg-lane b {
+  width: 22px;
+  height: 22px;
+  top: 6px;
+  margin-left: -11px;
+  border-radius: 50%;
+  background: #fff8df;
+}
+.mg-track {
+  height: 54px;
+}
+.mg-runner {
+  position: absolute;
+  top: 8px;
+  font-size: 28px;
+  transform: scaleX(-1);
+  transition: left 0.08s;
+}
+.mg-finish {
+  position: absolute;
+  right: 4%;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  background: repeating-linear-gradient(#fff 0 6px, #111 6px 12px);
+}
+.mg-big {
+  margin: 0;
+  padding: 16px;
+  font-size: 1.05rem;
+}
+.mg-grips {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.mg-grips button {
+  height: 70px;
+  border-radius: 8px;
+  border: 1px solid #4c5c5f;
+  background: #1e333e;
+  color: #eceee7;
+  font-size: 0.95rem;
+  transition: background 0.1s;
+}
+.mg-grips button.lit {
+  background: #e8b65a;
+  color: #19262b;
+  box-shadow: 0 0 16px #e8b65a;
+}
+.mg-dots {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin: 0;
+}
+.mg-dots i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ffffff22;
+}
+.mg-dots i.on {
+  background: #9fc9a8;
+}
+.mg-question {
+  text-align: center;
+  font-size: 1.1rem;
+  color: #eceee7;
+  margin: 0;
+}
+.mg-answers {
+  display: grid;
+  gap: 8px;
+}
+.mg-answers button {
+  padding: 12px;
+  border-radius: 6px;
+  border: 1px solid #4c5c5f;
+  background: #1e333e;
+  color: #eceee7;
+}
+.mg-answers button.right {
+  background: #2f5a3d;
+  border-color: #9fc9a8;
+}
+.mg-answers button.wrong {
+  background: #5a2f2f;
+  border-color: #e88770;
+}
+.mg-grade {
+  font-size: 2.2rem;
+  font-weight: 900;
+  font-style: italic;
+}
+.grade-완벽 {
+  color: #f4d48c;
+}
+.grade-좋음 {
+  color: #9fc9a8;
+}
+.grade-아쉬움 {
+  color: #b8c6c1;
+}
