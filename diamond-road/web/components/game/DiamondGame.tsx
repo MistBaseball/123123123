@@ -29,6 +29,7 @@ import {
   Maximize2,
   Lock,
   CalendarDays,
+  Sparkles,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -54,6 +55,9 @@ import {
   PITCHES,
   SWING_GOOD,
   SWING_SWEET,
+  BLESSINGS,
+  DAY_ACTIONS,
+  batReach,
   clamp,
   pitchMovement,
   swingWindow,
@@ -352,16 +356,19 @@ function AimPad({ engine, s }: { engine: BaseballEngine; s: GameState }) {
             ))}
         {hint && (
           <g className="arrival-hint">
+            <defs>
+              <radialGradient id="hintglow">
+                <stop offset="0" stopColor="#fff8df" stopOpacity=".26" />
+                <stop offset=".65" stopColor="#fff8df" stopOpacity=".12" />
+                <stop offset="1" stopColor="#fff8df" stopOpacity="0" />
+              </radialGradient>
+            </defs>
             <ellipse
               cx={toX(hint.x)}
               cy={toY(hint.y)}
-              rx={(hint.r / 1.4) * 280}
-              ry={(hint.r / 1.7) * 240}
-              fill="#fff8df"
-              fillOpacity=".12"
-              stroke="#fff8df"
-              strokeOpacity=".45"
-              strokeDasharray="4 4"
+              rx={(hint.r / 1.4) * 280 * 1.15}
+              ry={(hint.r / 1.7) * 240 * 1.15}
+              fill="url(#hintglow)"
             />
           </g>
         )}
@@ -381,6 +388,17 @@ function AimPad({ engine, s }: { engine: BaseballEngine; s: GameState }) {
           </g>
         )}
         <g transform={`translate(${toX(aim.x)} ${toY(aim.y)})`} stroke="#f1c771" strokeWidth="1.6">
+          {batting && (
+            <ellipse
+              rx={(batReach(s.career.stats.contact, s.swingStyle) / 1.4) * 280}
+              ry={(batReach(s.career.stats.contact, s.swingStyle) / 1.7) * 240}
+              fill="#f1c771"
+              fillOpacity=".06"
+              strokeOpacity=".5"
+              strokeDasharray="3 3"
+              strokeWidth="1"
+            />
+          )}
           <circle r="11" fill="none" />
           <path d="M-17 0h10M7 0h10M0-17v10M0 7v10" />
           <circle r="2" fill="#f1c771" stroke="none" />
@@ -698,7 +716,7 @@ const trainings = [
     icon: Target,
     name: "불펜 피칭",
     desc: "모서리를 찌르는 한 구",
-    gain: "제구 +2",
+    gain: "제구 +1",
     cost: 18,
   },
   {
@@ -706,7 +724,7 @@ const trainings = [
     icon: Dumbbell,
     name: "하체·코어",
     desc: "강한 하체에서 나오는 구속",
-    gain: "구속 +2",
+    gain: "구속 +1",
     cost: 22,
   },
   {
@@ -714,7 +732,7 @@ const trainings = [
     icon: Wind,
     name: "변화구 그립",
     desc: "회전으로 만드는 다른 궤적",
-    gain: "구위 +2",
+    gain: "구위 +1",
     cost: 18,
   },
   {
@@ -722,7 +740,7 @@ const trainings = [
     icon: Activity,
     name: "러닝",
     desc: "마지막 이닝까지 흔들림 없이",
-    gain: "체력 능력 +2",
+    gain: "체력 능력 +1",
     cost: 16,
   },
   {
@@ -730,10 +748,10 @@ const trainings = [
     icon: Crosshair,
     name: "타격 훈련",
     desc: "공을 끝까지 보고 정확하게",
-    gain: "컨택 +2",
+    gain: "컨택 +1",
     cost: 20,
   },
-  { id: "power", icon: Zap, name: "장타 훈련", desc: "배트에 싣는 힘", gain: "파워 +2", cost: 22 },
+  { id: "power", icon: Zap, name: "장타 훈련", desc: "배트에 싣는 힘", gain: "파워 +1", cost: 22 },
   {
     id: "study",
     icon: BookOpen,
@@ -761,7 +779,7 @@ function TrainingView({
   onPlay: () => void;
 }) {
   const c = s.career,
-    trained = c.trainedDay === c.day;
+    out = c.actions <= 0;
   return (
     <section className="training-view">
       <div className="section-intro">
@@ -771,7 +789,7 @@ function TrainingView({
           <p>
             {engine.matchActive
               ? "경기 진행 중입니다. 경기를 마치거나 불펜으로 전환한 뒤 훈련하세요."
-              : "하루에 훈련(또는 휴식)은 한 번. 그다음 경기를 치르면 다음 날이 됩니다."}
+              : `하루 행동력 ${DAY_ACTIONS}. 훈련·수업·휴식에 1씩 쓰고, 경기를 치르면 다음 날이 됩니다.`}
           </p>
         </div>
         <span className="season-stamp">
@@ -782,10 +800,16 @@ function TrainingView({
         <CalendarDays size={20} />
         <strong>DAY {c.day}</strong>
         <ol>
-          <li className={trained ? "done" : "now"}>
-            <b>1</b> 훈련 1회 {trained ? "· 완료" : "· 지금 선택"}
+          <li className={out ? "done" : "now"}>
+            <b>1</b> 훈련 · 행동력
+            <span className="action-pips" aria-label={`행동력 ${c.actions}/${DAY_ACTIONS}`}>
+              {Array.from({ length: DAY_ACTIONS }, (_, i) => (
+                <i key={i} className={i < c.actions ? "on" : ""} />
+              ))}
+            </span>
+            {c.actions}/{DAY_ACTIONS}
           </li>
-          <li className={trained ? "now" : ""}>
+          <li className={out ? "now" : ""}>
             <b>2</b> 시즌 경기 · XP 획득
           </li>
           <li>
@@ -830,7 +854,7 @@ function TrainingView({
           <button
             className={`training-card ${t.id === "rest" ? "rest-card" : ""}`}
             key={t.id}
-            disabled={c.energy < t.cost || engine.matchActive || trained}
+            disabled={c.energy < t.cost || engine.matchActive || out}
             onClick={() => {
               const r = engine.train(t.id);
               r.ok ? toast.success(r.message) : toast.error(r.message);
@@ -908,19 +932,125 @@ function TrainingView({
       <div className="training-note">
         <BookOpen size={18} />
         <p>
-          훈련한 능력은 다음 투구와 타격부터 반영됩니다. 낮은 체력은 구속과 제구에, 낮은 컨디션은
-          집중력에 영향을 줍니다. 컨택이 오르면 타격 때 보이는 공의 도착 범위가 작아집니다. 경기를
-          마치면 밤사이 체력이 12 회복됩니다.
+          훈련·수업·휴식은 행동력을 1씩 씁니다. 훈련한 능력은 다음 투구와 타격부터 반영됩니다. 낮은
+          체력은 구속과 제구에, 낮은 컨디션은 집중력에 영향을 줍니다. 컨택이 오르면 타격 때 보이는
+          공의 도착 범위가 작아집니다. 경기를 마치면 밤사이 체력이 25 회복되고 행동력이 다시{" "}
+          {DAY_ACTIONS}이 됩니다.
         </p>
       </div>
     </section>
   );
 }
 
+/** Starting roulette: "a blessing from the baseball gods" grants one random pitch. */
+function BlessingDialog({ engine, s }: { engine: BaseballEngine; s: GameState }) {
+  const [phase, setPhase] = useState<"idle" | "spinning" | "done">("idle");
+  const [reel, setReel] = useState<string[]>([]);
+  const [offset, setOffset] = useState(0);
+  const won = PITCHES.find((p) => p.id === s.career.blessing);
+  const tier = BLESSINGS.find((b) => b.id === s.career.blessing)?.tier;
+  const open = s.career.blessing === "" || phase !== "idle";
+  const CARD = 128;
+  const spin = () => {
+    const id = engine.receiveBlessing();
+    if (!id) return;
+    // A long reel of random pitches that stops on the granted one.
+    const items = Array.from(
+      { length: 34 },
+      () => BLESSINGS[Math.floor(Math.random() * BLESSINGS.length)].id as string,
+    );
+    items[30] = id;
+    setReel(items);
+    setOffset(0);
+    setPhase("spinning");
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => setOffset(30 * CARD + (Math.random() - 0.5) * CARD * 0.5)),
+    );
+  };
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (!v && phase === "done") setPhase("idle");
+      }}
+    >
+      <DialogContent className="blessing-dialog" showCloseButton={phase === "done"}>
+        <DialogHeader>
+          <DialogTitle>
+            <Sparkles size={18} /> 야구의 신이 내리는 은총
+          </DialogTitle>
+          <DialogDescription>
+            고교 마지막 시즌의 첫날. 마운드에 선 당신에게 신이 하나의 구종을 선물합니다. 어떤 공이
+            손끝에 깃들지는 하늘만이 압니다.
+          </DialogDescription>
+        </DialogHeader>
+        <div className={`blessing-reel ${phase}`}>
+          <div
+            className="reel-strip"
+            style={{
+              transform: `translateX(calc(50% - ${CARD / 2}px - ${offset}px))`,
+              transition:
+                phase === "spinning" && offset
+                  ? "transform 4.2s cubic-bezier(.08,.7,.12,1)"
+                  : "none",
+            }}
+            onTransitionEnd={(e) => {
+              if (e.target !== e.currentTarget) return;
+              setOffset(30 * CARD);
+              setPhase("done");
+            }}
+          >
+            {(reel.length ? reel : BLESSINGS.map((b) => b.id)).map((id, i) => {
+              const p = PITCHES.find((p) => p.id === id)!;
+              const b = BLESSINGS.find((b) => b.id === id)!;
+              return (
+                <div
+                  key={i}
+                  className={`reel-card tier-${b.tier} ${phase === "done" && i === 30 ? "winner" : ""}`}
+                  style={{ "--pitch-color": p.color, width: CARD } as React.CSSProperties}
+                >
+                  <small>{b.tier}</small>
+                  <strong>{p.name}</strong>
+                  <span>{p.en}</span>
+                </div>
+              );
+            })}
+          </div>
+          <i className="reel-pointer" />
+        </div>
+        {phase === "done" && won ? (
+          <div className="blessing-result">
+            <span className={`tier-badge tier-${tier}`}>{tier}</span>
+            <h3>{won.name}이(가) 손끝에 깃들었다</h3>
+            <p>{won.desc} · 포심과 함께 바로 던질 수 있습니다.</p>
+            <button className="primary-button" onClick={() => setPhase("idle")}>
+              은총을 받고 훈련 시작 <ChevronRight size={16} />
+            </button>
+          </div>
+        ) : (
+          <div className="blessing-result">
+            <div className="blessing-odds">
+              {BLESSINGS.map((b) => (
+                <span key={b.id} className={`tier-${b.tier}`}>
+                  {PITCHES.find((p) => p.id === b.id)!.name} {b.weight}%
+                </span>
+              ))}
+            </div>
+            <button className="primary-button" disabled={phase === "spinning"} onClick={spin}>
+              <Sparkles size={16} />
+              {phase === "spinning" ? "신의 뜻을 기다리는 중…" : "기도하고 룰렛 돌리기"}
+            </button>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function DiamondGame() {
   const [engine] = useState(() => new BaseballEngine());
   const s = useSyncExternalStore(engine.subscribe, engine.getSnapshot, engine.getSnapshot);
-  const [view, setView] = useState("game"),
+  const [view, setView] = useState("training"),
     [help, setHelp] = useState(false),
     [settings, setSettings] = useState(false),
     [manualPause, setManualPause] = useState(false),
@@ -1137,6 +1267,7 @@ export default function DiamondGame() {
   return (
     <main className="diamond-app">
       <Toaster theme="dark" position="bottom-center" />
+      <BlessingDialog engine={engine} s={s} />
       <header className="app-header">
         <a
           className="brand"
@@ -1266,7 +1397,7 @@ export default function DiamondGame() {
                 </div>
               )}
               <div
-                className={`field-message ${s.resultTone} ${s.phase === "result" || s.phase === "inplay" ? "big-result" : ""}`}
+                className={`field-message ${s.resultTone} ${s.phase === "result" ? "big-result" : ""}`}
                 aria-live="polite"
                 hidden={batting && (s.phase === "flight" || s.phase === "windup")}
               >
@@ -1479,9 +1610,9 @@ export default function DiamondGame() {
                 </div>
                 <div className="swing-options">
                   {[
-                    { id: "contact", name: "컨택", sub: "넓은 타격 범위" },
+                    { id: "contact", name: "컨택", sub: "기본 배트 범위" },
                     { id: "power", name: "강공", sub: "좁은 범위 · 긴 비거리" },
-                    { id: "bunt", name: "번트", sub: "짧게 굴리기" },
+                    { id: "bunt", name: "번트", sub: "넓은 범위 · 짧게" },
                   ].map((p) => (
                     <button
                       className={s.swingStyle === p.id ? "selected" : ""}
@@ -1615,9 +1746,10 @@ export default function DiamondGame() {
               오차가 적용됩니다.
             </p>
             <p>
-              <b>02 타격</b> 3아웃 후 공격 이닝입니다. 투구가 시작되면 스트라이크 존 근처에 흐린
-              원이 나타납니다. 공은 반드시 그 원 안으로 옵니다. 원 안을 조준하고 화면 위쪽 게이지의
-              금색 구간에서 클릭하거나 Space를 누르세요. 컨택 능력이 오를수록 원이 작아집니다.
+              <b>02 타격</b> 3아웃 후 공격 이닝입니다. 투구가 시작되면 흐릿한 빛이 공이 올 대략적인
+              범위를 알려 줍니다(공은 그 안으로 옵니다). 노란 점선 원은 배트가 닿는 범위라서 빛보다
+              작습니다. 공의 궤적을 끝까지 보고 조준한 뒤 위쪽 게이지의 금색 구간에서 클릭하세요.
+              컨택이 오르면 빛이 작아지고 배트 범위가 넓어집니다.
             </p>
             <p>
               <b>03 주루·수비</b> 주자는 홈·1루·2루·3루 순서로 달립니다. 플라이 포구는 즉시 아웃.
@@ -1625,9 +1757,10 @@ export default function DiamondGame() {
               자동 수비를 끄면 WASD로 움직이고 1–4로 송구 베이스를 정합니다.
             </p>
             <p>
-              <b>04 하루 일정</b> 하루에 훈련(또는 휴식) 1회 → 시즌 경기 1회. 경기를 끝내면 다음
-              날이 됩니다. 경기에서 삼진·아웃·안타·득점·승리로 경험치(XP)를 모으고, 훈련 탭의 구종
-              상점에서 새 구종을 삽니다. 3경기를 마치면 시즌 진로를 확인할 수 있습니다.
+              <b>04 하루 일정</b> 처음 시작하면 야구의 신이 구종 하나를 룰렛으로 내려 줍니다. 하루
+              행동력은 5. 훈련·수업·휴식에 1씩 쓰고 시즌 경기를 치르면 다음 날이 됩니다. 경기에서
+              삼진·아웃·안타·득점·승리로 경험치(XP)를 모아 훈련 탭의 구종 상점에서 새 구종을 삽니다.
+              3경기를 마치면 시즌 진로를 확인할 수 있습니다.
             </p>
           </div>
           <details className="prototype-notes">
@@ -1723,6 +1856,22 @@ export default function DiamondGame() {
             }}
           >
             설정으로 새 경기
+          </button>
+          <button
+            className="subtle-button"
+            onClick={() => {
+              if (
+                window.confirm(
+                  "선수 기록을 지우고 처음부터 시작할까요? (은총 룰렛을 다시 돌립니다)",
+                )
+              ) {
+                engine.resetCareer();
+                setSettings(false);
+                setView("training");
+              }
+            }}
+          >
+            선수 처음부터 다시 시작
           </button>
         </DialogContent>
       </Dialog>

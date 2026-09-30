@@ -12,6 +12,9 @@ import {
   playerYaw,
   pitchMovement,
   contactHintRadius,
+  batReach,
+  DAY_ACTIONS,
+  BLESSINGS,
 } from "../lib/game/engine.ts";
 
 let passed = 0;
@@ -273,6 +276,9 @@ check("Fly catch immediately retires batter, holds runners and never throws to f
   g.state.bases = [true, true, false];
   g.contact(0.6);
   const l = g.state.live;
+  // A routine fly: the fielder is already under the ball.
+  l.fielderPos.x = l.catchPoint.x;
+  l.fielderPos.z = l.catchPoint.z;
   while (g.state.phase === "inplay" && !l.caughtFly) {
     assert.equal(l.runners[1].progress, 1);
     assert.equal(l.runners[2].progress, 2);
@@ -419,15 +425,17 @@ check("Abandoned games do not leak strikeouts or conceded runs to saved career",
   assert.equal(g.state.career.games, 0);
 });
 check(
-  "One training per day; finishing a match advances the day; live match blocks training",
+  "Five actions per day; finishing a match advances the day; live match blocks training",
   () => {
     const g = new BaseballEngine();
     assert(g.train("bullpen").ok);
-    assert.equal(g.state.career.stats.control, 67);
+    assert.equal(g.state.career.stats.control, 66);
     assert.equal(g.state.career.day, 1);
     assert.equal(g.state.career.energy, 82);
-    assert(g.trainedToday);
-    assert(!g.train("rest").ok, "only one training session per day");
+    assert.equal(g.state.career.actions, DAY_ACTIONS - 1);
+    for (let i = 1; i < DAY_ACTIONS; i++) assert(g.train(i % 2 ? "rest" : "study").ok);
+    assert.equal(g.state.career.actions, 0);
+    assert(!g.train("rest").ok, "no actions left today");
     g.state.inning = 3;
     g.state.half = "bottom";
     g.state.outs = 3;
@@ -435,10 +443,9 @@ check(
     g.next();
     assert.equal(g.state.phase, "finished");
     assert.equal(g.state.career.day, 2);
-    assert(!g.trainedToday);
+    assert.equal(g.state.career.actions, DAY_ACTIONS);
     assert(g.train("rest").ok);
     assert.equal(g.state.career.energy, 100);
-    g.state.career.trainedDay = 0;
     g.start("match");
     g.throwAt();
     assert(!g.train("weights").ok);
@@ -495,6 +502,11 @@ check("Batting range hint always contains the pitch and shrinks as contact rises
   }
   assert(contactHintRadius(99) < contactHintRadius(60));
   assert(contactHintRadius(60) < contactHintRadius(20));
+  assert(
+    batReach(60, "contact") < contactHintRadius(60),
+    "the range alone must not guarantee contact",
+  );
+  assert(batReach(60, "power") < batReach(60, "contact"));
   const pitcher = new BaseballEngine();
   pitcher.throwAt();
   assert.equal(pitcher.state.flight.hint, null, "no hint for the player's own pitches");
@@ -605,5 +617,37 @@ check("Batting feedback separates timing, aim error and taking a pitch", () => {
   assert.equal(take.state.batFeedback.timing, "take");
   assert.equal(take.state.batFeedback.offsetMs, null);
   assert.equal(take.state.batFeedback.batAim, null);
+});
+check("Starting blessing grants exactly one random extra pitch, weighted by rarity", () => {
+  const seen = {};
+  for (let i = 1; i <= 400; i++) {
+    const rng = seed(i);
+    rng(); // consecutive small seeds give nearly equal first values
+    const g = new BaseballEngine(newCareer(), rng);
+    const id = g.receiveBlessing();
+    assert(BLESSINGS.some((b) => b.id === id));
+    assert.deepEqual(g.state.career.pitches, ["fastball", id]);
+    assert.equal(g.state.career.blessing, id);
+    assert.equal(g.receiveBlessing(), null, "only once per career");
+    seen[id] = (seen[id] ?? 0) + 1;
+  }
+  assert.equal(Object.keys(seen).length, BLESSINGS.length, "every pitch can come up");
+  assert(seen.slider > seen.splitter, "rare pitches come up less often");
+});
+check("Balls in play: fly outs are not dominant and the result waits for the fielder", () => {
+  const out = { fly: 0, hit: 0, total: 0 };
+  for (let i = 1; i <= 600; i++) {
+    const g = new BaseballEngine(newCareer(), seed(i));
+    const r = seed(i * 7 + 3);
+    g.contact(0.21 + r() * 0.75, (r() - 0.5) * 0.2);
+    const l = g.state.live;
+    finishPlay(g);
+    if (l.resultBases < 4 && !l.caughtFly) assert(l.fieldedAt !== null, "result before fielding");
+    out.total++;
+    if (l.caughtFly) out.fly++;
+    else if (!l.outs.length) out.hit++;
+  }
+  assert(out.fly / out.total < 0.45, `fly out rate ${out.fly / out.total}`);
+  assert(out.hit / out.total > 0.25, `hit rate ${out.hit / out.total}`);
 });
 console.log(`\n${passed} gameplay checks passed.`);

@@ -93,11 +93,24 @@ export const PITCHES: {
 const AI_PITCHES = 4;
 /** Contact swing timing: the ideal moment as a share of the visible flight. */
 export const SWING_SWEET = 0.92;
-export const SWING_GOOD = 0.055;
+export const SWING_GOOD = 0.045;
 export const swingWindow = (difficulty: "easy" | "normal" | "hard") =>
-  difficulty === "easy" ? 0.35 : difficulty === "normal" ? 0.25 : 0.17;
+  difficulty === "easy" ? 0.26 : difficulty === "normal" ? 0.18 : 0.12;
 /** Radius (m) of the batter's read of where the pitch will cross the plate. */
-export const contactHintRadius = (contact: number) => clamp(0.4 - contact * 0.0034, 0.07, 0.4);
+export const contactHintRadius = (contact: number) => clamp(0.5 - contact * 0.0035, 0.15, 0.5);
+/** How far (m) the bat aim may miss the ball and still make contact. */
+export const batReach = (contact: number, style: "contact" | "power" | "bunt") =>
+  (0.12 + clamp(contact, 0, 99) * 0.001) * (style === "power" ? 0.75 : style === "bunt" ? 1.3 : 1);
+/** Actions (training, rest, study) available each day before the day's match. */
+export const DAY_ACTIONS = 5;
+/** Starting-pitch roulette: rarer pitches have smaller weights. */
+export const BLESSINGS: { id: PitchId; weight: number; tier: string }[] = [
+  { id: "slider", weight: 30, tier: "축복" },
+  { id: "changeup", weight: 28, tier: "축복" },
+  { id: "curve", weight: 20, tier: "은총" },
+  { id: "cutter", weight: 14, tier: "은총" },
+  { id: "splitter", weight: 8, tier: "신탁" },
+];
 export const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
 export const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 export const distance = (a: Vec, b: Vec) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
@@ -137,6 +150,13 @@ export const DEFENSE = [
   V(-34, 0, 62),
 ];
 export const BASE_PATH_LENGTH = Math.hypot(19.4, 19.4);
+/** Fielder chase speed (m/s), first-step reaction (s) and glove reach (m) for batted balls. */
+// Tuned so roughly a third of balls in play fall for hits (see scripts/check-game.mjs).
+export const FIELDER_SPEED = 5.6;
+export const FIELDER_REACTION = 0.4;
+export const CATCH_REACH = 1.2;
+const HANG_BASE = 1.4;
+const HANG_DIV = 38;
 export function pitchMovement(id: PitchId, movement: number) {
   const p = PITCHES.find((p) => p.id === id)!,
     x = (p.breakX * movement) / 75,
@@ -235,8 +255,10 @@ export type Career = {
   history: string[];
   /** Learned pitch types (bought with XP). */
   pitches: PitchId[];
-  /** Day on which this day's single training session was used (0 = not yet). */
-  trainedDay: number;
+  /** Actions left today; refilled to DAY_ACTIONS when a match ends the day. */
+  actions: number;
+  /** Pitch granted by the starting roulette ("" = not received yet). */
+  blessing: string;
 };
 export const newCareer = (): Career => ({
   version: 1,
@@ -256,7 +278,8 @@ export const newCareer = (): Career => ({
   draft: "",
   history: ["고교 3학년, 마지막 시즌의 첫날."],
   pitches: ["fastball"],
-  trainedDay: 0,
+  actions: DAY_ACTIONS,
+  blessing: "",
 });
 export type Flight = {
   start: Vec;
@@ -517,10 +540,14 @@ export class BaseballEngine {
           ? c.pitches.filter((id: unknown) => PITCHES.some((p) => p.id === id))
           : PITCHES.slice(0, AI_PITCHES).map((p) => p.id);
         clean.pitches = Array.from(new Set<PitchId>(["fastball", ...known]));
-        clean.trainedDay =
-          typeof c.trainedDay === "number" && Number.isFinite(c.trainedDay)
-            ? clamp(c.trainedDay, 0, clean.day)
-            : 0;
+        clean.actions =
+          typeof c.actions === "number" && Number.isFinite(c.actions)
+            ? clamp(Math.round(c.actions), 0, DAY_ACTIONS)
+            : DAY_ACTIONS;
+        // Pre-shop saves already own four pitches, so they skip the starting roulette.
+        clean.blessing =
+          typeof c.blessing === "string" ? c.blessing : Array.isArray(c.pitches) ? "" : "legacy";
+        delete (clean as Partial<{ trainedDay: number }>).trainedDay;
         this.state.career = clean;
         this.state.energy = clean.energy;
       }
@@ -617,7 +644,7 @@ export class BaseballEngine {
     if (ai) {
       const r = contactHintRadius(stats.contact),
         angle = this.rng() * Math.PI * 2,
-        off = r * 0.55 * Math.sqrt(this.rng());
+        off = r * 0.8 * Math.sqrt(this.rng());
       hint = { x: target.x + Math.cos(angle) * off, y: target.y + Math.sin(angle) * off, r };
     }
     s.flight = {
@@ -748,7 +775,8 @@ export class BaseballEngine {
         const timing = f.swingTime / f.visualDuration - SWING_SWEET,
           spatial = Math.hypot(f.batAim.x - f.target.x, f.batAim.y - f.target.y),
           window = swingWindow(s.difficulty),
-          contact = Math.abs(timing) < window && spatial < (s.swingStyle === "power" ? 0.43 : 0.6);
+          reach = batReach(s.career.stats.contact, s.swingStyle),
+          contact = Math.abs(timing) < window && spatial < reach;
         s.batFeedback = {
           timing: Math.abs(timing) <= SWING_GOOD ? "good" : timing < 0 ? "early" : "late",
           offsetMs: Math.round(timing * f.visualDuration * 1000),
@@ -761,7 +789,7 @@ export class BaseballEngine {
           const q = clamp(
             1 -
               (Math.abs(timing) / window) * 0.65 -
-              spatial * 0.48 +
+              (spatial / reach) * 0.3 +
               s.career.stats.contact * 0.001,
             0,
             1,
@@ -917,7 +945,7 @@ export class BaseballEngine {
           ? clamp(range / 24, 0.55, 1.8)
           : lineDrive
             ? clamp(range / 32, 1.1, 2.7)
-            : clamp(1.6 + range / 35, 2, 4.5),
+            : clamp(HANG_BASE + range / HANG_DIV, 1.8, 4.2),
       height = hr ? 25 : lineDrive ? 3.5 : q > 0.7 ? 17 : 9;
     // Find the descending, glove-height point of this exact flight.
     let lo = 0.5,
@@ -974,7 +1002,8 @@ export class BaseballEngine {
       sacrifice: false,
     };
     s.phase = "inplay";
-    s.message = hr ? "담장을 향해!" : ground ? "GROUND BALL" : "FLY BALL";
+    // In-play text only describes the ball; the verdict comes when the fielder acts.
+    s.message = hr ? "담장을 향해!" : ground ? "땅볼 타구" : "뜬공 타구";
     s.detail = ground
       ? "땅볼 · 주자가 다음 베이스로 달립니다"
       : hr
@@ -1168,9 +1197,13 @@ export class BaseballEngine {
         const dx = (this.keys.has("d") ? 1 : 0) - (this.keys.has("a") ? 1 : 0),
           dz = (this.keys.has("w") ? 1 : 0) - (this.keys.has("s") ? 1 : 0),
           n = Math.hypot(dx, dz) || 1;
-        l.fielderPos.x = clamp(l.fielderPos.x + (dx / n) * 8.2 * dt, -85, 85);
-        l.fielderPos.z = clamp(l.fielderPos.z + (dz / n) * 8.2 * dt, -3, 105);
-      } else this.moveFielder(l.fielderPos, target, dt);
+        l.fielderPos.x = clamp(l.fielderPos.x + (dx / n) * FIELDER_SPEED * dt, -85, 85);
+        l.fielderPos.z = clamp(l.fielderPos.z + (dz / n) * FIELDER_SPEED * dt, -3, 105);
+      } else {
+        // The fielder needs a moment to read the ball before the first step.
+        const moving = Math.max(0, l.elapsed - Math.max(previous, FIELDER_REACTION));
+        if (moving > 0) this.moveFielder(l.fielderPos, target, moving, FIELDER_SPEED);
+      }
       s.ball = this.liveBall(l, l.elapsed);
       if (!l.ground && !l.bounced && previous < l.catchAt - 1e-8 && l.elapsed + 1e-8 >= l.catchAt) {
         const fraction = clamp((l.catchAt - previous) / dt, 0, 1),
@@ -1179,7 +1212,7 @@ export class BaseballEngine {
             0,
             lerp(oldPos.z, l.fielderPos.z, fraction),
           );
-        if (Math.hypot(atCatch.x - l.catchPoint.x, atCatch.z - l.catchPoint.z) <= 1.8) {
+        if (Math.hypot(atCatch.x - l.catchPoint.x, atCatch.z - l.catchPoint.z) <= CATCH_REACH) {
           l.caughtFly = true;
           l.fieldedAt = l.catchAt;
           l.state = "포구";
@@ -1206,6 +1239,9 @@ export class BaseballEngine {
       }
       if (!l.caughtFly && l.elapsed + 1e-8 >= l.flightTime && !l.bounced) {
         l.bounced = true;
+        // Extra bases depend on how far the fielder still is from the ball, capped by distance.
+        const gap = Math.hypot(l.fielderPos.x - l.land.x, l.fielderPos.z - l.land.z);
+        l.resultBases = Math.min(l.resultBases, 1 + (gap > 9 ? 1 : 0) + (gap > 22 ? 1 : 0));
         for (const r of l.runners) r.target = Math.min(4, r.from + l.resultBases);
         s.message = "FAIR BALL";
         s.detail = "타구가 땅에 닿았습니다 · 주자 진루";
@@ -1282,7 +1318,8 @@ export class BaseballEngine {
       (settled &&
         (l.throw?.receivedAt != null ||
           l.state === "보유" ||
-          (l.fieldedAt === null && l.elapsed > l.flightTime + 0.7)))
+          // Never announce the result while the ball is still loose (safety timeout only).
+          (l.fieldedAt === null && l.elapsed > l.flightTime + 8)))
     )
       this.resolvePlay();
   }
@@ -1458,8 +1495,9 @@ export class BaseballEngine {
       c.runs += this.matchRuns;
       c.outs += (s.inning - 1) * 3 + (s.half === "bottom" ? 3 : s.outs);
       // A finished match closes the day; a night's sleep restores a little energy.
-      c.energy = clamp(Math.round(s.energy) + 12, 0, 100);
+      c.energy = clamp(Math.round(s.energy) + 25, 0, 100);
       c.day++;
+      c.actions = DAY_ACTIONS;
       c.form = clamp(c.form - 4, 0, 100);
       const gain = clamp(
         7 + this.matchStrikeouts + s.hits[1] - s.score[0] + (s.score[1] > s.score[0] ? 5 : 0),
@@ -1511,27 +1549,27 @@ export class BaseballEngine {
         string,
         { cost: number; stat?: keyof Career["stats"]; gain: number; name: string }
       > = {
-        bullpen: { cost: 18, stat: "control", gain: 2, name: "불펜 제구 훈련" },
-        weights: { cost: 22, stat: "velocity", gain: 2, name: "하체·코어 훈련" },
-        breaking: { cost: 18, stat: "movement", gain: 2, name: "변화구 그립 훈련" },
-        running: { cost: 16, stat: "stamina", gain: 2, name: "러닝·회복력 훈련" },
-        batting: { cost: 20, stat: "contact", gain: 2, name: "타격 훈련" },
-        power: { cost: 22, stat: "power", gain: 2, name: "타격 파워 훈련" },
+        bullpen: { cost: 18, stat: "control", gain: 1, name: "불펜 제구 훈련" },
+        weights: { cost: 22, stat: "velocity", gain: 1, name: "하체·코어 훈련" },
+        breaking: { cost: 18, stat: "movement", gain: 1, name: "변화구 그립 훈련" },
+        running: { cost: 16, stat: "stamina", gain: 1, name: "러닝·회복력 훈련" },
+        batting: { cost: 20, stat: "contact", gain: 1, name: "타격 훈련" },
+        power: { cost: 22, stat: "power", gain: 1, name: "타격 파워 훈련" },
         study: { cost: 6, gain: 4, name: "영상 분석·학교 수업" },
         rest: { cost: -38, gain: 8, name: "휴식·컨디션 회복" },
       },
       o = options[kind];
     if (!o) return { ok: false, message: "알 수 없는 훈련" };
-    if (c.trainedDay === c.day)
+    if (c.actions <= 0)
       return {
         ok: false,
-        message: "오늘 훈련은 이미 마쳤습니다. 경기를 치르면 다음 날로 넘어갑니다.",
+        message: "오늘 행동력을 모두 썼습니다. 경기를 치르면 다음 날로 넘어갑니다.",
       };
     if (c.energy < o.cost) return { ok: false, message: "체력이 부족합니다. 먼저 휴식하세요." };
     if (o.stat && c.stats[o.stat] >= 99)
       return { ok: false, message: "이미 최고 능력치입니다. 다른 훈련을 선택하세요." };
     c.energy = clamp(c.energy - o.cost, 0, 100);
-    c.trainedDay = c.day;
+    c.actions--;
     c.xp += kind === "rest" ? 2 : 5;
     if (o.stat) c.stats[o.stat] = clamp(c.stats[o.stat] + o.gain, 0, 99);
     else c.form = clamp(c.form + o.gain, 0, 100);
@@ -1546,11 +1584,32 @@ export class BaseballEngine {
     this.emit();
     return {
       ok: true,
-      message: `${o.name} 완료${o.stat ? ` · 능력치 +${o.gain}` : ""} · 이제 오늘의 경기를 치르세요`,
+      message: `${o.name} 완료${o.stat ? ` · 능력치 +${o.gain}` : ""} · 남은 행동력 ${c.actions}/${DAY_ACTIONS}`,
     };
   }
-  get trainedToday() {
-    return this.state.career.trainedDay === this.state.career.day;
+  /** Starting roulette: grants one random pitch once per career. Returns the pitch or null. */
+  receiveBlessing() {
+    const c = this.state.career;
+    if (c.blessing) return null;
+    const pool = BLESSINGS.filter((b) => !c.pitches.includes(b.id));
+    if (!pool.length) {
+      c.blessing = "none";
+      return null;
+    }
+    let roll = this.rng() * pool.reduce((a, b) => a + b.weight, 0);
+    const pick = pool.find((b) => (roll -= b.weight) < 0) ?? pool[pool.length - 1];
+    const p = PITCHES.find((p) => p.id === pick.id)!;
+    c.pitches = [...c.pitches, pick.id];
+    c.blessing = pick.id;
+    c.history = [`신이 내린 ${pick.tier} · ${p.name}을(를) 손에 넣었다`, ...c.history].slice(0, 12);
+    this.persist();
+    this.emit();
+    return pick.id;
+  }
+  resetCareer() {
+    this.state.career = newCareer();
+    this.persist();
+    this.start("match");
   }
   buyPitch(id: PitchId) {
     const c = this.state.career,

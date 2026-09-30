@@ -425,8 +425,18 @@ export class SoftwareField {
       const aim = s.flight && !this.engine.batting ? s.flight.aim : s.aim;
       const hint = this.engine.batting && s.flight ? s.flight.hint : null;
       if (hint && (s.phase === "windup" || s.phase === "flight")) {
-        this.circle(V(hint.x, hint.y, 0), hint.r, "#fff8df29");
-        this.circle(V(hint.x, hint.y, 0), hint.r, "#fff8df80", true);
+        const q = this.project(V(hint.x, hint.y, 0));
+        if (q.depth > 0.2) {
+          const r = (hint.r * 1.15 * this.focal) / q.depth,
+            grad = c.createRadialGradient(q.x, q.y, 0, q.x, q.y, r);
+          grad.addColorStop(0, "rgba(255,248,223,0.35)");
+          grad.addColorStop(0.6, "rgba(255,248,223,0.16)");
+          grad.addColorStop(1, "rgba(255,248,223,0)");
+          c.fillStyle = grad;
+          c.beginPath();
+          c.arc(q.x, q.y, r, 0, Math.PI * 2);
+          c.fill();
+        }
       }
       this.circle(aim, 0.09, "#ffcd6c", true);
     }

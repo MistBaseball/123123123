@@ -2760,3 +2760,146 @@ kbd {
 .pitch-list > button > span {
   white-space: nowrap;
 }
+/* ---- Daily action points ---- */
+.action-pips {
+  display: inline-flex;
+  gap: 3px;
+  margin: 0 6px 0 8px;
+  vertical-align: middle;
+}
+.action-pips i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ffffff1f;
+}
+.action-pips i.on {
+  background: #e8b65a;
+  box-shadow: 0 0 5px #e8b65a88;
+}
+/* ---- Starting blessing roulette ---- */
+.blessing-dialog {
+  max-width: min(560px, calc(100vw - 32px));
+  background: radial-gradient(circle at 50% 0%, #3b3521 0%, #16252e 60%);
+  border-color: #8f7d53;
+}
+.blessing-dialog [data-slot="dialog-title"] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #f4d48c;
+}
+.blessing-reel {
+  position: relative;
+  overflow: hidden;
+  height: 118px;
+  margin: 6px 0 4px;
+  border-radius: 8px;
+  background: #0d1a20;
+  box-shadow: inset 0 0 0 1px #ffffff14;
+  mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+}
+.reel-strip {
+  display: flex;
+  height: 100%;
+  will-change: transform;
+}
+.reel-card {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: 12px 0;
+  border-left: 1px solid #ffffff10;
+  border-top: 3px solid var(--pitch-color);
+  background: #16252e;
+  color: #eceee7;
+}
+.reel-card small {
+  font-size: 0.75rem;
+  color: #b6c3c0;
+}
+.reel-card strong {
+  font-size: 1.1rem;
+}
+.reel-card span {
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  color: #8da7b2;
+}
+.reel-card.tier-은총 small {
+  color: #9fd0f0;
+}
+.reel-card.tier-신탁 small {
+  color: #f4d48c;
+  font-weight: 700;
+}
+.reel-card.winner {
+  background: #3a3220;
+  box-shadow:
+    0 0 0 2px #f4d48c,
+    0 0 22px #f4d48caa;
+  animation: blessing-glow 1.2s ease-in-out infinite alternate;
+}
+@keyframes blessing-glow {
+  to {
+    box-shadow:
+      0 0 0 2px #fff1c4,
+      0 0 34px #f4d48c;
+  }
+}
+.reel-pointer {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: #f4d48c;
+  box-shadow: 0 0 8px #f4d48c;
+  pointer-events: none;
+}
+.blessing-result {
+  display: grid;
+  gap: 10px;
+  text-align: center;
+}
+.blessing-result h3 {
+  font-size: 1.35rem;
+  color: #fff1c4;
+  margin: 0;
+}
+.blessing-result p {
+  font-size: 0.8125rem;
+  color: #b8c6c1;
+  margin: 0;
+}
+.tier-badge {
+  justify-self: center;
+  font-size: 0.75rem;
+  padding: 3px 12px;
+  border-radius: 20px;
+  border: 1px solid #f4d48c;
+  color: #f4d48c;
+}
+.blessing-odds {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  color: #b8c6c1;
+}
+.blessing-odds span {
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: #ffffff0a;
+}
+.blessing-odds .tier-신탁 {
+  color: #f4d48c;
+}
+.blessing-odds .tier-은총 {
+  color: #9fd0f0;
+}

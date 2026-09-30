@@ -5,6 +5,7 @@ import {
   DEFENSE,
   PITCHES,
   V,
+  batReach,
   clamp,
   lerp,
   runnerPose,
@@ -154,30 +155,30 @@ export class BaseballField {
     this.scene.add(this.target);
     // Batting: faint disc where the pitch will cross the plate (radius 1, scaled per pitch).
     this.hint = new THREE.Group();
-    this.hint.add(
-      new THREE.Mesh(
-        new THREE.CircleGeometry(1, 40),
-        new THREE.MeshBasicMaterial({
-          color: "#fff8df",
-          transparent: true,
-          opacity: 0.22,
-          side: THREE.DoubleSide,
-          depthTest: false,
-        }),
-      ),
-      new THREE.Mesh(
-        new THREE.RingGeometry(0.93, 1, 40),
-        new THREE.MeshBasicMaterial({
-          color: "#fff8df",
-          transparent: true,
-          opacity: 0.7,
-          side: THREE.DoubleSide,
-          depthTest: false,
-        }),
-      ),
+    // A soft glow rather than a hard ring: the batter only has a rough read of the pitch.
+    const glow = document.createElement("canvas");
+    glow.width = glow.height = 128;
+    const g = glow.getContext("2d")!,
+      grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+    grad.addColorStop(0, "rgba(255,248,223,0.42)");
+    grad.addColorStop(0.6, "rgba(255,248,223,0.2)");
+    grad.addColorStop(1, "rgba(255,248,223,0)");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 128, 128);
+    const glowMap = new THREE.CanvasTexture(glow);
+    glowMap.colorSpace = THREE.SRGBColorSpace;
+    const disc = new THREE.Mesh(
+      new THREE.PlaneGeometry(2.3, 2.3),
+      new THREE.MeshBasicMaterial({
+        map: glowMap,
+        transparent: true,
+        side: THREE.DoubleSide,
+        depthTest: false,
+        depthWrite: false,
+      }),
     );
-    this.hint.renderOrder = 2;
-    this.hint.children.forEach((c) => (c.renderOrder = 2));
+    disc.renderOrder = 2;
+    this.hint.add(disc);
     this.scene.add(this.hint);
     this.trail = new THREE.Line(
       new THREE.BufferGeometry(),
@@ -632,6 +633,10 @@ export class BaseballField {
     this.target.visible = this.zone.visible && s.phase !== "result";
     const aim = s.flight && !this.engine.batting ? s.flight.aim : s.aim;
     this.target.position.set(aim.x, aim.y, 0.03);
+    // When batting, the aim ring shows how far the bat may miss and still connect.
+    this.target.scale.setScalar(
+      this.engine.batting ? batReach(s.career.stats.contact, s.swingStyle) / 0.09 : 1,
+    );
     const hint = this.engine.batting && s.flight ? s.flight.hint : null;
     this.hint.visible =
       !!hint && (s.phase === "windup" || s.phase === "flight") && cam !== "top" && cam !== "ball";
