@@ -112,6 +112,97 @@ export const STAT_NAMES: Record<keyof Career["stats"], string> = {
   power: "파워",
 };
 const statLabel = (k: keyof Career["stats"]) => STAT_NAMES[k];
+/** Fictional pro clubs loosely inspired by the KBO (names deliberately changed). */
+export const TEAMS: {
+  id: string;
+  city: string;
+  name: string;
+  color: string;
+  scout: string;
+  motto: string;
+}[] = [
+  {
+    id: "pigeons",
+    city: "한밭",
+    name: "피죤스",
+    color: "#f08a24",
+    scout: "최강수",
+    motto: "끝까지 날개를 접지 않는다",
+  },
+  {
+    id: "pandas",
+    city: "잠실",
+    name: "판다스",
+    color: "#2b3a8c",
+    scout: "허경민호",
+    motto: "뚝심 있는 곰 대신 판다의 끈기",
+  },
+  {
+    id: "triples",
+    city: "한강",
+    name: "트리플스",
+    color: "#c4123f",
+    scout: "박용태",
+    motto: "쌍둥이보다 하나 더",
+  },
+  {
+    id: "villains",
+    city: "고척",
+    name: "빌런즈",
+    color: "#7a1f3d",
+    scout: "이정호",
+    motto: "영웅보다 강한 악당들",
+  },
+  {
+    id: "launchers",
+    city: "인천",
+    name: "런처스",
+    color: "#ce0e2d",
+    scout: "김광식",
+    motto: "상륙 대신 발사",
+  },
+  {
+    id: "magicians",
+    city: "수원",
+    name: "매지션스",
+    color: "#1a1a1a",
+    scout: "강백원",
+    motto: "마법 같은 한 방",
+  },
+  {
+    id: "raptors",
+    city: "창원",
+    name: "랩터스",
+    color: "#1d467f",
+    scout: "나성민",
+    motto: "공룡의 후예, 더 빠르게",
+  },
+  {
+    id: "pumas",
+    city: "대구",
+    name: "퓨마스",
+    color: "#0b61a4",
+    scout: "오승현",
+    motto: "사자보다 날렵하게",
+  },
+  {
+    id: "titans",
+    city: "부산",
+    name: "타이탄스",
+    color: "#041e42",
+    scout: "이대훈",
+    motto: "거인보다 더 거대하게",
+  },
+  {
+    id: "cheetahs",
+    city: "광주",
+    name: "치타스",
+    color: "#c8102e",
+    scout: "양현승",
+    motto: "호랑이보다 빠른 발톱",
+  },
+];
+export const teamOf = (id: string) => TEAMS.find((t) => t.id === id) ?? null;
 /** Player creation: every stat starts at STAT_BASE and STAT_POINTS are spread freely. */
 export const STAT_BASE = 45;
 export const STAT_POINTS = 100;
@@ -274,6 +365,8 @@ export type Career = {
   blessing: string;
   /** Name and starting stats were chosen on the creation screen. */
   created: boolean;
+  /** Dream club (TEAMS id). Its scout watches every season match. */
+  team: string;
 };
 export const newCareer = (): Career => ({
   version: 1,
@@ -296,6 +389,7 @@ export const newCareer = (): Career => ({
   actions: DAY_ACTIONS,
   blessing: "",
   created: false,
+  team: "",
 });
 export type Flight = {
   start: Vec;
@@ -399,6 +493,8 @@ export type GameState = {
   /** XP earned so far in the current season match, credited when the match finishes. */
   matchXp: number;
   lastXpGain: number;
+  /** Dream-club scout evaluation before/after the last finished match. */
+  lastScout: { before: number; after: number } | null;
 };
 const initial = (career: Career, mode: Mode = "match", maxInnings = 3): GameState => ({
   mode,
@@ -449,6 +545,7 @@ const initial = (career: Career, mode: Mode = "match", maxInnings = 3): GameStat
   batFeedback: null,
   matchXp: 0,
   lastXpGain: 0,
+  lastScout: null,
 });
 export class BaseballEngine {
   private matchStrikeouts = 0;
@@ -566,6 +663,7 @@ export class BaseballEngine {
         delete (clean as Partial<{ trainedDay: number }>).trainedDay;
         // Players saved before the creation screen existed keep their name and stats.
         clean.created = typeof c.created === "boolean" ? c.created : true;
+        clean.team = typeof c.team === "string" && teamOf(c.team) ? c.team : "";
         this.state.career = clean;
         this.state.energy = clean.energy;
       }
@@ -604,6 +702,11 @@ export class BaseballEngine {
     this.matchHits = 0;
     this.matchRuns = 0;
     this.keys.clear();
+    const team = teamOf(this.state.career.team);
+    if (mode === "match" && team) {
+      this.state.detail = `${team.city} ${team.name} ${team.scout} 스카우트가 관중석에서 지켜봅니다`;
+      this.state.log = [`${team.name} 스카우트 관전 · 하늘고 vs 한빛고`];
+    }
     this.emit();
   }
   /** Adds in-match XP for season matches only; practice modes do not give XP. */
@@ -1583,7 +1686,15 @@ export class BaseballEngine {
         3,
         18,
       );
+      const before = c.scout;
       c.scout = clamp(c.scout + gain, 0, 100);
+      s.lastScout = { before, after: c.scout };
+      const team = teamOf(c.team);
+      // The dream comes true: the watching club offers a contract at 100.
+      if (team && c.scout >= 100 && !c.draft) {
+        c.draft = `${team.city} ${team.name} 입단`;
+        c.history = [`${team.name} 스카우트의 입단 제의! 꿈이 이루어졌다`, ...c.history];
+      }
       const won = s.score[1] > s.score[0],
         xp = s.matchXp + 20 + (won ? 15 : s.score[1] === s.score[0] ? 5 : 0);
       c.xp += xp;
@@ -1691,6 +1802,14 @@ export class BaseballEngine {
     this.persist();
     this.emit();
     return pick.id;
+  }
+  chooseTeam(id: string) {
+    const t = teamOf(id);
+    if (!t) return false;
+    this.state.career.team = id;
+    this.persist();
+    this.emit();
+    return true;
   }
   /** Creation screen: validates the point spread, then starts the career. */
   createPlayer(name: string, stats: Career["stats"]) {

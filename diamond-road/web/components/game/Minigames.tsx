@@ -9,41 +9,89 @@ import {
 } from "@/components/ui/dialog";
 
 /** Which minigame each training uses. Rest has no minigame. */
-export const TRAINING_GAMES: Record<string, { game: GameKind; title: string; how: string }> = {
+export const TRAINING_GAMES: Record<
+  string,
+  { game: GameKind; title: string; how: string; steps: string[]; controls: string; score: string }
+> = {
   bullpen: {
     game: "aim",
     title: "코너 공략",
-    how: "스트라이크 존에 나타나는 과녁을 사라지기 전에 클릭하세요. 8개 중 몇 개를 맞힐까요?",
+    how: "포수 미트가 가리키는 곳을 정확히 찌르는 제구 훈련입니다.",
+    steps: [
+      "스트라이크 존(3×3 칸) 안에 금색 과녁이 하나씩 나타납니다.",
+      "과녁은 약 1초 뒤 작아지며 사라집니다. 사라지기 전에 클릭하세요.",
+      "모두 8개가 나옵니다.",
+    ],
+    controls: "마우스 클릭 · 휴대폰은 터치",
+    score: "7개 이상 완벽(+2) · 4개 이상 좋음(+1) · 3개 이하 아쉬움(+0)",
   },
   weights: {
     game: "power",
     title: "하체 폭발력",
-    how: "게이지가 움직입니다. 빨간 구간(최대 출력)에서 클릭 또는 Space! 3번 시도합니다.",
+    how: "하체의 힘을 한 번에 폭발시키는 타이밍 훈련입니다.",
+    steps: [
+      "흰 막대가 게이지 위를 왼쪽↔오른쪽으로 오갑니다.",
+      "오른쪽 끝 빨간 구간(최대 출력)에 들어왔을 때 멈추세요. 금색 구간도 점수가 있습니다.",
+      "3번 시도하며, 시도할수록 막대가 빨라집니다.",
+    ],
+    controls: "Space · Enter · 게이지 클릭",
+    score: "빨강 100점 · 금색 70점 · 가운데 40점 — 평균 85 이상 완벽, 40 이상 좋음",
   },
   breaking: {
     game: "memory",
     title: "그립 기억하기",
-    how: "코치가 보여 주는 손가락 순서를 기억했다가 똑같이 누르세요. 3단계까지 있습니다.",
+    how: "코치가 보여 주는 변화구 그립 순서를 손에 익히는 훈련입니다.",
+    steps: [
+      "검지·중지·엄지·손목 버튼이 차례로 빛납니다. 순서를 기억하세요.",
+      '"이제 따라 누르세요"가 나오면 같은 순서로 누릅니다.',
+      "3개 → 4개 → 5개, 3단계입니다. 틀리면 그 자리에서 끝납니다.",
+    ],
+    controls: "버튼 클릭 · 터치",
+    score: "3단계 모두 성공 완벽 · 2단계 이상 좋음 · 1단계 이하 아쉬움",
   },
   running: {
     game: "mash",
     title: "전력 질주",
-    how: "6초 동안 Space 또는 버튼을 최대한 빠르게 연타해 결승선까지 달리세요.",
+    how: "마지막 이닝까지 버티는 체력을 만드는 달리기입니다.",
+    steps: [
+      "시작하면 6초 타이머가 돌아갑니다.",
+      "Space를 누를 때마다 선수가 앞으로 달립니다. 최대한 빠르게 연타하세요.",
+      "42번을 누르면 결승선 통과로 바로 끝납니다.",
+    ],
+    controls: 'Space 연타 · "달려!" 버튼 연타',
+    score: "결승선 도착 완벽 · 절반 이상 좋음 · 그 미만 아쉬움",
   },
   batting: {
     game: "timing",
     title: "티 배팅",
-    how: "공이 가운데 금색 구간을 지날 때 클릭 또는 Space로 스윙! 5구를 칩니다.",
+    how: "공을 끝까지 보고 배트 중심에 맞히는 타이밍 훈련입니다.",
+    steps: [
+      "하얀 공이 왼쪽에서 오른쪽으로 날아옵니다. 공마다 속도가 다릅니다.",
+      "공이 금색 타격 구간 한가운데를 지날 때 스윙하세요.",
+      "모두 5구, 스윙하지 않고 지나가면 헛스윙입니다.",
+    ],
+    controls: "Space · Enter · 화면 클릭",
+    score: "정타 100 · 잘 맞음 70 · 빗맞음 35 — 평균 85 이상 완벽, 40 이상 좋음",
   },
   power: {
     game: "power",
     title: "풀스윙",
-    how: "게이지가 움직입니다. 빨간 구간(최대 출력)에서 클릭 또는 Space! 3번 시도합니다.",
+    how: "배트에 체중을 싣는 순간을 몸에 익히는 장타 훈련입니다.",
+    steps: [
+      "흰 막대가 게이지 위를 왼쪽↔오른쪽으로 오갑니다.",
+      "오른쪽 끝 빨간 구간(최대 출력)에 들어왔을 때 멈추세요.",
+      "3번 시도하며, 시도할수록 막대가 빨라집니다.",
+    ],
+    controls: "Space · Enter · 게이지 클릭",
+    score: "빨강 100점 · 금색 70점 · 가운데 40점 — 평균 85 이상 완벽, 40 이상 좋음",
   },
   study: {
     game: "quiz",
     title: "야구 규칙 수업",
-    how: "선생님의 질문 3개에 답하세요. 많이 맞힐수록 컨디션이 오릅니다.",
+    how: "교실에서도 야구는 계속됩니다. 선생님의 규칙 퀴즈에 답하세요.",
+    steps: ["야구 규칙 문제 3개가 나옵니다.", "보기 3개 중 하나를 고르면 정답이 표시됩니다."],
+    controls: "보기 클릭 · 터치",
+    score: "3문제 정답 완벽 · 2문제 좋음 — 맞힐수록 컨디션 +2~+6",
   },
 };
 type GameKind = "aim" | "power" | "memory" | "mash" | "timing" | "quiz";
@@ -455,7 +503,19 @@ export function TrainingMinigame({
         </DialogHeader>
         {phase === "intro" && (
           <div className="mg-intro">
-            <p>결과에 따라 능력치가 +0 ~ +2 오릅니다. 시작하면 행동력 1과 체력을 씁니다.</p>
+            <ol className="mg-steps">
+              {info.steps.map((t, i) => (
+                <li key={i}>{t}</li>
+              ))}
+            </ol>
+            <dl className="mg-rules">
+              <dt>조작</dt>
+              <dd>{info.controls}</dd>
+              <dt>채점</dt>
+              <dd>{info.score}</dd>
+              <dt>비용</dt>
+              <dd>행동력 1 · 체력 (훈련을 마쳤을 때 차감, 시작 전 취소는 무료)</dd>
+            </dl>
             <button className="primary-button" onClick={() => setPhase("play")}>
               훈련 시작
             </button>

@@ -15,6 +15,7 @@ import {
   batReach,
   DAY_ACTIONS,
   BLESSINGS,
+  TEAMS,
 } from "../lib/game/engine.ts";
 
 let passed = 0;
@@ -720,5 +721,30 @@ check("Creation spends exactly the stat budget; minigame quality sets the traini
     assert(r.ok);
     assert.equal(g.state.career.stats.contact - before, gain);
   }
+});
+check("Dream club scout watches season matches; reaching 100 brings the contract", () => {
+  const g = new BaseballEngine();
+  assert(!g.chooseTeam("not-a-team"));
+  assert(g.chooseTeam(TEAMS[0].id));
+  g.start("match");
+  assert(g.state.detail.includes(TEAMS[0].name), "scout is announced at the ballpark");
+  g.state.career.scout = 95;
+  g.state.inning = 3;
+  g.state.half = "bottom";
+  g.state.outs = 3;
+  g.state.score = [0, 2];
+  g.state.phase = "result";
+  g.next();
+  assert.deepEqual(g.state.lastScout, { before: 95, after: 100 });
+  assert.equal(g.state.career.draft, `${TEAMS[0].city} ${TEAMS[0].name} 입단`);
+  const low = new BaseballEngine();
+  low.chooseTeam(TEAMS[1].id);
+  low.state.inning = 3;
+  low.state.half = "bottom";
+  low.state.outs = 3;
+  low.state.phase = "result";
+  low.next();
+  assert(low.state.lastScout.after > low.state.lastScout.before);
+  assert.equal(low.state.career.draft, "");
 });
 console.log(`\n${passed} gameplay checks passed.`);
