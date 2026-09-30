@@ -299,11 +299,12 @@ export class SoftwareField {
     faces.sort((a, b) => this.depth(b) - this.depth(a));
     faces.forEach((f) => this.drawFace(f));
     if (batter) {
-      const swung = this.engine.state.flight?.swung;
+      const swung = this.engine.state.flight?.swung,
+        side = p.x >= 0 ? 1 : -1; // left-handed batters hold the bat on the other side
       this.line(
         [
-          V(p.x + 0.2, p.y + 1.2, p.z),
-          V(p.x + (swung ? -1 : 0.5), p.y + (swung ? 1.1 : 2.15), p.z),
+          V(p.x + side * 0.2, p.y + 1.2, p.z),
+          V(p.x + side * (swung ? -1 : 0.5), p.y + (swung ? 1.1 : 2.15), p.z),
         ],
         "#dcb280",
         Math.max(2, ((5 * this.focal) / 600 / this.project(p).depth) * 4),

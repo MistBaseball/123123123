@@ -274,6 +274,13 @@ export function pitchMovement(id: PitchId, movement: number) {
     maxY: Math.max(0, y),
   };
 }
+/**
+ * Control error (m, one standard deviation) of the player's pitches. Lower stamina (energy),
+ * higher effort and poor form all widen it; the control stat narrows it.
+ */
+export const controlSpread = (control: number, energy: number, effort: number, form: number) =>
+  (0.022 + (100 - control) * 0.0019 + (100 - energy) * 0.0016 + (effort - 70) * 0.001) *
+  (1 + (100 - form) * 0.003);
 export type RunnerTrack = {
   id: number;
   from: number;
@@ -283,7 +290,12 @@ export type RunnerTrack = {
   delay: number;
   out: boolean;
   scoredAt: number | null;
+  /** After a caught fly: retouch the original base, then run for home. */
+  tagUp?: boolean;
 };
+/** A runner is at rest when standing on the base it is heading to (or out). */
+export const runnerSettled = (r: RunnerTrack) =>
+  r.out || (Math.abs(r.progress - r.target) < 1e-6 && !r.tagUp);
 export function runnerPose(r: RunnerTrack) {
   const step = Math.min(3, Math.floor(r.progress)),
     t = clamp(r.progress - step, 0, 1),
@@ -291,8 +303,9 @@ export function runnerPose(r: RunnerTrack) {
     b = BASES[step];
   return {
     position: V(lerp(a.x, b.x, t), 0, lerp(a.z, b.z, t)),
-    facing: V(b.x - a.x, 0, b.z - a.z),
-    moving: !r.out && r.progress < r.target,
+    // Runners going back to retouch a base face the base behind them.
+    facing: r.progress > r.target ? V(a.x - b.x, 0, a.z - b.z) : V(b.x - a.x, 0, b.z - a.z),
+    moving: !r.out && Math.abs(r.progress - r.target) > 1e-6,
     visible: !r.out && r.progress < 4,
   };
 }
@@ -748,10 +761,7 @@ export class BaseballEngine {
     const aim = ai
       ? V(gaussian(this.rng) * 0.29, 0.95 + gaussian(this.rng) * 0.34, 0)
       : { ...s.aim };
-    const sigma = ai
-      ? 0.04
-      : (0.022 + (100 - stats.control) * 0.0019 + fatigue * 0.0016 + (s.effort - 70) * 0.001) *
-        (1 + (100 - s.career.form) * 0.003);
+    const sigma = ai ? 0.04 : controlSpread(stats.control, s.energy, s.effort, s.career.form);
     const target = V(
         clamp(aim.x + gaussian(this.rng) * sigma, -1.05, 1.05),
         clamp(aim.y + gaussian(this.rng) * sigma, 0.09, 2.1),
@@ -1086,7 +1096,8 @@ export class BaseballEngine {
         id: i,
         from: i,
         progress: i,
-        target: hr || ground || s.outs === 2 ? Math.min(4, i + bases) : i === 0 ? 1 : i,
+        // Everyone runs on contact; a caught fly sends the runners back.
+        target: hr || ground || s.outs === 2 ? Math.min(4, i + bases) : Math.min(4, i + 1),
         pace,
         delay: i === 0 ? 0.12 : 0,
         out: false,
@@ -1309,7 +1320,20 @@ export class BaseballEngine {
   }
   private advanceLiveRunners(l: LivePlay, dt: number, previousTime: number) {
     for (const r of l.runners) {
-      if (r.out || r.progress >= r.target) continue;
+      if (r.out) continue;
+      if (r.progress > r.target + 1e-9) {
+        // Returning to retouch the base after a caught fly.
+        const back = Math.max(r.target, r.progress - r.pace * dt);
+        if (back <= r.target + 1e-9 && r.tagUp) {
+          const reached = previousTime + (r.progress - r.target) / r.pace;
+          r.tagUp = false;
+          r.target = 4;
+          r.delay = reached + 0.18;
+        }
+        r.progress = back;
+        continue;
+      }
+      if (r.progress >= r.target) continue;
       const remainingDelay = Math.max(0, r.delay - previousTime),
         usable = Math.max(0, dt - remainingDelay),
         before = r.progress;
@@ -1402,18 +1426,20 @@ export class BaseballEngine {
           l.fielderPos.x = atCatch.x;
           l.fielderPos.z = atCatch.z;
           this.retire(l, l.runners[0], 1, "fly", l.catchAt);
+          // Runners who left early head back to their base.
           for (const r of l.runners.slice(1)) {
-            r.progress = r.from;
             r.target = r.from;
             r.scoredAt = null;
           }
           if (s.outs < 3 && l.quality > 0.6 && l.land.z > 55) {
             const third = l.runners.find((r) => r.from === 3);
             if (third) {
-              third.target = 4;
-              third.delay = l.elapsed + 0.18;
+              if (third.progress <= third.from + 1e-9) {
+                third.target = 4;
+                third.delay = l.elapsed + 0.18;
+              } else third.tagUp = true;
               l.sacrifice = true;
-              s.detail = "플라이 아웃 · 3루 주자 태그업";
+              s.detail = "플라이 아웃 · 3루 주자 귀루 후 태그업";
             }
           }
         } else if (!s.autoField && !this.batting && distance(DEFENSE[l.fielder], l.catchPoint) < 18)
@@ -1441,10 +1467,7 @@ export class BaseballEngine {
     if (l.fieldedAt !== null) {
       if (l.caughtFly) {
         s.ball = { ...l.fielderPos, y: 1.55 };
-        if (
-          l.elapsed - l.fieldedAt > 0.75 &&
-          (s.outs >= 3 || l.runners.every((r) => r.out || r.progress >= r.target))
-        )
+        if (l.elapsed - l.fieldedAt > 0.75 && (s.outs >= 3 || l.runners.every(runnerSettled)))
           this.resolvePlay();
         return;
       }
@@ -1494,7 +1517,7 @@ export class BaseballEngine {
         }
       }
     }
-    const settled = l.runners.every((r) => r.out || r.progress >= r.target);
+    const settled = l.runners.every(runnerSettled);
     if (
       s.outs >= 3 ||
       (settled &&

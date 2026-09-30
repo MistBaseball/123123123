@@ -272,7 +272,7 @@ check("Non-force outs require a tag on a runner between bases", () => {
   assert(l.runners[1].progress < 2);
   assert.equal(g.state.message, "TAG OUT");
 });
-check("Fly catch immediately retires batter, holds runners and never throws to first", () => {
+check("Runners break on contact; a fly catch retires the batter and sends them back", () => {
   const g = new BaseballEngine(newCareer(), () => 0.5);
   g.state.bases = [true, true, false];
   g.contact(0.6);
@@ -280,12 +280,10 @@ check("Fly catch immediately retires batter, holds runners and never throws to f
   // A routine fly: the fielder is already under the ball.
   l.fielderPos.x = l.catchPoint.x;
   l.fielderPos.z = l.catchPoint.z;
-  while (g.state.phase === "inplay" && !l.caughtFly) {
-    assert.equal(l.runners[1].progress, 1);
-    assert.equal(l.runners[2].progress, 2);
-    g.tick(1 / 60);
-  }
+  while (g.state.phase === "inplay" && !l.caughtFly) g.tick(1 / 60);
+  assert(l.runners[1].progress > 1 && l.runners[2].progress > 2, "runners left on contact");
   assert(l.caughtFly);
+  assert(l.runners[1].target === 1 && l.runners[2].target === 2, "runners head back");
   assert.equal(g.state.outs, 1);
   assert.equal(g.state.message, "FLY OUT");
   assert(l.fieldedAt < l.flightTime);

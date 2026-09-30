@@ -575,6 +575,8 @@ export class BaseballField {
     const hand = this.engine.batter.hand === "L" ? -1 : 1;
     this.batter.root.position.set(hand * 0.82, 0, 0);
     this.batter.root.rotation.y = (hand * Math.PI) / 2;
+    // Left-handed batters are the mirror image: bat and hands on the other side.
+    this.batter.root.scale.x = hand;
     this.batter.left.rotation.x = -0.9;
     this.batter.right.rotation.x = -1.8;
     this.batter.right.rotation.z = -0.5;

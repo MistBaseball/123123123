@@ -3845,3 +3845,13 @@ kbd {
     display: none;
   }
 }
+.pp-fatigue {
+  grid-column: 1 / -1;
+  font-size: 0.7rem;
+  color: #8fa4ae;
+}
+.pp-keys {
+  margin: 0;
+  font-size: 0.72rem;
+  color: #8fa4ae;
+}

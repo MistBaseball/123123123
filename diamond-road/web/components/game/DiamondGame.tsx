@@ -63,6 +63,7 @@ import {
   TEAMS,
   teamOf,
   batReach,
+  controlSpread,
   clamp,
   pitchMovement,
   swingWindow,
@@ -1875,29 +1876,31 @@ export default function DiamondGame() {
               <h2>{batting ? "타격 플랜" : "투구 플랜"}</h2>
               <span className="status-pill">{status}</span>
             </div>
-            <div className="pp-rival">
-              <span className="pp-order">
-                {String((s.order[batting ? 1 : 0] % 9) + 1).padStart(2, "0")}
-              </span>
-              <span className="pp-rival-name">
-                <small>
-                  {batting ? "현재 타자" : "상대 타자"} · {engine.batter.hand === "L" ? "좌" : "우"}
-                  타
-                </small>
-                <strong>{engine.batter.name}</strong>
-              </span>
-              <span className="pp-rival-stats">
-                <span>
-                  컨택 <b>{engine.batter.contact}</b>
+            {!batting && (
+              <div className="pp-rival">
+                <span className="pp-order">
+                  {String((s.order[batting ? 1 : 0] % 9) + 1).padStart(2, "0")}
                 </span>
-                <span>
-                  파워 <b>{engine.batter.power}</b>
+                <span className="pp-rival-name">
+                  <small>
+                    {batting ? "현재 타자" : "상대 타자"} ·{" "}
+                    {engine.batter.hand === "L" ? "좌" : "우"}타
+                  </small>
+                  <strong>{engine.batter.name}</strong>
                 </span>
-                <span>
-                  선구 <b>{engine.batter.eye}</b>
+                <span className="pp-rival-stats">
+                  <span>
+                    컨택 <b>{engine.batter.contact}</b>
+                  </span>
+                  <span>
+                    파워 <b>{engine.batter.power}</b>
+                  </span>
+                  <span>
+                    선구 <b>{engine.batter.eye}</b>
+                  </span>
                 </span>
-              </span>
-            </div>
+              </div>
+            )}
             {!batting ? (
               <>
                 <div className="pp-step">
@@ -1959,7 +1962,7 @@ export default function DiamondGame() {
                 <div className="pp-swings">
                   {[
                     { id: "contact", name: "컨택", sub: "기본 범위" },
-                    { id: "power", name: "강공", sub: "좁고 멀리" },
+                    { id: "power", name: "강타", sub: "좁고 멀리" },
                     { id: "bunt", name: "번트", sub: "넓고 짧게" },
                   ].map((p) => (
                     <button
@@ -1973,65 +1976,66 @@ export default function DiamondGame() {
                   ))}
                 </div>
                 <BattingFeedback s={s} />
+                <p className="pp-keys">화면에서 조준 · 클릭/Space 스윙 · E 도루</p>
               </div>
             )}
-            <div className="pp-step">
-              <h3>
-                <i>{batting ? 2 : 3}</i> {batting ? "타격 조준" : "목표 지점"}
-                <small>
-                  {batting
-                    ? `배트 오차 ${s.batFeedback?.errorCm != null ? `${s.batFeedback.errorCm} cm` : "—"}`
-                    : `지난 공 오차 ${s.lastError.toFixed(1)} cm`}
-                </small>
-              </h3>
-              <AimPad engine={engine} s={s} />
-            </div>
-            <div className="pp-actions">
-              <button
-                className="primary-button throw-button"
-                disabled={batting ? s.phase !== "flight" || s.paused : !canPitch}
-                onClick={() => (batting ? engine.swing() : engine.throwAt())}
-              >
-                <MousePointer2 size={16} />
-                {batting ? "스윙" : `${pitch.name} 던지기`}
-              </button>
-              {batting ? (
-                <button
-                  className="subtle-button"
-                  disabled={
-                    !canPitch ||
-                    !((s.bases[1] && !s.bases[2]) || (s.bases[0] && !s.bases[1])) ||
-                    s.mode !== "match"
-                  }
-                  onClick={() => engine.steal()}
-                >
-                  도루 <kbd>E</kbd>
-                </button>
-              ) : (
-                <button
-                  className="subtle-button"
-                  disabled={!canPitch || s.mode !== "match"}
-                  onClick={() => engine.intentionalWalk()}
-                >
-                  고의4구
-                </button>
-              )}
-              <button
-                className="subtle-button"
-                onClick={() => engine.resetPitch()}
-                disabled={s.mode === "match" && s.phase !== "result"}
-                aria-label={s.mode === "match" ? "다음 투구" : "공 초기화"}
-              >
-                <RotateCcw size={14} /> <kbd>R</kbd>
-              </button>
-            </div>
-            <div className="pp-stamina">
-              <span>
-                <Activity size={13} /> 투수 체력
-              </span>
-              <Progress value={s.energy} aria-label="투수 체력" />
-              <b>{Math.round(s.energy)}</b>
-            </div>
+            {!batting && (
+              <>
+                <div className="pp-step">
+                  <h3>
+                    <i>3</i> 목표 지점
+                    <small>지난 공 오차 {s.lastError.toFixed(1)} cm</small>
+                  </h3>
+                  <AimPad engine={engine} s={s} />
+                </div>
+                <div className="pp-actions">
+                  <button
+                    className="primary-button throw-button"
+                    disabled={!canPitch}
+                    onClick={() => engine.throwAt()}
+                  >
+                    <MousePointer2 size={16} />
+                    {pitch.name} 던지기
+                  </button>
+                  <button
+                    className="subtle-button"
+                    disabled={!canPitch || s.mode !== "match"}
+                    onClick={() => engine.intentionalWalk()}
+                  >
+                    고의4구
+                  </button>
+                  <button
+                    className="subtle-button"
+                    onClick={() => engine.resetPitch()}
+                    disabled={s.mode === "match" && s.phase !== "result"}
+                    aria-label={s.mode === "match" ? "다음 투구" : "공 초기화"}
+                  >
+                    <RotateCcw size={14} /> <kbd>R</kbd>
+                  </button>
+                </div>
+                <div className="pp-stamina">
+                  <span>
+                    <Activity size={13} /> 투수 체력
+                  </span>
+                  <Progress value={s.energy} aria-label="투수 체력" />
+                  <b>{Math.round(s.energy)}</b>
+                  <small className="pp-fatigue">
+                    제구 오차 ±
+                    {Math.round(
+                      controlSpread(s.career.stats.control, s.energy, s.effort, s.career.form) *
+                        100,
+                    )}{" "}
+                    cm
+                    {s.energy <= 97 &&
+                      ` · 체력 저하로 +${Math.round(
+                        (controlSpread(s.career.stats.control, s.energy, s.effort, s.career.form) -
+                          controlSpread(s.career.stats.control, 100, s.effort, s.career.form)) *
+                          100,
+                      )} cm, 구속 −${((100 - s.energy) * 0.065).toFixed(1)} km/h`}
+                  </small>
+                </div>
+              </>
+            )}
           </aside>
         </div>
         <div className="controls-footer">
