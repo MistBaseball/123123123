@@ -1,0 +1,80 @@
+using UnityEngine;
+using UnityEngine.InputSystem;
+
+// First input/target test only: no gravity, collisions or pitch movement yet.
+[DisallowMultipleComponent]
+public sealed class SimplePitchController : MonoBehaviour
+{
+    [SerializeField] private Transform releasePoint;
+    [SerializeField] private Transform pitchTarget;
+    [SerializeField, Min(0.05f)] private float flightDuration = 1f;
+
+    private enum PitchState { Ready, Flying, Arrived }
+    private PitchState state;
+    private Vector3 startPosition;
+    private Vector3 targetPosition;
+    private float elapsed;
+    private float activeDuration;
+
+    private void Start()
+    {
+        if (releasePoint == null || pitchTarget == null)
+        {
+            Debug.LogError("Assign Release Point and Pitch Target on Baseball.", this);
+            enabled = false;
+            return;
+        }
+
+        ResetBall();
+    }
+
+    private void Update()
+    {
+        if (Keyboard.current != null && Keyboard.current.rKey.wasPressedThisFrame)
+        {
+            ResetBall();
+            return;
+        }
+
+        if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame)
+            TryPitch();
+
+        if (state != PitchState.Flying)
+            return;
+
+        elapsed += Time.deltaTime;
+        float progress = Mathf.Clamp01(elapsed / activeDuration);
+        transform.position = Vector3.Lerp(startPosition, targetPosition, progress);
+
+        if (progress >= 1f)
+        {
+            state = PitchState.Arrived;
+            Debug.Log("Target reached. Press R to reset.", this);
+        }
+    }
+
+    // Keep the pitch command separate so later input methods can reuse it.
+    public void TryPitch()
+    {
+        if (!isActiveAndEnabled || state != PitchState.Ready ||
+            releasePoint == null || pitchTarget == null)
+            return;
+
+        startPosition = releasePoint.position;
+        targetPosition = pitchTarget.position;
+        activeDuration = Mathf.Max(0.05f, flightDuration);
+        elapsed = 0f;
+        transform.position = startPosition;
+        state = PitchState.Flying;
+    }
+
+    public void ResetBall()
+    {
+        if (releasePoint == null)
+            return;
+
+        state = PitchState.Ready;
+        elapsed = 0f;
+        transform.position = releasePoint.position;
+    }
+}

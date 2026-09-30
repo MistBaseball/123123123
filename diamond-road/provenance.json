@@ -1,0 +1,137 @@
+{
+  "export_date": "2026-09-29",
+  "source_web_commit": "3edb3a97f2beb23e01c61fc8701264fd9d028db1",
+  "source_web_version": "WEB PLAYTEST 03",
+  "source_website": "https://diamond-road-baseball.gangjip0924.chatgpt.site",
+  "unity_project_verified": false,
+  "files_copied_before_formatting": [
+    {
+      "path": "web/components/game/DiamondGame.tsx",
+      "source_sha256": "ac488fe3262b80c88328ac728e910cfeac43e8da9369f0c5293615270718be53"
+    },
+    {
+      "path": "web/lib/game/engine.ts",
+      "source_sha256": "a684082b13c52251173f4af1c1c5ec68732e8804925c0dd1caa606f2de74f493"
+    },
+    {
+      "path": "web/lib/game/field.ts",
+      "source_sha256": "1f48eda4eb15417b58d02e28da87fec6f894d9c6683bdea2d082956c467cad23"
+    },
+    {
+      "path": "web/lib/game/software-field.ts",
+      "source_sha256": "e8c465eda71372097b80dbe1e7fd79dd82760e182a1e6abff396d6cbf3db885b"
+    },
+    {
+      "path": "web/lib/utils.ts",
+      "source_sha256": "53f3d3d070f0a9082934da25b875f9499855c2b0693868dd28be8c23d8730f68"
+    },
+    {
+      "path": "web/app/globals.css",
+      "source_sha256": "b3b989a690aac7502f37bed759f59c9d00613897c04fb97ba4591703e27fd19e"
+    },
+    {
+      "path": "web/scripts/check-game.mjs",
+      "source_sha256": "14c56047091cbf3e3248b6fd189605e8f2fb3d9ebe0849ce68ee678fb4377c51"
+    },
+    {
+      "path": "web/postcss.config.mjs",
+      "source_sha256": "dfac7ac2d86d326a0e5adb024e7943c181393ed17a5fcb8f0315b24c7da6ddde"
+    },
+    {
+      "path": "web/public/favicon.svg",
+      "source_sha256": "664bb4206dfaeb3115981ca25a199d9f04a2b86dcdce6c94d5ae9099c94f11b0"
+    },
+    {
+      "path": "web/vendor/shadcn-tailwind-4.13.0.css",
+      "source_sha256": "bc7d83425702955b4cb67cb14ede9d603f9d912376d57a2d81d661094d2a782a"
+    },
+    {
+      "path": "web/vendor/shadcn-tailwind-4.13.0.LICENSE.md",
+      "source_sha256": "1564074e13439397221ffd522e2e504d56561994a23d371aa5e3ad43e4f5423f"
+    },
+    {
+      "path": "web/components/ui/tabs.tsx",
+      "source_sha256": "865d0194331b9b2be36723fa79d3575dc83078b4cb941cafee87cb72fc2cff46"
+    },
+    {
+      "path": "web/components/ui/dialog.tsx",
+      "source_sha256": "dce39c6adc47d997bd2567f8b7a72f466b0134715105cd42f9194007b8ecdb14"
+    },
+    {
+      "path": "web/components/ui/slider.tsx",
+      "source_sha256": "0e37484f4b416e79ac18c655cac961aefacf6e67085cfc2b320ea8af545635a3"
+    },
+    {
+      "path": "web/components/ui/switch.tsx",
+      "source_sha256": "386d4d4deb39f34126f9700fe9bf5393d238485dd94018bba9d154dda84c62ae"
+    },
+    {
+      "path": "web/components/ui/select.tsx",
+      "source_sha256": "0b796a108a4eb5ba52d9ad938b7aea36dc56ae66c703a6d0a23dbc24f96daff3"
+    },
+    {
+      "path": "web/components/ui/progress.tsx",
+      "source_sha256": "c8c26e8f5f041c3cdf4915347dc1d9c022f9448f149990fadcaf303e952fa57d"
+    },
+    {
+      "path": "web/components/ui/button.tsx",
+      "source_sha256": "cc36af0f8b5019c33cc039fbf03bb952a513072b15b55b53c592b78af3e5f4c4"
+    },
+    {
+      "path": "unity/PitchingMouseMVP/README_KO.md",
+      "source_sha256": "7711a972eaf2dc9b732112f955b4181bde05da6e82985ab32127db959fc7324b"
+    },
+    {
+      "path": "unity/PitchingMouseMVP/VALIDATION.md",
+      "source_sha256": "62f57c49938159de52217e74572cc2a303380bc0cf483435cfcd6a18b06ecde4"
+    },
+    {
+      "path": "unity/PitchingMouseMVP/Validation/verify_numeric.py",
+      "source_sha256": "68df4773662a1fce8e027cab3801539b9f5b26a9f93eb3230de82c49e5b06f2b"
+    },
+    {
+      "path": "unity/PitchingMouseMVP/Assets/PitchingMouseMVP/Editor/PitchMvpSceneBuilder.cs",
+      "source_sha256": "c0f4f2a3702ac261e185e228a98cadcddc612e186f6c90a8ff0bdde92b447ea8"
+    },
+    {
+      "path": "unity/PitchingMouseMVP/Assets/PitchingMouseMVP/Editor/PitchMvpChecks.cs",
+      "source_sha256": "eb992c6681281657fa144062eac82b32829d378d2b8cea32ba15cbf2dc3a2d7c"
+    },
+    {
+      "path": "unity/PitchingMouseMVP/Assets/PitchingMouseMVP/Runtime/PitchTrajectory.cs",
+      "source_sha256": "8bba87b9604ee6e8334b823b87a42cdec733334ab7a6d94a232e2c82956b1f82"
+    },
+    {
+      "path": "unity/PitchingMouseMVP/Assets/PitchingMouseMVP/Runtime/PitchingController.cs",
+      "source_sha256": "2dc45d50bf84cc3ac97535997c3b6801d68b4c46b33c674437fdfdc08879e1d6"
+    },
+    {
+      "path": "unity/PitchingMouseMVP/Assets/PitchingMouseMVP/Runtime/PitchInputReader.cs",
+      "source_sha256": "4df8fdd8d58c92c3a9d637032a9e9ba1f09d6138d422ded653903dc9d5740cbf"
+    },
+    {
+      "path": "unity/PitchingMouseMVP/Assets/PitchingMouseMVP/Runtime/PitchHud.cs",
+      "source_sha256": "befead34225d02cc954a30ee7fcc407e3d9f89aa421974fc5de71b71cdd92a23"
+    },
+    {
+      "path": "unity/PitchingMouseMVP/Assets/PitchingMouseMVP/Runtime/PitchBallMotor.cs",
+      "source_sha256": "d67ee7b0c46144aecfdaefd460ed2be1a80f72f223e0953f2162c0f6f1a1dba8"
+    },
+    {
+      "path": "unity/PitchingMouseMVP/Assets/PitchingMouseMVP/Runtime/PitchAimPlane.cs",
+      "source_sha256": "aa5caa0791c66e52bc5696dd0a8b047d051d7909711fb627667e9f5498a44bdd"
+    },
+    {
+      "path": "docs/history/ORIGINAL_GAME_SPEC_2026-09-10.txt",
+      "source_sha256": "12d158b98eb1fde794905d13295751e2b874820902c30695a2593e3b6d6c4d6d"
+    },
+    {
+      "path": "docs/history/LEGACY_STEP1_GUIDE.md",
+      "source_sha256": "55cde59d53f97857a49073faf39b87461946e0a82c910d4b4f58c4d63cb20a8b"
+    },
+    {
+      "path": "docs/history/SimplePitchController.cs.txt",
+      "source_sha256": "4d8aa9030e46336b6fe604503e90b1fc025e7eb2420c39403c294ba299c213f3"
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+$ npm test
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> diamond-road-portable@0.3.1 test
+> node --experimental-strip-types scripts/check-game.mjs
+
+PASS Ballistic endpoint and release-speed invariants over the whole aiming zone
+PASS Strike-zone boundary includes baseball radius
+PASS All pitch types arrive at locked target, double-click cannot launch another ball
+PASS Pause freezes ball and counters, reset only aborts practice pitches
+PASS Intentional walks apply forced advances for all eight base configurations
+PASS Four balls walk, three strikes retire batter, two-strike foul remains two strikes
+PASS Single/double/triple/home run preserve runners and runs
+PASS No sacrifice run on third out
+PASS Manual fielding honors occupied force base and invalid throw choices
+PASS Base circuit is home-first-second-third-home, and both renderers face along it
+PASS A batter already on second cannot be retired by a late throw to first
+PASS Automatic second baseman chooses a live force runner, not an already-safe batter
+PASS Throwing to an occupied non-force base does not retire its safe runner
+PASS Non-force outs require a tag on a runner between bases
+PASS Fly catch immediately retires batter, holds runners and never throws to first
+PASS Missed air catch lands safely; a ground pickup cannot become a fly out
+PASS Deep fly tag-up starts only after catch; third-out fly cancels all runs
+PASS Pitch movement ranges match the whole actual trajectory at every tested rating
+PASS Close force plays agree at 30, 60 and 144 fps; simultaneous arrival is safe
+PASS Three outs swap sides only after explicit continue action
+PASS Walk-off victory and skipped home half; tie at regulation is a draw
+PASS Abandoned games do not leak strikeouts or conceded runs to saved career
+PASS Training consumes a day and energy; rest restores; live match blocks training
+PASS Fatigue and form affect velocity and control with identical random samples
+PASS Draft milestones and thresholds are reachable and finalized once
+PASS Six complete seeded games (five 3-inning and one 9-inning) end without invalid state
+PASS Batting feedback separates timing, aim error and taking a pitch
+
+27 gameplay checks passed.
+
+Exit code: 0
+
+$ npm run build
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> diamond-road-portable@0.3.1 build
+> npm run typecheck && vite build
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> diamond-road-portable@0.3.1 typecheck
+> tsc --noEmit
+
+vite v8.0.13 building client environment for production...
+[2K
+transforming...✓ 1913 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                           0.64 kB │ gzip:   0.41 kB
+dist/assets/index-CdKwVVT0.css           68.69 kB │ gzip:  14.05 kB
+dist/assets/software-field-BkyBDTRf.js    9.34 kB │ gzip:   3.99 kB
+dist/assets/index-7jCCV_TZ.js           445.56 kB │ gzip: 141.86 kB
+dist/assets/field-CH7O3Ohg.js           567.18 kB │ gzip: 144.72 kB
+
+✓ built in 410ms
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+
+Exit code: 0

@@ -1,0 +1,14 @@
+**/node_modules/
+web/dist/
+**/.DS_Store
+**/*.log
+**/.env
+**/.env.*
+**/Library/
+**/Temp/
+**/Obj/
+**/Logs/
+**/UserSettings/
+**/Build/
+**/Builds/
+!**/.env.example
