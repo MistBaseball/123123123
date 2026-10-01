@@ -38,6 +38,39 @@ function nameTag(label: string) {
   t.anisotropy = 4;
   return t;
 }
+/**
+ * Smooth path through timed keyframes (Catmull-Rom): unlike easing each segment separately,
+ * the motion never stops at a keyframe, so hands and bat keep flowing.
+ */
+function spline(keys: [number, Vec][], t: number): Vec {
+  const n = keys.length;
+  if (t <= keys[0][0]) return keys[0][1];
+  if (t >= keys[n - 1][0]) return keys[n - 1][1];
+  let k = 0;
+  while (k < n - 2 && t > keys[k + 1][0]) k++;
+  const p0 = keys[Math.max(0, k - 1)][1],
+    p1 = keys[k][1],
+    p2 = keys[k + 1][1],
+    p3 = keys[Math.min(n - 1, k + 2)][1],
+    u = (t - keys[k][0]) / (keys[k + 1][0] - keys[k][0] || 1),
+    c = (a: number, b: number, d: number, e: number) =>
+      0.5 *
+      (2 * b +
+        (d - a) * u +
+        (2 * a - 5 * b + 4 * d - e) * u * u +
+        (3 * b - a - 3 * d + e) * u * u * u);
+  return V(c(p0.x, p1.x, p2.x, p3.x), c(p0.y, p1.y, p2.y, p3.y), c(p0.z, p1.z, p2.z, p3.z));
+}
+/** Same for one number (joint angles). */
+const curve = (keys: [number, number][], t: number) =>
+  spline(
+    keys.map(([k, v]) => [k, V(v, 0, 0)]),
+    t,
+  ).x;
+const smooth = (t: number) => t * t * (3 - 2 * t);
+/** Batter's swing: seconds from the start to the follow-through, and how long it is held. */
+const SWING_TIME = 0.42;
+const SWING_HOLD = 0.45;
 /** Trail colour of the fastest pitches. */
 const HOT = new THREE.Color("#fff1c9");
 
@@ -75,6 +108,12 @@ export class BaseballField {
   private trailPositions: THREE.Vector3[] = [];
   private landing: THREE.Mesh;
   private time = 0;
+  /** Swing animation clock (render time), so a missed swing still plays to the end. */
+  private swingFlight: object | null = null;
+  private swingStart = -10;
+  private lastHand = 1;
+  /** Last shown joint rotations of the pitcher and batter, for smoothing pose changes. */
+  private poseMemory = new WeakMap<THREE.Object3D, THREE.Quaternion>();
   private resize: ResizeObserver;
   private lastPhase = "";
   private disposed = false;
@@ -853,6 +892,28 @@ export class BaseballField {
     elbow.rotation.set(bend, 0, 0);
   }
   /** Both hands to these points, elbows pointing down and slightly out. */
+  private smoothPose(f: Figure, rate: number) {
+    const joints: THREE.Object3D[] = [
+      f.root,
+      f.left,
+      f.right,
+      f.elbowL,
+      f.elbowR,
+      f.legL,
+      f.legR,
+      f.kneeL,
+      f.kneeR,
+    ];
+    if (f.bat) joints.push(f.bat);
+    for (const j of joints) {
+      const last = this.poseMemory.get(j);
+      if (!last || !f.root.visible) this.poseMemory.set(j, j.quaternion.clone());
+      else {
+        last.slerp(j.quaternion, rate);
+        j.quaternion.copy(last);
+      }
+    }
+  }
   private hands(f: Figure, right: Vec, left: Vec) {
     this.reach(f, "R", right, V(0.6, -0.8, 0.25));
     this.reach(f, "L", left, V(-0.6, -0.8, 0.25));
@@ -1172,31 +1233,45 @@ export class BaseballField {
       // Ready position: glove out in front, throwing hand relaxed.
       this.hands(p, V(0.3, 1.0, -0.12), V(-0.27, 1.08, -0.24));
     });
-    const pitcher = this.players[0],
-      ease = (t: number) => t * t * (3 - 2 * t),
-      path = (keys: [number, Vec][], t: number) => {
-        let k = 0;
-        while (k < keys.length - 2 && t > keys[k + 1][0]) k++;
-        const [t0, a] = keys[k],
-          [t1, b] = keys[k + 1],
-          v = ease(clamp((t - t0) / (t1 - t0 || 1), 0, 1));
-        return V(lerp(a.x, b.x, v), lerp(a.y, b.y, v), lerp(a.z, b.z, v));
-      };
+    const pitcher = this.players[0];
     const cocked = V(0.42, 1.74, 0.24);
     if (s.mode !== "batting" && s.phase === "ready" && !this.engine.batting) {
       // Set position: ball hidden in the glove at the chest.
       this.hands(pitcher, V(0.02, 1.28, -0.25), V(-0.05, 1.3, -0.27));
     } else if (s.phase === "windup" && !this.engine.batting) {
       const u = clamp(1 - s.timer / 0.62, 0, 1);
-      // Leg kick, then hands break: glove reaches for the plate, the ball goes down, back, up.
-      const kick = Math.sin(clamp(u / 0.8, 0, 1) * Math.PI);
-      pitcher.legL.rotation.x = kick * 1.35;
-      pitcher.kneeL.rotation.x = -kick * 1.7;
-      pitcher.kneeR.rotation.x = -kick * 0.15;
+      // Leg kick, then the front leg strides out and lands where the release pose starts,
+      // so there is no jump between the wind-up and the release.
+      pitcher.legL.rotation.x = curve(
+        [
+          [0, 0],
+          [0.42, 1.35],
+          [0.78, 0.95],
+          [1, 0.6],
+        ],
+        u,
+      );
+      pitcher.kneeL.rotation.x = curve(
+        [
+          [0, 0],
+          [0.42, -1.7],
+          [0.78, -0.95],
+          [1, -0.35],
+        ],
+        u,
+      );
+      pitcher.kneeR.rotation.x = curve(
+        [
+          [0, 0],
+          [0.42, -0.18],
+          [1, 0],
+        ],
+        u,
+      );
       pitcher.root.rotation.x = -0.08 * Math.sin(u * Math.PI);
       this.hands(
         pitcher,
-        path(
+        spline(
           [
             [0, V(0.02, 1.28, -0.25)],
             [0.4, V(0.0, 1.4, -0.22)],
@@ -1205,7 +1280,7 @@ export class BaseballField {
           ],
           u,
         ),
-        path(
+        spline(
           [
             [0, V(-0.05, 1.3, -0.27)],
             [0.4, V(-0.04, 1.42, -0.24)],
@@ -1214,25 +1289,39 @@ export class BaseballField {
           u,
         ),
       );
-    } else if (s.phase === "flight" && f0 && !this.engine.batting) {
+    } else if (
+      (s.phase === "flight" || (s.phase === "result" && !s.live)) &&
+      f0 &&
+      !this.engine.batting
+    ) {
       // Release out in front, then follow through across the body; front leg planted.
-      const k = clamp(f0.elapsed / 0.3, 0, 1);
-      pitcher.root.rotation.x = 0.28 * ease(k);
+      // The finish is held through the call, then the pose eases back (pose smoothing).
+      const k = s.phase === "result" ? 1 : clamp(f0.elapsed / 0.34, 0, 1),
+        e = smooth(k);
+      pitcher.root.rotation.x = 0.28 * e;
       pitcher.legL.rotation.x = 0.6;
       pitcher.kneeL.rotation.x = -0.35;
-      pitcher.legR.rotation.x = -0.5 * ease(k);
-      pitcher.kneeR.rotation.x = -0.9 * ease(k);
+      pitcher.legR.rotation.x = -0.5 * e;
+      pitcher.kneeR.rotation.x = -0.9 * e;
       this.hands(
         pitcher,
-        path(
+        spline(
           [
             [0, cocked],
-            [0.35, V(0.3, 1.86, -0.38)],
+            [0.3, V(0.3, 1.86, -0.38)],
+            [0.62, V(0.0, 1.2, -0.5)],
             [1, V(-0.22, 0.86, -0.38)],
           ],
           k,
         ),
-        V(-0.2, 1.2, -0.06),
+        spline(
+          [
+            [0, V(-0.16, 1.5, -0.55)],
+            [0.35, V(-0.1, 1.3, -0.3)],
+            [1, V(-0.2, 1.2, -0.06)],
+          ],
+          k,
+        ),
       );
     }
     const catcher = this.players[1];
@@ -1250,6 +1339,11 @@ export class BaseballField {
     // From the catcher camera the catcher model would hide the zone and the incoming ball.
     catcher.root.visible = cam !== "catcher" || s.phase === "inplay";
     const hand = this.engine.batter.hand === "L" ? -1 : 1;
+    // A new batter from the other side: jump to his stance instead of turning around.
+    if (hand !== this.lastHand) {
+      this.lastHand = hand;
+      this.poseMemory = new WeakMap();
+    }
     this.batter.root.position.set(hand * 0.82, -0.04, 0);
     // Athletic stance: feet wider than the shoulders, knees soft.
     this.batter.legL.rotation.set(0.12, 0, -0.16);
@@ -1263,33 +1357,84 @@ export class BaseballField {
     // The batter leaves the box only on a batted ball (not on a steal, pickoff or wild pitch).
     this.batter.root.visible =
       s.mode !== "bullpen" && !(s.phase === "inplay" && s.live?.kind === "batted");
-    // Batting: both hands on the handle (left hand lower). The bat starts up over the back
-    // shoulder, comes through level over the plate and wraps over the front shoulder.
-    const su = f?.swung ? clamp((f.elapsed - f.swingTime) / 0.22, 0, 1) : 0;
-    this.batter.root.rotation.y = (hand * Math.PI) / 2 + hand * 0.85 * ease(su);
-    const grip = path(
+    // Swing clock in render time: starts when the player swings (or, for the AI batter, when
+    // its swing is decided at the plate, already partway so the bat meets the ball there).
+    // A miss still plays the whole swing and follow-through; a new pitch resets it.
+    if (f && (f.swung || f.aiSwing) && this.swingFlight !== f) {
+      this.swingFlight = f;
+      this.swingStart = this.time - (f.aiSwing && !f.swung ? SWING_TIME * 0.45 : 0);
+    } else if (!f || (f !== this.swingFlight && (s.phase === "ready" || s.phase === "windup")))
+      this.swingFlight = null;
+    const since = this.swingFlight ? this.time - this.swingStart : Infinity,
+      // 0 = stance … 1 = follow-through; after the hold the batter settles back into the stance.
+      su = since <= SWING_TIME + SWING_HOLD ? clamp(since / SWING_TIME, 0, 1) : 0;
+    // Batting: both hands on the handle (left hand lower). Load (hands back), then the bat
+    // comes through level over the plate (fastest at contact) and wraps over the front shoulder.
+    this.batter.root.rotation.y =
+      (hand * Math.PI) / 2 +
+      hand *
+        curve(
+          [
+            [0, 0],
+            [0.2, -0.12],
+            [0.5, 0.45],
+            [0.75, 0.82],
+            [1, 0.9],
+          ],
+          su,
+        );
+    // Stride: the front leg lifts a little on the load and plants before contact.
+    this.batter.legL.rotation.x = curve(
+      [
+        [0, 0.12],
+        [0.18, 0.42],
+        [0.42, 0.18],
+        [1, 0.1],
+      ],
+      su,
+    );
+    this.batter.kneeL.rotation.x = curve(
+      [
+        [0, -0.3],
+        [0.18, -0.7],
+        [0.42, -0.15],
+        [1, -0.1],
+      ],
+      su,
+    );
+    this.batter.kneeR.rotation.x = curve(
+      [
+        [0, -0.3],
+        [0.5, -0.45],
+        [1, -0.6],
+      ],
+      su,
+    );
+    const grip = spline(
         [
           [0, V(0.17, 1.4, -0.14)],
+          [0.2, V(0.22, 1.46, -0.04)],
           [0.5, V(-0.02, 1.1, -0.42)],
+          [0.78, V(-0.24, 1.3, -0.3)],
           [1, V(-0.28, 1.42, -0.1)],
         ],
         su,
       ),
-      dirs: [number, THREE.Vector3][] = [
-        [0, new THREE.Vector3(0.4, 0.82, 0.4)],
-        [0.5, new THREE.Vector3(-0.3, 0.06, -0.95)],
-        [1, new THREE.Vector3(-0.35, 0.55, 0.76)],
-      ];
-    let di = su < 0.5 ? 0 : 1;
-    const a = dirs[di][1].clone().normalize(),
-      b = dirs[di + 1][1].clone().normalize(),
-      v = ease(clamp((su - dirs[di][0]) / 0.5, 0, 1)),
-      up = new THREE.Vector3(0, 1, 0),
-      qa = new THREE.Quaternion().setFromUnitVectors(up, a),
-      qb = new THREE.Quaternion().setFromUnitVectors(up, b);
+      // Bat direction along the same smooth path (normalised), so it never pauses at contact.
+      dir = spline(
+        [
+          [0, V(0.4, 0.82, 0.4)],
+          [0.2, V(0.5, 0.75, 0.55)],
+          [0.5, V(-0.3, 0.06, -0.95)],
+          [0.78, V(-0.6, 0.35, -0.2)],
+          [1, V(-0.35, 0.55, 0.76)],
+        ],
+        su,
+      ),
+      up = new THREE.Vector3(0, 1, 0);
     const bat = this.batter.bat!;
     bat.position.set(grip.x, grip.y, grip.z);
-    bat.quaternion.slerpQuaternions(qa, qb, v);
+    bat.quaternion.setFromUnitVectors(up, new THREE.Vector3(dir.x, dir.y, dir.z).normalize());
     const along = new THREE.Vector3(0, 1, 0).applyQuaternion(bat.quaternion);
     this.hands(
       this.batter,
@@ -1385,6 +1530,10 @@ export class BaseballField {
     const material = this.trail.material as THREE.LineBasicMaterial;
     material.color.set(pitchData(f?.pitch ?? s.selected).color).lerp(HOT, heat * 0.7);
     material.opacity = 0.4 + heat * 0.6;
+    // Ease the pitcher's and batter's joints toward this frame's pose, so phase changes
+    // (set → wind-up → release → back to the set, swing → stance) never snap.
+    const rate = 1 - Math.exp(-dt * 26);
+    for (const fig of [this.players[0], this.batter]) this.smoothPose(fig, rate);
     this.renderer.render(this.scene, this.camera);
   }
   dispose() {

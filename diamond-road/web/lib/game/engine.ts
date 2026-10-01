@@ -1170,6 +1170,8 @@ export type Flight = {
   wild: boolean;
   /** Knuckle wobble phase, rolled at release. */
   seed?: number;
+  /** The AI batter swung at this pitch (for the swing animation; set when the pitch arrives). */
+  aiSwing?: boolean;
 };
 export type BatFeedback = {
   timing: "early" | "good" | "late" | "take";
@@ -1958,6 +1960,7 @@ export class BaseballEngine {
         return;
       }
       const swing = this.rng() < (zone ? 0.69 : chase * Math.max(0.1, 1.6 - edge * 0.5));
+      f.aiSwing = swing;
       if (swing) {
         const difficulty = s.difficulty === "hard" ? 0.1 : s.difficulty === "easy" ? -0.12 : 0,
           prob = clamp(
