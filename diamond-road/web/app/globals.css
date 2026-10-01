@@ -4714,3 +4714,9 @@ kbd {
 .ts-pitcher small {
   color: #b0bec3;
 }
+.team-boost {
+  margin-left: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #9fc9a8;
+}

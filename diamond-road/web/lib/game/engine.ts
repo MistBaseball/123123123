@@ -886,6 +886,8 @@ export type Player = {
   power: number;
   eye: number;
   speed: number;
+  /** A pro-club player: ratings on the pro scale (150 ± 50), see proForm(). */
+  pro?: boolean;
 };
 /** Our school. The player bats first in its lineup; the eight teammates never change. */
 export const HOME_SCHOOL = "미산고";
@@ -1049,10 +1051,84 @@ export function makeRoster(
   rosterCache.set(key, roster);
   return roster;
 }
+/** Pro ratings: average 150, spread ±50 (100–200). */
+export const PRO_MEAN = 150;
+export const PRO_SPREAD = 50;
+/**
+ * A pro club's fixed roster (seeded by the club name). Ratings are 150 ± 50 by batting-order
+ * role; the ace's speed and control come from his own rating on the same scale.
+ */
+export function makeProRoster(name: string): Roster {
+  const key = `${name}|pro`,
+    cached = rosterCache.get(key);
+  if (cached) return cached;
+  let seed = hashName(name) ^ 0x5bd1e995;
+  const rnd = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296,
+    pick = <T>(a: T[]) => a[Math.floor(rnd() * a.length)],
+    used = new Set<string>(),
+    person = () => {
+      let n = "";
+      do n = pick(SURNAMES) + pick(GIVEN) + pick(GIVEN);
+      while (used.has(n) || n[1] === n[2]);
+      used.add(n);
+      return n;
+    },
+    rate = (role: number) =>
+      Math.round(
+        clamp(
+          PRO_MEAN + role + (rnd() - 0.5) * 2 * PRO_SPREAD,
+          PRO_MEAN - PRO_SPREAD,
+          PRO_MEAN + PRO_SPREAD,
+        ),
+      );
+  const lineup: Player[] = SLOT_ROLES.map((r) => ({
+    name: person(),
+    hand: (rnd() < 0.32 ? "L" : "R") as "L" | "R",
+    contact: rate(r.contact),
+    power: rate(r.power),
+    eye: rate(r.eye),
+    speed: rate(r.speed),
+    pro: true,
+  }));
+  const aceRating = rate(0),
+    strength = proForm(aceRating);
+  const roster: Roster = {
+    name,
+    style: "프로",
+    lineup,
+    ace: {
+      name: person(),
+      hand: rnd() < 0.3 ? "L" : "R",
+      velocity: Math.round((strength - 62) * 0.45 + (rnd() - 0.5) * 4),
+      control:
+        Math.round(clamp(1.25 - (strength - 50) * 0.014 + (rnd() - 0.5) * 0.15, 0.7, 1.4) * 100) /
+        100,
+      kinds: 4,
+    },
+  };
+  rosterCache.set(key, roster);
+  return roster;
+}
+/**
+ * What a pro rating means in the game formulas: 150 (pro average) plays like the 80-rated pro
+ * rosters the pro stage was tuned with; 100 like 60, 200 like 100.
+ */
+export const proForm = (v: number) => 80 + (v - PRO_MEAN) * 0.4;
+/** The player as the formulas see him (pro players mapped by proForm, everyone else as is). */
+export const formOf = (p: Player): Player =>
+  p.pro
+    ? {
+        ...p,
+        contact: proForm(p.contact),
+        power: proForm(p.power),
+        eye: proForm(p.eye),
+        speed: proForm(p.speed),
+      }
+    : p;
+/** Share of the player's average stat gain that the teammates gain too. */
+export const TEAM_GROWTH = 0.75;
 /** Today's rival school (a different one each match day). */
 export const opponentSchool = (day: number) => SCHOOLS[(Math.max(1, day) - 1) % SCHOOLS.length];
-/** Strength of a pro club's roster. */
-const PRO_STRENGTH = 80;
 export type Career = {
   version: 1;
   name: string;
@@ -1099,6 +1175,8 @@ export type Career = {
   proGoal: boolean;
   /** Secret "오타니" start: stats may stay above the high-school cap (optional, older saves lack it). */
   legend?: boolean;
+  /** Rating points every teammate has gained with the player (optional, older saves: 0). */
+  teamBoost?: number;
 };
 /** Highest a stat can go for this career (the pro cap for a legend start). */
 export const statCapOf = (c: Pick<Career, "stage" | "legend">) =>
@@ -1390,14 +1468,14 @@ export class BaseballEngine {
     const c = this.state.career,
       club = c.stage === "pro" ? teamOf(c.club) : null;
     return club
-      ? makeRoster(club.name, PRO_STRENGTH)
+      ? makeProRoster(club.name)
       : { name: HOME_SCHOOL, style: "", lineup: HOME_LINEUP, ace: makeRoster(HOME_SCHOOL, 60).ace };
   }
   /** Today's opponent: a rival high school (new each day) or a rival pro club. */
   get awayRoster(): Roster {
     const c = this.state.career,
       [away] = matchTeams(c);
-    if (c.stage === "pro" && teamOf(c.club)) return makeRoster(away, PRO_STRENGTH);
+    if (c.stage === "pro" && teamOf(c.club)) return makeProRoster(away);
     const school = opponentSchool(c.day);
     return makeRoster(school.name, school.strength, school.style);
   }
@@ -1408,16 +1486,23 @@ export class BaseballEngine {
   ourRunner(i: number): Player {
     const c = this.state.career,
       p = this.homeRoster.lineup[i % 9];
-    return i % 9 === 0
-      ? {
-          ...p,
-          name: c.name,
-          nick: "",
-          hand: "R",
-          contact: c.stats.contact,
-          power: c.stats.power,
-          speed: c.stats.speed,
-        }
+    if (i % 9 === 0)
+      return {
+        ...p,
+        name: c.name,
+        nick: "",
+        hand: "R",
+        contact: c.stats.contact,
+        power: c.stats.power,
+        speed: c.stats.speed,
+        pro: false,
+      };
+    // Teammates grow with the player (TEAM_GROWTH of his average gain), up to the stage cap.
+    const boost = Math.floor(c.teamBoost ?? 0),
+      cap = STAGES[c.stage].statCap,
+      up = (v: number) => Math.min(cap, Math.max(v, v + boost));
+    return boost
+      ? { ...p, contact: up(p.contact), power: up(p.power), eye: up(p.eye), speed: up(p.speed) }
       : p;
   }
   /** Our at-bat in slot i: the same player who then runs the bases. */
@@ -1463,7 +1548,9 @@ export class BaseballEngine {
   }
   /** Chase speed (m/s), first-step reaction (s) and throw speed (m/s) of fielder i. */
   fielderStats(i: number, l?: Pick<LivePlay, "reactionExtra" | "throwSpeed">) {
-    const k = fieldSkill(this.fielders[i] ?? { speed: 65, eye: 65, power: 65 }),
+    const k = fieldSkill(
+        this.fielders[i] ? formOf(this.fielders[i]) : { speed: 65, eye: 65, power: 65 },
+      ),
       st = this.stageRules;
     return {
       speed: st.fielderSpeed * k.run,
@@ -1582,6 +1669,10 @@ export class BaseballEngine {
         clean.stage = c.stage === "pro" && clean.proUnlocked ? "pro" : "high";
         clean.proGoal = c.proGoal === true && clean.stage === "pro";
         clean.legend = c.legend === true;
+        clean.teamBoost =
+          typeof c.teamBoost === "number" && Number.isFinite(c.teamBoost)
+            ? clamp(c.teamBoost, 0, 200)
+            : 0;
         this.state.career = clean;
         this.state.energy = clean.energy;
         if (this.checkHiddenPitches()) this.persist();
@@ -1713,7 +1804,7 @@ export class BaseballEngine {
     // The batter reads a zone around the true crossing point. The true point is always inside.
     let hint: Flight["hint"] = null;
     if (ai) {
-      const r = contactHintRadius(this.batter.contact) * stage.hintScale,
+      const r = contactHintRadius(formOf(this.batter).contact) * stage.hintScale,
         angle = this.rng() * Math.PI * 2,
         off = r * 0.8 * Math.sqrt(this.rng());
       hint = { x: target.x + Math.cos(angle) * off, y: target.y + Math.sin(angle) * off, r };
@@ -1739,7 +1830,7 @@ export class BaseballEngine {
     // STEAL_READY → the runner on first breaks with the pitcher's first move.
     s.stealTrack = null;
     if (s.stealCall && s.mode === "match" && this.batting && s.bases[0] && !s.bases[1]) {
-      const pace = this.runnerPace(this.runnerOnFirst.speed);
+      const pace = this.runnerPace(formOf(this.runnerOnFirst).speed);
       s.stealTrack = {
         id: 1,
         from: 1,
@@ -1898,7 +1989,7 @@ export class BaseballEngine {
           spatial = Math.hypot(f.batAim.x - f.target.x, f.batAim.y - f.target.y),
           style = SWING_STYLES[s.swingStyle],
           window = swingWindow(s.difficulty, s.career.stage, s.swingStyle),
-          reach = batReach(this.batter.contact, s.swingStyle),
+          reach = batReach(formOf(this.batter).contact, s.swingStyle),
           contact = Math.abs(timing) < window && spatial < reach,
           // Contact swing: a near miss is fouled off, so the batter survives the pitch.
           cut =
@@ -1919,7 +2010,7 @@ export class BaseballEngine {
             1 -
               (Math.abs(timing) / window) * 0.65 -
               (spatial / reach) * 0.3 +
-              this.batter.contact * 0.001,
+              formOf(this.batter).contact * 0.001,
             0,
             1,
           );
@@ -1949,7 +2040,7 @@ export class BaseballEngine {
         else this.ball();
       }
     } else {
-      const b = this.batter,
+      const b = formOf(this.batter),
         eye = b.eye + stage.batterEye,
         // The pitcher's movement rating sharpens each pitch's bite (1 = rating 65).
         bite = movementBite(f.movement),
@@ -2132,7 +2223,7 @@ export class BaseballEngine {
         : clamp(timing * 4 + (this.rng() - 0.5) * 1.05, -0.76, 0.76),
       range = bunt
         ? clamp(RULES.buntSweet + (this.rng() - 0.5) * 2 * miss * 5, RULES.buntMin, RULES.buntMax)
-        : (8 + q * q * 115) * carryScale(this.batter.power),
+        : (8 + q * q * 115) * carryScale(formOf(this.batter).power),
       land = V(Math.sin(angle) * range, 0.12, Math.cos(angle) * range);
     let fielder = 2,
       best = Infinity;
@@ -2170,7 +2261,7 @@ export class BaseballEngine {
     const catchU = (lo + hi) / 2,
       catchPoint = V(land.x * catchU, 1.55, land.z * catchU),
       defenders = DEFENSE.map((p) => ({ ...p }));
-    const pace = this.runnerPace(this.batter.speed) * (hr ? 1.65 : 1),
+    const pace = this.runnerPace(formOf(this.batter).speed) * (hr ? 1.65 : 1),
       // With fewer than two outs, runners read a fly ball: they keep going, but at a
       // careful pace until it lands, so a catch can still send them back.
       reading = !hr && !ground && s.outs < 2,
@@ -2837,7 +2928,7 @@ export class BaseballEngine {
   /** Base runners still on their bags at the start of a non-batted play, with a lead. */
   private baseRunners(lead: number, reaction: number): RunnerTrack[] {
     const s = this.state,
-      pace = this.runnerPace(this.batting ? this.runnerOnFirst.speed : this.batter.speed);
+      pace = this.runnerPace(formOf(this.batting ? this.runnerOnFirst : this.batter).speed);
     return [1, 2, 3]
       .filter((i) => s.bases[i - 1])
       .map((i) => ({
@@ -3262,8 +3353,14 @@ export class BaseballEngine {
     c.energy = clamp(c.energy - o.cost, 0, 100);
     c.actions--;
     c.xp += kind === "rest" ? XP.rest : XP.training;
-    if (o.stat) c.stats[o.stat] = clamp(c.stats[o.stat] + o.gain, 0, cap);
-    else c.form = clamp(c.form + o.gain, 0, 100);
+    if (o.stat) {
+      const before = c.stats[o.stat];
+      c.stats[o.stat] = clamp(before + o.gain, 0, cap);
+      // The team grows too: TEAM_GROWTH of the rise in the player's average (7 stats).
+      const rise = c.stats[o.stat] - before,
+        n = Object.keys(c.stats).length;
+      c.teamBoost = (c.teamBoost ?? 0) + (rise / n) * TEAM_GROWTH;
+    } else c.form = clamp(c.form + o.gain, 0, 100);
     if (o.stat) c.form = clamp(c.form - 2, 0, 100);
     c.scout = clamp(c.scout + (o.stat ? 0.5 : 0), 0, 100);
     c.history = [
@@ -3425,6 +3522,8 @@ export class BaseballEngine {
     if (!club || this.matchActive) return false;
     if (c.stage === "pro") return true;
     c.stage = "pro";
+    // New club, new teammates: the team growth starts again from zero.
+    c.teamBoost = 0;
     c.proUnlocked = true;
     c.proGoal = false;
     c.scout = 30;

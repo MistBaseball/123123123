@@ -5,6 +5,7 @@ import {
   DEFENSE,
   pitchData,
   playerLabel,
+  formOf,
   V,
   batReach,
   clamp,
@@ -892,7 +893,7 @@ export class BaseballField {
     elbow.rotation.set(bend, 0, 0);
   }
   /** Both hands to these points, elbows pointing down and slightly out. */
-  private smoothPose(f: Figure, rate: number) {
+  private smoothPose(f: Figure, rate: number, restore: [THREE.Object3D, THREE.Euler][]) {
     const joints: THREE.Object3D[] = [
       f.root,
       f.left,
@@ -909,6 +910,7 @@ export class BaseballField {
       const last = this.poseMemory.get(j);
       if (!last || !f.root.visible) this.poseMemory.set(j, j.quaternion.clone());
       else {
+        restore.push([j, j.rotation.clone()]);
         last.slerp(j.quaternion, rate);
         j.quaternion.copy(last);
       }
@@ -1504,7 +1506,7 @@ export class BaseballField {
     this.target.position.set(aim.x, aim.y, 0.03);
     // When batting, the aim ring shows how far the bat may miss and still connect.
     this.target.scale.setScalar(
-      this.engine.batting ? batReach(this.engine.batter.contact, s.swingStyle) / 0.09 : 1,
+      this.engine.batting ? batReach(formOf(this.engine.batter).contact, s.swingStyle) / 0.09 : 1,
     );
     const hint = this.engine.batting && s.flight ? s.flight.hint : null;
     this.hint.visible =
@@ -1532,9 +1534,19 @@ export class BaseballField {
     material.opacity = 0.4 + heat * 0.6;
     // Ease the pitcher's and batter's joints toward this frame's pose, so phase changes
     // (set → wind-up → release → back to the set, swing → stance) never snap.
-    const rate = 1 - Math.exp(-dt * 26);
-    for (const fig of [this.players[0], this.batter]) this.smoothPose(fig, rate);
+    // Only the drawn image is smoothed: the computed pose is put back after rendering, so the
+    // next frame's pose code never reads a blended (re-decomposed) rotation.
+    const rate = 1 - Math.exp(-dt * 26),
+      restore: [THREE.Object3D, THREE.Euler][] = [];
+    this.smoothPose(this.players[0], rate, restore);
+    // After a swing the batter settles back into the stance more slowly (about half a second).
+    const settling =
+      this.time - this.swingStart > SWING_TIME + SWING_HOLD && this.time - this.swingStart < 2;
+    this.smoothPose(this.batter, settling ? 1 - Math.exp(-dt * 7) : rate, restore);
     this.renderer.render(this.scene, this.camera);
+    // Restore the exact angles (Euler), not a quaternion: re-reading a turn past 90° as Euler
+    // angles flips x and z, which made the batter shake on every swing.
+    for (const [j, e] of restore) j.rotation.copy(e);
   }
   dispose() {
     this.disposed = true;

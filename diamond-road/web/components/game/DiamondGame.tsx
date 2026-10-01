@@ -76,6 +76,7 @@ import {
   STAGES,
   statCapOf,
   LEGEND_PITCHES,
+  formOf,
   STAT_NAMES,
   STAT_INFO,
   HOME_LINEUP,
@@ -515,8 +516,8 @@ function AimPad({ engine, s }: { engine: BaseballEngine; s: GameState }) {
         <g transform={`translate(${toX(aim.x)} ${toY(aim.y)})`} stroke="#f1c771" strokeWidth="1.6">
           {batting && (
             <ellipse
-              rx={(batReach(engine.batter.contact, s.swingStyle) / 1.4) * 280}
-              ry={(batReach(engine.batter.contact, s.swingStyle) / 1.7) * 240}
+              rx={(batReach(formOf(engine.batter).contact, s.swingStyle) / 1.4) * 280}
+              ry={(batReach(formOf(engine.batter).contact, s.swingStyle) / 1.7) * 240}
               fill="#f1c771"
               fillOpacity=".06"
               strokeOpacity=".5"
@@ -679,6 +680,8 @@ function LineScore({ s }: { s: GameState }) {
 /** Both teams' strength side by side (lineup averages, defense, starting pitcher). */
 function TeamStrength({ engine }: { engine: BaseballEngine }) {
   const teams = [engine.teamStrength(false), engine.teamStrength(true)],
+    // Bars fill at the stage's top rating (100 in high school, 200 in the pros).
+    top = STAGES[engine.state.career.stage].statCap,
     rows: [string, "contact" | "power" | "eye" | "speed" | "defense"][] = [
       ["컨택", "contact"],
       ["파워", "power"],
@@ -707,7 +710,7 @@ function TeamStrength({ engine }: { engine: BaseballEngine }) {
                   key={i}
                   className={`ts-cell ${i ? "home" : "away"} ${better ? "better" : ""}`}
                 >
-                  <i style={{ width: `${Math.min(100, v)}%` }} />
+                  <i style={{ width: `${Math.min(100, (v / top) * 100)}%` }} />
                   <b>{v}</b>
                 </span>
               );
@@ -837,35 +840,35 @@ function CareerView({ engine, s }: { engine: BaseballEngine; s: GameState }) {
               </div>
             ))}
           </div>
-          {c.stage !== "pro" && (
-            <>
-              <h3>미산고 라인업</h3>
-              <p className="muted small">
-                나는 1번 타자. 2~9번은 동료가 자기 능력치로 타석에 서고, 스윙은 모두 내가 조작한다.
-              </p>
-              <ol className="team-lineup">
-                {HOME_LINEUP.map((p, i) => (
-                  <li key={i}>
-                    <span>{i + 1}</span>
-                    <strong>
-                      {i === 0 ? (
-                        c.name
-                      ) : (
-                        <>
-                          <em>[{p.nick}]</em> {p.name}
-                        </>
-                      )}
-                    </strong>
-                    <small>
-                      {i === 0
-                        ? `컨 ${c.stats.contact} · 파 ${c.stats.power} · 주 ${c.stats.speed}`
-                        : `컨 ${p.contact} · 파 ${p.power} · 주 ${p.speed}`}
-                    </small>
-                  </li>
-                ))}
-              </ol>
-            </>
-          )}
+          <h3>
+            {engine.homeRoster.name} 라인업
+            {Math.floor(c.teamBoost ?? 0) > 0 && (
+              <small className="team-boost"> 팀 성장 +{Math.floor(c.teamBoost ?? 0)}</small>
+            )}
+          </h3>
+          <p className="muted small">
+            나는 1번 타자. 2~9번은 동료가 자기 능력치로 타석에 서고, 스윙은 모두 내가 조작한다. 내
+            능력치 평균이 오르면 동료 능력치도 그 75%만큼 함께 오른다.
+          </p>
+          <ol className="team-lineup">
+            {Array.from({ length: 9 }, (_, i) => engine.ourRunner(i)).map((p, i) => (
+              <li key={i}>
+                <span>{i + 1}</span>
+                <strong>
+                  {p.nick ? (
+                    <>
+                      <em>[{p.nick}]</em> {p.name}
+                    </>
+                  ) : (
+                    p.name
+                  )}
+                </strong>
+                <small>
+                  컨 {p.contact} · 파 {p.power} · 주 {p.speed}
+                </small>
+              </li>
+            ))}
+          </ol>
           <h3>나의 야구 일지</h3>
           <ol>
             {c.history.map((item, i) => (

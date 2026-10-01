@@ -36,6 +36,9 @@ import {
   visualFlightTime,
   fieldSkill,
   teamRatings,
+  makeProRoster,
+  formOf,
+  TEAM_GROWTH,
   HOME_SCHOOL,
   SCHOOLS,
   makeRoster,
@@ -1769,4 +1772,103 @@ check("Fielders have names and their own stats: quick, sharp fielders take away 
     { contact: 70, power: 60, eye: 60, speed: 70 },
   );
 });
+check(
+  "Teammates grow with the player: 75% of his average gain, capped, saved, reset in the pros",
+  () => {
+    const store = {};
+    globalThis.localStorage = {
+      getItem: (k) => store[k] ?? null,
+      setItem: (k, v) => (store[k] = String(v)),
+    };
+    try {
+      const g = new BaseballEngine(newCareer(), () => 0.5);
+      const before = g.ourRunner(1),
+        avg = (c) => Object.values(c.stats).reduce((a, v) => a + v, 0) / 7,
+        start = avg(g.state.career);
+      // Seven "perfect" sessions (+2 each) spread over a few days.
+      const kinds = ["batting", "power", "sprint", "bullpen", "weights", "breaking", "running"];
+      for (const k of kinds) {
+        g.state.career.actions = 5;
+        g.state.career.energy = 100;
+        assert(g.train(k, 1).ok, k);
+      }
+      const rise = avg(g.state.career) - start;
+      assert(Math.abs(g.state.career.teamBoost - rise * TEAM_GROWTH) < 1e-9);
+      const after = g.ourRunner(1),
+        boost = Math.floor(g.state.career.teamBoost);
+      assert.equal(boost, 1, "two points of average → +1 for every teammate");
+      assert.equal(after.contact, before.contact + boost);
+      assert.equal(after.speed, Math.min(100, before.speed + boost));
+      // The player himself is never boosted, and 99-rated teammates stop at the cap of 100.
+      assert.equal(g.ourRunner(0).contact, g.state.career.stats.contact);
+      g.state.career.teamBoost = 30;
+      assert.equal(g.ourRunner(3).contact, 100, "김영호 stops at 100 in high school");
+      g.persist();
+      const again = new BaseballEngine();
+      again.load();
+      assert.equal(again.state.career.teamBoost, 30, "saved with the career");
+      // Older saves have no team growth.
+      const old = newCareer();
+      delete old.teamBoost;
+      store["diamond-road-career-v1"] = JSON.stringify(old);
+      const legacy = new BaseballEngine();
+      legacy.load();
+      assert.equal(legacy.state.career.teamBoost, 0);
+    } finally {
+      delete globalThis.localStorage;
+    }
+  },
+);
+check(
+  "Pro clubs: ratings average about 150 with a ±50 spread, playing like the tuned pro level",
+  () => {
+    const all = [];
+    for (const t of TEAMS) {
+      const r = makeProRoster(t.name);
+      assert.equal(makeProRoster(t.name), r, "fixed roster per club");
+      for (const p of r.lineup) {
+        assert(p.pro);
+        for (const k of ["contact", "power", "eye", "speed"]) {
+          assert(p[k] >= 100 && p[k] <= 200, `${p[k]}`);
+          all.push(p[k]);
+        }
+      }
+    }
+    const mean = all.reduce((a, v) => a + v, 0) / all.length;
+    assert(Math.abs(mean - 150) < 8, `mean ${mean}`);
+    assert(Math.max(...all) - Math.min(...all) > 70, "real spread");
+    // In the formulas 150 plays like the 80-rated rosters the pro stage was tuned with.
+    assert.equal(
+      formOf({ name: "", hand: "R", contact: 150, power: 150, eye: 150, speed: 150, pro: true })
+        .contact,
+      80,
+    );
+    assert.equal(
+      formOf({ name: "", hand: "R", contact: 150, power: 50, eye: 50, speed: 50 }).contact,
+      150,
+    );
+    // A pro career plays against and with pro rosters; the move resets the team growth.
+    const g = new BaseballEngine(
+      Object.assign(newCareer(), {
+        stage: "pro",
+        club: TEAMS[0].id,
+        proUnlocked: true,
+        teamBoost: 12,
+      }),
+      () => 0.5,
+    );
+    assert(g.awayRoster.lineup.every((p) => p.pro));
+    assert(g.ourRunner(4).pro);
+    const hs = new BaseballEngine(
+      Object.assign(newCareer(), {
+        team: TEAMS[0].id,
+        club: TEAMS[0].id,
+        proUnlocked: true,
+        teamBoost: 9,
+      }),
+    );
+    hs.enterPro();
+    assert.equal(hs.state.career.teamBoost, 0);
+  },
+);
 console.log(`\n${passed} gameplay checks passed.`);
