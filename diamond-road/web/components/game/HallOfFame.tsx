@@ -3,6 +3,7 @@
  * The record is sent again after every match (games/day/stage change) once a nickname is set.
  */
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { Trophy } from "lucide-react";
 import {
   Dialog,
@@ -23,6 +24,7 @@ import {
   hofConfigured,
   loadProfile,
   recordOf,
+  resetHallOfFame,
   saveProfile,
   submitRecord,
   type HofProfile,
@@ -236,5 +238,51 @@ export function HallOfFameButton({ engine, career }: { engine: BaseballEngine; c
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+/** Developer window: wipe the whole ranking with the server-side admin password. */
+export function HofResetForm() {
+  const [code, setCode] = useState(""),
+    [busy, setBusy] = useState(false);
+  if (!hofConfigured()) return null;
+  return (
+    <form
+      className="hof-reset"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        if (!code || busy) return;
+        if (!window.confirm("명예의 전당의 모든 기록을 지울까요? 되돌릴 수 없습니다.")) return;
+        setBusy(true);
+        try {
+          const n = await resetHallOfFame(code);
+          toast.success(`명예의 전당을 초기화했습니다 (기록 ${n}개 삭제)`);
+          setCode("");
+        } catch (err) {
+          toast.error(
+            (err as Error).message === "no-function"
+              ? "서버에 초기화 기능이 없습니다 (reset.sql을 실행하세요)"
+              : "관리자 비밀번호가 틀렸습니다",
+          );
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <label htmlFor="hof-admin">명예의 전당 초기화</label>
+      <div className="hof-nick-row">
+        <input
+          id="hof-admin"
+          type="password"
+          autoComplete="off"
+          placeholder="관리자 비밀번호"
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+        />
+        <button type="submit" disabled={!code || busy}>
+          {busy ? "지우는 중…" : "모두 지우기"}
+        </button>
+      </div>
+    </form>
   );
 }

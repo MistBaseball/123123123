@@ -120,6 +120,17 @@ export async function submitRecord(c: Career, p: HofProfile): Promise<boolean> {
   }
 }
 
+/** Admin: wipes every ranking row (server checks its own admin password, see reset.sql). */
+export async function resetHallOfFame(code: string): Promise<number> {
+  const res = await fetch(`${HOF_URL}/rest/v1/rpc/reset_hall_of_fame`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({ code }),
+  });
+  if (!res.ok) throw new Error(res.status === 404 ? "no-function" : "wrong-code");
+  return Number(await res.json()) || 0;
+}
+
 export type Board = {
   id: string;
   label: string;

@@ -5337,3 +5337,20 @@ kbd {
   -webkit-user-select: text;
   user-select: text;
 }
+.hof-reset {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding-top: 10px;
+  border-top: 1px dashed #3b4d56;
+}
+.hof-reset label {
+  font-size: 0.8125rem;
+  color: #ffb4a8;
+}
+.hof-reset button {
+  background: #c0483d !important;
+  color: #fff !important;
+}

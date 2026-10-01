@@ -35,7 +35,7 @@ import {
 } from "lucide-react";
 import { TrainingMinigame, TRAINING_GAMES } from "@/components/game/Minigames";
 import { PatchNotesButton } from "@/components/game/PatchNotes";
-import { HallOfFameButton } from "@/components/game/HallOfFame";
+import { HallOfFameButton, HofResetForm } from "@/components/game/HallOfFame";
 import {
   Dialog,
   DialogContent,
@@ -3906,6 +3906,7 @@ export default function DiamondGame() {
                 >
                   모든 구종 열기
                 </button>
+                <HofResetForm />
               </div>
             )}
           </div>
