@@ -144,7 +144,7 @@ export class BaseballField {
       const sprite = new THREE.Sprite(
         new THREE.SpriteMaterial({ transparent: true, depthTest: false, sizeAttenuation: false }),
       );
-      sprite.position.set(0, 2.1, 0);
+      sprite.position.set(0, 2.2, 0);
       sprite.renderOrder = 10;
       sprite.visible = false;
       fig.root.add(sprite);
@@ -1135,7 +1135,9 @@ export class BaseballField {
     };
     // Name tags: position + name of whoever is on defense now (our team or the rival school).
     const fielders = this.engine.fielders,
-      tagH = narrow ? 0.018 : 0.013;
+      // Far cameras (broadcast, ball, top) get larger names; close ones keep them small.
+      far = cam === "broadcast" || cam === "ball" || cam === "top",
+      tagH = (narrow ? 1.3 : 1) * (far ? 0.032 : 0.02);
     this.tags.forEach((t, i) => {
       const p = fielders[i],
         text = p ? playerLabel(p) : "";
