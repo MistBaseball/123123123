@@ -748,12 +748,91 @@ export const TEAMS: {
   },
 ];
 export const teamOf = (id: string) => TEAMS.find((t) => t.id === id) ?? null;
-/** [visiting team, our team]: high-school rivals, or our club against a rotating pro rival. */
-export const matchTeams = (c: Pick<Career, "stage" | "club" | "day">): [string, string] => {
+/**
+ * Major-league clubs (fictional). In the first team, all of their scouts watch at once; each
+ * values something different (focus), so their evaluations rise at different speeds.
+ */
+export const MLB_TEAMS: {
+  id: string;
+  city: string;
+  name: string;
+  color: string;
+  scout: string;
+  focus: "strikeouts" | "wins" | "hits" | "runs";
+  likes: string;
+}[] = [
+  {
+    id: "harbor",
+    city: "뉴욕",
+    name: "하버 나이츠",
+    color: "#2f5aa8",
+    scout: "마이크 존슨",
+    focus: "strikeouts",
+    likes: "탈삼진",
+  },
+  {
+    id: "sunset",
+    city: "LA",
+    name: "선셋 블레이즈",
+    color: "#e0663a",
+    scout: "카를로스 리베라",
+    focus: "wins",
+    likes: "승리",
+  },
+  {
+    id: "bay",
+    city: "보스턴",
+    name: "베이 해머스",
+    color: "#b23a48",
+    scout: "케빈 오코너",
+    focus: "hits",
+    likes: "팀 타격",
+  },
+  {
+    id: "lake",
+    city: "시카고",
+    name: "레이크 울브스",
+    color: "#3d8f6a",
+    scout: "데릭 스미스",
+    focus: "runs",
+    likes: "최소 실점",
+  },
+];
+export const mlbTeamOf = (id: string | undefined) => MLB_TEAMS.find((t) => t.id === id) ?? null;
+/** Career ladder: high school → pro 2nd team → pro 1st team → major league. */
+export type Tier = "high" | "farm" | "first" | "mlb";
+export const tierOf = (c: Pick<Career, "stage" | "proGoal" | "league">): Tier =>
+  c.stage !== "pro" ? "high" : c.league === "mlb" ? "mlb" : c.proGoal ? "first" : "farm";
+/** Player ratings around each tier: mean ± spread (pro scale). */
+export const TIER_RATINGS: Record<Exclude<Tier, "high">, { mean: number; spread: number }> = {
+  farm: { mean: 120, spread: 30 },
+  first: { mean: 170, spread: 30 },
+  mlb: { mean: 225, spread: 25 },
+};
+/** What the career gauge measures in this tier. */
+export const gaugeName = (c: Pick<Career, "stage" | "proGoal" | "league">) =>
+  ({ high: "스카우트 평가", farm: "1군 신뢰도", first: "1군 신뢰도", mlb: "무한 모드" })[tierOf(c)];
+export const TIER_NAMES: Record<Tier, string> = {
+  high: "고교",
+  farm: "프로 2군",
+  first: "프로 1군",
+  mlb: "메이저리그",
+};
+/** [visiting team, our team]: high-school rivals, pro clubs (2군 teams first), or MLB clubs. */
+export const matchTeams = (
+  c: Pick<Career, "stage" | "club" | "day" | "proGoal" | "league" | "mlbClub">,
+): [string, string] => {
+  const tier = tierOf(c);
+  if (tier === "mlb") {
+    const club = mlbTeamOf(c.mlbClub) ?? MLB_TEAMS[0],
+      rivals = MLB_TEAMS.filter((t) => t.id !== club.id);
+    return [rivals[c.day % rivals.length].name, club.name];
+  }
   const club = c.stage === "pro" ? teamOf(c.club) : null;
   if (!club) return [opponentSchool(c.day).name, HOME_SCHOOL];
-  const rivals = TEAMS.filter((t) => t.id !== club.id);
-  return [rivals[c.day % rivals.length].name, club.name];
+  const rivals = TEAMS.filter((t) => t.id !== club.id),
+    suffix = tier === "farm" ? " 2군" : "";
+  return [rivals[c.day % rivals.length].name + suffix, club.name + suffix];
 };
 /** Player creation: every stat starts at STAT_BASE and STAT_POINTS are spread freely. */
 export const STAT_BASE = 45;
@@ -1125,8 +1204,8 @@ export const PRO_SPREAD = 50;
  * A pro club's fixed roster (seeded by the club name). Ratings are 150 ± 50 by batting-order
  * role; the ace's speed and control come from his own rating on the same scale.
  */
-export function makeProRoster(name: string): Roster {
-  const key = `${name}|pro`,
+export function makeProRoster(name: string, mean = PRO_MEAN, spread = PRO_SPREAD): Roster {
+  const key = `${name}|pro|${mean}|${spread}`,
     cached = rosterCache.get(key);
   if (cached) return cached;
   let seed = hashName(name) ^ 0x5bd1e995;
@@ -1141,13 +1220,7 @@ export function makeProRoster(name: string): Roster {
       return n;
     },
     rate = (role: number) =>
-      Math.round(
-        clamp(
-          PRO_MEAN + role + (rnd() - 0.5) * 2 * PRO_SPREAD,
-          PRO_MEAN - PRO_SPREAD,
-          PRO_MEAN + PRO_SPREAD,
-        ),
-      );
+      Math.round(clamp(mean + role + (rnd() - 0.5) * 2 * spread, mean - spread, mean + spread));
   const lineup: Player[] = SLOT_ROLES.map((r) => ({
     name: person(),
     hand: (rnd() < 0.32 ? "L" : "R") as "L" | "R",
@@ -1244,10 +1317,28 @@ export type Career = {
   legend?: boolean;
   /** Rating points every teammate has gained with the player (optional, older saves: 0). */
   teamBoost?: number;
+  /** "mlb" after signing with a major-league club (absent = Korean pro league). */
+  league?: "mlb";
+  /** Major-league club signed with (MLB_TEAMS id). */
+  mlbClub?: string;
+  /** First team: each MLB club scout's evaluation (0–100). */
+  mlbScouts?: Record<string, number>;
+  /** Turned every MLB club down: stays home with the stat cap raised to 250. */
+  limitless?: boolean;
 };
 /** Highest a stat can go for this career (the pro cap for a legend start). */
-export const statCapOf = (c: Pick<Career, "stage" | "legend">) =>
-  c.legend ? STAGES.pro.statCap : STAGES[c.stage].statCap;
+export const statCapOf = (c: Pick<Career, "stage" | "legend" | "league" | "limitless">) =>
+  c.league === "mlb" || c.limitless
+    ? LIMITLESS_CAP
+    : c.legend
+      ? STAGES.pro.statCap
+      : STAGES[c.stage].statCap;
+/** Stat cap in the major league, or for staying home after turning every MLB club down. */
+export const LIMITLESS_CAP = 250;
+/** Limit break (G): every stat counts as this for one inning. */
+export const LIMIT_BREAK = 300;
+/** Cheer (T): opponents' ratings drop by this for one inning. */
+export const CHEER_DROP = 15;
 /** Secret name: typing it on the creation screen starts a two-way legend. */
 export const isLegendName = (name: string) => /^오타니(쇼헤이)?$/.test(name.replace(/\s/g, ""));
 /** Pitches the legend start begins with (no roulette). */
@@ -1435,6 +1526,13 @@ export type GameState = {
   stealTrack: RunnerTrack | null;
   /** Pickoff throws during this plate appearance; runners shorten their lead after each. */
   pickoffs: number;
+  /** First team: each MLB scout's evaluation before/after the last match. */
+  lastMlb: { id: string; before: number; after: number }[];
+  /** Cheer (T) used in this match, and the inning it is active in (0 = none). */
+  cheerUsed: boolean;
+  cheerInning: number;
+  /** Limit break (G): the inning it is active in (0 = none); once per inning. */
+  limitInning: number;
   /** A hidden condition just met: a hidden pitch, or the "legend" start (UI shows a reveal). */
   hiddenUnlock: PitchId | "legend" | null;
 };
@@ -1496,6 +1594,10 @@ const initial = (career: Career, mode: Mode = "match", maxInnings = 3): GameStat
   stealTrack: null,
   pickoffs: 0,
   hiddenUnlock: null,
+  lastMlb: [],
+  cheerUsed: false,
+  cheerInning: 0,
+  limitInning: 0,
 });
 export class BaseballEngine {
   private matchStrikeouts = 0;
@@ -1534,15 +1636,25 @@ export class BaseballEngine {
   get homeRoster(): Roster {
     const c = this.state.career,
       club = c.stage === "pro" ? teamOf(c.club) : null;
+    const tier = tierOf(c);
+    if (tier === "mlb") {
+      const r = TIER_RATINGS.mlb;
+      return makeProRoster(this.teams[1], r.mean, r.spread);
+    }
+    const r = TIER_RATINGS[tier === "first" ? "first" : "farm"];
     return club
-      ? makeProRoster(club.name)
+      ? makeProRoster(this.teams[1], r.mean, r.spread)
       : { name: HOME_SCHOOL, style: "", lineup: HOME_LINEUP, ace: makeRoster(HOME_SCHOOL, 60).ace };
   }
   /** Today's opponent: a rival high school (new each day) or a rival pro club. */
   get awayRoster(): Roster {
     const c = this.state.career,
       [away] = matchTeams(c);
-    if (c.stage === "pro" && teamOf(c.club)) return makeProRoster(away);
+    const tier = tierOf(c);
+    if (tier === "mlb" || (tier !== "high" && teamOf(c.club))) {
+      const r = TIER_RATINGS[tier as Exclude<Tier, "high">];
+      return makeProRoster(away, r.mean, r.spread);
+    }
     const school = opponentSchool(c.day);
     return makeRoster(school.name, school.strength, school.style);
   }
@@ -1559,9 +1671,9 @@ export class BaseballEngine {
         name: c.name,
         nick: "",
         hand: "R",
-        contact: c.stats.contact,
-        power: c.stats.power,
-        speed: c.stats.speed,
+        contact: this.playerStats.contact,
+        power: this.playerStats.power,
+        speed: this.playerStats.speed,
         pro: false,
       };
     // Teammates grow with the player (TEAM_GROWTH of his average gain), up to the stage cap.
@@ -1587,18 +1699,25 @@ export class BaseballEngine {
   /** Nine fielders of our team (home) or the rival (away), in DEFENSE order. */
   defenseOf(home: boolean): Player[] {
     if (home) return HOME_POSITIONS.map((slot) => this.ourRunner(slot));
-    const r = this.awayRoster;
+    const r = this.awayRoster,
+      // The ace fields like an average player of his team (pro scale in the pros).
+      pro = !!r.lineup[0]?.pro,
+      avg = teamRatings(r.lineup);
     return AWAY_POSITIONS.map((slot) =>
-      slot < 0
-        ? { name: r.ace.name, hand: r.ace.hand, contact: 50, power: 66, eye: 62, speed: 58 }
-        : r.lineup[slot],
+      this.cheered(
+        slot < 0
+          ? pro
+            ? { name: r.ace.name, hand: r.ace.hand, ...avg, pro }
+            : { name: r.ace.name, hand: r.ace.hand, contact: 50, power: 66, eye: 62, speed: 58 }
+          : r.lineup[slot],
+      ),
     );
   }
   /** Team strength for the panel: batting/running averages, defense, and the pitcher. */
   teamStrength(home: boolean) {
     const hitters = home
         ? Array.from({ length: 9 }, (_, i) => this.ourRunner(i))
-        : this.awayRoster.lineup,
+        : this.awayRoster.lineup.map((p) => this.cheered(p)),
       d = this.defenseOf(home).slice(1),
       r = this.awayRoster;
     return {
@@ -1608,7 +1727,7 @@ export class BaseballEngine {
       pitcher: home ? this.state.career.name : r.ace.name,
       velocity: Math.round(
         home
-          ? fastballSpeed(this.state.career.stats.velocity)
+          ? fastballSpeed(this.playerStats.velocity)
           : this.stageRules.aiVelocity + r.ace.velocity,
       ),
     };
@@ -1630,7 +1749,7 @@ export class BaseballEngine {
     // Batting practice is always the player; in a match the lineup slot decides.
     return this.batting
       ? this.ourBatter(s.mode === "match" ? s.order[1] : 0)
-      : this.awayRoster.lineup[s.order[0] % 9];
+      : this.cheered(this.awayRoster.lineup[s.order[0] % 9]);
   }
   onSound(fn: (kind: string) => void) {
     this.soundCallback = fn;
@@ -1703,7 +1822,11 @@ export class BaseballEngine {
         clean.history = c.history.slice(0, 12);
         clean.stats = { ...newCareer().stats };
         const cap =
-          c.stage === "pro" || c.legend === true ? STAGES.pro.statCap : STAGES.high.statCap;
+          c.stage === "pro" && (c.league === "mlb" || c.limitless === true)
+            ? LIMITLESS_CAP
+            : c.stage === "pro" || c.legend === true
+              ? STAGES.pro.statCap
+              : STAGES.high.statCap;
         keys.forEach((k) => {
           const v = c.stats[k];
           if (typeof v === "number" && Number.isFinite(v)) clean.stats[k] = clamp(v, 0, cap);
@@ -1736,6 +1859,17 @@ export class BaseballEngine {
         clean.stage = c.stage === "pro" && clean.proUnlocked ? "pro" : "high";
         clean.proGoal = c.proGoal === true && clean.stage === "pro";
         clean.legend = c.legend === true;
+        // Major-league fields (added later): only meaningful in the pros.
+        clean.league =
+          clean.stage === "pro" && c.league === "mlb" && mlbTeamOf(c.mlbClub) ? "mlb" : undefined;
+        clean.mlbClub = clean.league ? c.mlbClub : undefined;
+        clean.limitless = clean.stage === "pro" && c.limitless === true;
+        clean.mlbScouts = Object.fromEntries(
+          MLB_TEAMS.map((t) => {
+            const v = c.mlbScouts?.[t.id];
+            return [t.id, typeof v === "number" && Number.isFinite(v) ? clamp(v, 0, 100) : 0];
+          }),
+        );
         clean.teamBoost =
           typeof c.teamBoost === "number" && Number.isFinite(c.teamBoost)
             ? clamp(c.teamBoost, 0, 200)
@@ -1822,7 +1956,7 @@ export class BaseballEngine {
   }
   private launch(ai: boolean) {
     const s = this.state,
-      stats = s.career.stats,
+      stats = this.playerStats,
       stage = this.stageRules,
       pitch = ai
         ? PITCHES[
@@ -1835,21 +1969,23 @@ export class BaseballEngine {
     const fatigue = ai ? Math.max(0, s.pitchCount[0] - 25) * 0.18 : 100 - s.energy;
     const formPenalty = ai ? 0 : (100 - s.career.form) * 0.02;
     const speed = clamp(
-      (ai ? stage.aiVelocity + this.awayRoster.ace.velocity : fastballSpeed(stats.velocity)) +
+      (ai
+        ? stage.aiVelocity + this.awayRoster.ace.velocity - (this.cheerActive ? 3 : 0)
+        : fastballSpeed(stats.velocity)) +
         pitch.delta -
         fatigue * 0.065 -
         (100 - s.effort) * 0.09 -
         formPenalty +
         gaussian(this.rng) * 0.9,
       60,
-      pitch.maxSpeed ?? 170,
+      pitch.maxSpeed ?? 190,
     );
     const aim = ai
       ? V(gaussian(this.rng) * 0.29, 0.95 + gaussian(this.rng) * 0.34, 0)
       : { ...s.aim };
     const sigma =
       (ai
-        ? 0.04 * this.awayRoster.ace.control
+        ? 0.04 * this.awayRoster.ace.control * (this.cheerActive ? 1.08 : 1)
         : controlSpread(stats.control, s.energy, s.effort, s.career.form)) * pitch.control;
     const target = V(
         clamp(aim.x + gaussian(this.rng) * sigma, -1.05, 1.05),
@@ -1957,7 +2093,7 @@ export class BaseballEngine {
         if (!this.batting && s.mode === "match")
           s.energy = clamp(
             s.energy -
-              pitchEnergyCost(s.effort, s.career.stats.stamina) *
+              pitchEnergyCost(s.effort, this.playerStats.stamina) *
                 pitchData(s.flight?.pitch ?? "fastball").stamina,
             0,
             100,
@@ -3159,7 +3295,7 @@ export class BaseballEngine {
       runners = this.baseRunners(RULES.runnerLead, RULES.runnerReaction);
     s.pickoffs++;
     s.energy = clamp(
-      s.energy - pitchEnergyCost(s.effort, s.career.stats.stamina) * RULES.pickoffEnergy,
+      s.energy - pitchEnergyCost(s.effort, this.playerStats.stamina) * RULES.pickoffEnergy,
       0,
       100,
     );
@@ -3336,9 +3472,35 @@ export class BaseballEngine {
         c.history = [`${team.name} 스카우트의 입단 제의! 꿈이 이루어졌다`, ...c.history];
       }
       // Pro stage: the same gauge is the manager's trust; full trust opens the rotation.
-      if (c.stage === "pro" && c.scout >= 100 && !c.proGoal) {
+      if (c.stage === "pro" && c.scout >= 100 && !c.proGoal && c.league !== "mlb") {
         c.proGoal = true;
-        c.history = [`${STAGES.pro.goalReward}! 감독이 선발 한 자리를 맡겼다`, ...c.history];
+        c.mlbScouts = Object.fromEntries(MLB_TEAMS.map((t) => [t.id, 0]));
+        c.history = [`${STAGES.pro.goalReward}! 2군을 졸업하고 1군으로 올라섰다`, ...c.history];
+      } else if (tierOf(c) === "first") {
+        // Major-league scouts all watch the first team; each likes something different.
+        // A scout at 100 waits: the player keeps playing until he signs (or turns all down).
+        const scouts = c.mlbScouts ?? Object.fromEntries(MLB_TEAMS.map((t) => [t.id, 0]));
+        s.lastMlb = MLB_TEAMS.map((t) => {
+          const before = scouts[t.id] ?? 0,
+            liked =
+              t.focus === "strikeouts"
+                ? this.matchStrikeouts * 1.2
+                : t.focus === "wins"
+                  ? won
+                    ? 7
+                    : drew
+                      ? 2
+                      : 0
+                  : t.focus === "hits"
+                    ? s.hits[1] * 0.9
+                    : Math.max(0, 6 - s.score[0]) * 1.2,
+            gain = Math.round(clamp(bounded * 0.45 + liked, 2, 16));
+          scouts[t.id] = clamp(before + gain, 0, 100);
+          if (before < 100 && scouts[t.id] >= 100)
+            c.history = [`${t.city} ${t.name} 스카우트가 계약 제안을 들고 기다린다`, ...c.history];
+          return { id: t.id, before, after: scouts[t.id] };
+        });
+        c.mlbScouts = scouts;
       }
       const xpParts: RecapLine[] = [...this.xpParts].map(([label, p]) => ({
         label: `${label} ×${p.count}`,
@@ -3523,13 +3685,105 @@ export class BaseballEngine {
    */
   devGauge99() {
     const c = this.state.career;
-    c.scout = 99;
+    c.scout = tierOf(c) === "first" ? 100 : 99;
+    // In the first team the gauges that matter are the MLB scouts.
+    if (tierOf(c) === "first") c.mlbScouts = Object.fromEntries(MLB_TEAMS.map((t) => [t.id, 99]));
+    c.history = [`개발자 모드 · ${gaugeName(c)} 99`, ...c.history].slice(0, 12);
+    this.persist();
+    this.emit();
+  }
+  /** Cheer is lowering the rivals this inning. */
+  get cheerActive() {
+    const s = this.state;
+    return s.mode === "match" && s.cheerInning > 0 && s.cheerInning === s.inning;
+  }
+  /** Limit break is on this inning. */
+  get limitActive() {
+    const s = this.state;
+    return s.mode === "match" && s.limitInning > 0 && s.limitInning === s.inning;
+  }
+  /** Limit break is unlocked: every stat at 250. */
+  get canLimitBreak() {
+    return Object.values(this.state.career.stats).every((v) => v >= LIMITLESS_CAP);
+  }
+  /** The player's stats as the game uses them right now (300 across the board in a limit break). */
+  get playerStats(): Career["stats"] {
+    const st = this.state.career.stats;
+    if (!this.limitActive) return st;
+    return Object.fromEntries(Object.keys(st).map((k) => [k, LIMIT_BREAK])) as Career["stats"];
+  }
+  /** A rival player while our cheer squad is at work: every rating −15. */
+  cheered(p: Player): Player {
+    return this.cheerActive
+      ? {
+          ...p,
+          contact: p.contact - CHEER_DROP,
+          power: p.power - CHEER_DROP,
+          eye: p.eye - CHEER_DROP,
+          speed: p.speed - CHEER_DROP,
+        }
+      : p;
+  }
+  /** T: our cheerleaders and fans rattle the rivals for one inning. Once per match, pros only. */
+  cheer() {
+    const s = this.state;
+    if (s.mode !== "match" || s.career.stage !== "pro" || s.cheerUsed || s.phase === "finished")
+      return false;
+    s.cheerUsed = true;
+    s.cheerInning = s.inning;
+    this.log(`${s.inning}회 · 응원단과 팬들의 함성! 상대 능력치 −${CHEER_DROP}`);
+    this.sound("hit");
+    this.emit();
+    return true;
+  }
+  /** G: limit break, every stat 300 for this inning. Needs every stat at 250; once per inning. */
+  limitBreak() {
+    const s = this.state;
+    if (s.mode !== "match" || !this.canLimitBreak || this.limitActive || s.phase === "finished")
+      return false;
+    s.limitInning = s.inning;
+    this.log(`${s.inning}회 · 한계 돌파! 모든 능력치 ${LIMIT_BREAK}`);
+    this.sound("hit");
+    this.emit();
+    return true;
+  }
+  /** MLB clubs whose scout has reached 100 (contract offers on the table). */
+  get mlbOffers() {
+    const c = this.state.career;
+    return tierOf(c) === "first" && !c.limitless
+      ? MLB_TEAMS.filter((t) => (c.mlbScouts?.[t.id] ?? 0) >= 100)
+      : [];
+  }
+  /** Sign with an MLB club whose scout reached 100: hard mode, endless play. */
+  signMlb(id: string) {
+    const c = this.state.career,
+      t = mlbTeamOf(id);
+    if (!t || !this.mlbOffers.includes(t) || this.matchActive) return false;
+    c.league = "mlb";
+    c.mlbClub = t.id;
+    // New club, new teammates: the team growth starts again.
+    c.teamBoost = 0;
+    c.history = [`${t.city} ${t.name}와 계약! 메이저리그 하드 모드가 시작된다`, ...c.history].slice(
+      0,
+      12,
+    );
+    this.persist();
+    this.start("match");
+    return true;
+  }
+  /** Every MLB scout at 100 and all turned down: stay home, stat cap 250 (for the player only). */
+  refuseMlb() {
+    const c = this.state.career;
+    if (tierOf(c) !== "first" || c.limitless || this.mlbOffers.length < MLB_TEAMS.length)
+      return false;
+    c.limitless = true;
     c.history = [
-      `개발자 모드 · ${c.stage === "pro" ? "1군 신뢰도" : "스카우트 평가"} 99`,
+      `메이저리그의 모든 제안을 거절했다 · 한계가 사라진다 (능력치 상한 ${LIMITLESS_CAP})`,
       ...c.history,
     ].slice(0, 12);
     this.persist();
     this.emit();
+    return true;
   }
   /**
    * Adds any hidden pitch whose secret condition the current stats meet. Once learned it

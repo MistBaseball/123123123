@@ -77,6 +77,15 @@ import {
   statCapOf,
   LEGEND_PITCHES,
   formOf,
+  tierOf,
+  TIER_NAMES,
+  TIER_RATINGS,
+  gaugeName,
+  MLB_TEAMS,
+  mlbTeamOf,
+  LIMITLESS_CAP,
+  LIMIT_BREAK,
+  CHEER_DROP,
   STAT_NAMES,
   STAT_INFO,
   HOME_LINEUP,
@@ -742,12 +751,12 @@ function CareerView({ engine, s }: { engine: BaseballEngine; s: GameState }) {
           <h2>나의 선수와 진로</h2>
           <p>
             {c.stage === "pro"
-              ? `${teamOf(c.club)?.name ?? "프로"} 소속 프로 시즌. 하루의 선택이 내일의 선수를 만듭니다.`
+              ? `${clubLine(c)} · ${TIER_NAMES[tierOf(c)]} 시즌. 하루의 선택이 내일의 선수를 만듭니다.`
               : "고교 마지막 시즌. 하루의 선택이 내일의 선수를 만듭니다."}
           </p>
         </div>
         <span className="season-stamp">
-          {c.stage === "pro" ? "프로 1년차" : "고교 3학년"}{" "}
+          {c.stage === "pro" ? TIER_NAMES[tierOf(c)] : "고교 3학년"}{" "}
           <b>DAY {String(c.day).padStart(2, "0")}</b>
         </span>
       </div>
@@ -755,16 +764,14 @@ function CareerView({ engine, s }: { engine: BaseballEngine; s: GameState }) {
         <article className="player-card">
           <div className="jersey-number">18</div>
           <div className="player-card-top">
-            <span>
-              {c.stage === "pro"
-                ? `${teamOf(c.club)?.city ?? ""} ${teamOf(c.club)?.name ?? ""}`
-                : "미산고등학교 야구부"}
-            </span>
+            <span>{clubLine(c)}</span>
             <Shield size={24} />
           </div>
           <div className="player-card-bottom">
             <h2>{c.name}</h2>
-            <p>{c.stage === "pro" ? "프로 1년차 우완 투수" : "고교 3학년 우완 투수"}</p>
+            <p>
+              {c.stage === "pro" ? `${TIER_NAMES[tierOf(c)]} 우완 투수` : "고교 3학년 우완 투수"}
+            </p>
             <div className="player-rating">
               <strong>
                 {Math.round(
@@ -810,18 +817,28 @@ function CareerView({ engine, s }: { engine: BaseballEngine; s: GameState }) {
           </article>
           <article className="panel scout-panel">
             <div className="panel-heading">
-              <h2>{c.stage === "pro" ? "프로 리포트" : "스카우트 리포트"}</h2>
+              <h2>
+                {tierOf(c) === "first"
+                  ? "메이저리그 스카우트"
+                  : c.stage === "pro"
+                    ? "프로 리포트"
+                    : "스카우트 리포트"}
+              </h2>
               <Medal size={20} />
             </div>
             <ScoutMeter s={s} big />
             <p>
-              {c.stage === "pro"
-                ? c.proGoal
-                  ? `${STAGES.pro.goalReward} 달성! 프로 무대에서 계속 성장하세요.`
-                  : `프로 데뷔 시즌. 경기를 마칠 때마다 감독의 신뢰가 오르고, 100점이면 ${STAGES.pro.goalReward}입니다.`
-                : c.draft
-                  ? `진로 확정: ${c.draft}`
-                  : "시즌 경기를 마칠 때마다 탈삼진·안타·승리에 따라 평가가 3~18점 오릅니다. 100점이 되면 입단 제의를 받습니다."}
+              {tierOf(c) === "mlb"
+                ? "메이저리그 하드 모드 · 무한 모드. 목표 없이 최강의 무대에서 끝없이 던지고 치세요."
+                : tierOf(c) === "first"
+                  ? c.limitless
+                    ? `메이저리그를 모두 거절하고 국내에 남았습니다. 능력치 상한 ${LIMITLESS_CAP}.`
+                    : `1군 무대(상대 ${TIER_RATINGS.first.mean}±${TIER_RATINGS.first.spread}). 메이저리그 ${MLB_TEAMS.length}개 구단 스카우트가 동시에 평가합니다. 100이 된 구단과 계약하거나, 모두 100이 된 뒤 전부 거절하면 능력치 상한이 ${LIMITLESS_CAP}이 됩니다.`
+                  : c.stage === "pro"
+                    ? `2군 생활(상대 ${TIER_RATINGS.farm.mean}±${TIER_RATINGS.farm.spread}). 경기를 마칠 때마다 감독의 신뢰가 오르고, 100점이면 1군으로 올라갑니다.`
+                    : c.draft
+                      ? `진로 확정: ${c.draft}`
+                      : "시즌 경기를 마칠 때마다 탈삼진·안타·승리에 따라 평가가 3~18점 오릅니다. 100점이 되면 입단 제의를 받습니다."}
             </p>
           </article>
         </div>
@@ -1009,7 +1026,7 @@ function LifeView({
         <div>
           <span className="eyebrow">
             {c.stage === "pro"
-              ? `프로 1년차 · ${teamOf(c.club)?.name ?? ""} · ${c.name}`
+              ? `${TIER_NAMES[tierOf(c)]} · ${clubLine(c)} · ${c.name}`
               : `고교 3학년 · 마지막 시즌 · ${c.name}`}
           </span>
           <h1>{headline}</h1>
@@ -1055,6 +1072,7 @@ function LifeView({
         </button>
       </div>
       <ScoutMeter s={s} />
+      <MlbOffers engine={engine} s={s} />
       <div className="condition-bar">
         <div>
           <Activity />
@@ -1493,6 +1511,33 @@ function ScoutMeter({
   after?: number;
   big?: boolean;
 }) {
+  const tier = tierOf(s.career);
+  if (tier === "first") return <MlbScoutBoard s={s} recap={before !== undefined} big={big} />;
+  if (tier === "mlb") {
+    const m = mlbTeamOf(s.career.mlbClub);
+    return (
+      <div
+        className={`scout-meter mlb-badge ${big ? "big" : ""}`}
+        style={{ "--team-color": m?.color ?? "#2f5aa8" } as React.CSSProperties}
+      >
+        <div className="scout-meter-head">
+          <span>
+            <b>
+              {m?.city} {m?.name}
+            </b>{" "}
+            메이저리그
+          </span>
+          <strong>
+            하드 모드 <em>· 무한 모드</em>
+          </strong>
+        </div>
+        <small className="scout-note">
+          주변 선수 모두 능력치 {TIER_RATINGS.mlb.mean}±{TIER_RATINGS.mlb.spread} · 내 능력치 상한{" "}
+          {LIMITLESS_CAP} · 끝없이 이어지는 시즌
+        </small>
+      </div>
+    );
+  }
   const pro = s.career.stage === "pro",
     t = teamOf(pro ? s.career.club : s.career.team),
     now = Math.round(after ?? s.career.scout),
@@ -1523,14 +1568,112 @@ function ScoutMeter({
         <span className="now" style={{ width: `${now}%` }} />
       </div>
       {now >= 100 ? (
-        <small className="scout-note">
-          {pro ? `${STAGES.pro.goalReward}!` : "입단 제의를 받았습니다!"}
-        </small>
+        <small className="scout-note">{pro ? "1군 승격!" : "입단 제의를 받았습니다!"}</small>
       ) : (
         <small className="scout-note">
-          {pro ? STAGES.pro.goalReward : "입단 제의"}까지 {100 - now}점
+          {pro ? "1군 승격" : "입단 제의"}까지 {100 - now}점
         </small>
       )}
+    </div>
+  );
+}
+/**
+ * First team: every MLB club's scout at once. With `recap`, the bars show the last match's
+ * gains (before → after).
+ */
+function MlbScoutBoard({ s, recap, big }: { s: GameState; recap: boolean; big: boolean }) {
+  const c = s.career;
+  return (
+    <div className={`mlb-board ${big ? "big" : ""}`}>
+      <div className="mlb-board-head">
+        <b>메이저리그 스카우트 평가</b>
+        <small>
+          {c.limitless ? "모든 제안 거절 · 국내 잔류" : "100이 된 구단과 언제든 계약 가능"}
+        </small>
+      </div>
+      {MLB_TEAMS.map((t) => {
+        const last = recap ? s.lastMlb.find((m) => m.id === t.id) : null,
+          now = Math.round(last?.after ?? c.mlbScouts?.[t.id] ?? 0),
+          prev = last ? Math.round(last.before) : null;
+        return (
+          <div
+            key={t.id}
+            className={`mlb-row ${now >= 100 ? "offer" : ""}`}
+            style={{ "--team-color": t.color } as React.CSSProperties}
+          >
+            <span className="mlb-name">
+              <b>
+                {t.city} {t.name}
+              </b>
+              <small>
+                {t.scout} · {t.likes} 중시
+              </small>
+            </span>
+            <span className="scout-bar">
+              {prev !== null && <span className="prev" style={{ width: `${prev}%` }} />}
+              <span className="now" style={{ width: `${now}%` }} />
+            </span>
+            <strong>
+              {now}
+              {prev !== null && now > prev && <i>+{now - prev}</i>}
+            </strong>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+/** Contract offers from MLB scouts at 100: sign (hard mode), or turn every club down. */
+function MlbOffers({ engine, s }: { engine: BaseballEngine; s: GameState }) {
+  const offers = engine.mlbOffers;
+  if (tierOf(s.career) !== "first" || s.career.limitless) return null;
+  const all = offers.length === MLB_TEAMS.length;
+  return (
+    <div className="mlb-offers">
+      {offers.length === 0 ? (
+        <small>
+          아직 계약 제안이 없어요. 경기를 할수록 스카우트 평가가 오르고, 100이 된 구단은 제안을 들고
+          기다립니다.
+        </small>
+      ) : (
+        offers.map((t) => (
+          <button
+            key={t.id}
+            className="primary-button"
+            style={{ "--team-color": t.color } as React.CSSProperties}
+            onClick={() => {
+              if (
+                window.confirm(
+                  `${t.city} ${t.name}와 계약할까요?\n\n메이저리그는 하드 모드 · 무한 모드입니다. 주변 선수 모두 능력치 ${TIER_RATINGS.mlb.mean}±${TIER_RATINGS.mlb.spread}, 내 능력치 상한 ${LIMITLESS_CAP}. 국내로는 돌아올 수 없어요.`,
+                )
+              ) {
+                engine.signMlb(t.id);
+                toast.success(`${t.name}와 계약! 메이저리그 하드 모드 시작`);
+              }
+            }}
+          >
+            {t.name}와 계약 <small>하드 모드 시작 · 무한 모드</small>
+          </button>
+        ))
+      )}
+      <button
+        className="subtle-button"
+        disabled={!all}
+        title={all ? "" : "모든 메이저리그 스카우트가 100이 되어야 거절할 수 있어요"}
+        onClick={() => {
+          if (
+            window.confirm(
+              `메이저리그의 모든 제안을 거절할까요?\n\n국내 리그에 남는 대신 내 능력치 상한이 ${LIMITLESS_CAP}으로 올라갑니다.`,
+            )
+          ) {
+            engine.refuseMlb();
+            toast.success(`모든 제안을 거절했습니다 · 능력치 상한 ${LIMITLESS_CAP}`);
+          }
+        }}
+      >
+        모두 거절하고 국내 잔류 <small>능력치 상한 {LIMITLESS_CAP}</small>
+        {!all && <small> · 4개 구단 모두 100 필요</small>}
+      </button>
     </div>
   );
 }
@@ -1653,7 +1796,7 @@ function NightDialog({
           <RecapBreakdown
             scoutParts={recap.scoutParts}
             xpParts={recap.xpParts}
-            scoutLabel={s.career.stage === "pro" ? STAGES.pro.goal : "스카우트 평가"}
+            scoutLabel={gaugeName(s.career)}
           />
         )}
         <div className="night-recap">
@@ -2324,6 +2467,69 @@ const BUILD_LABEL = (() => {
     ? "개발용"
     : `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 })();
+/** T: the cheer squad (pros only, once per match). Explains why when it cannot be used. */
+const triggerCheer = (engine: BaseballEngine) => {
+  const s = engine.state;
+  if (engine.cheer())
+    toast.success(`📣 응원단과 팬들의 함성! 이번 이닝 상대 능력치 −${CHEER_DROP}`);
+  else if (s.mode !== "match") toast.error("응원은 시즌 경기에서만 쓸 수 있어요");
+  else if (s.career.stage !== "pro") toast.error("응원 스킬은 프로 무대부터 열려요");
+  else if (s.cheerUsed) toast.error("응원은 경기당 한 번만 쓸 수 있어요");
+};
+/** G: limit break (every stat 250 first; once per inning). */
+const triggerLimit = (engine: BaseballEngine) => {
+  const s = engine.state;
+  if (engine.limitBreak()) toast.success(`⚡ 한계 돌파! 이번 이닝 모든 능력치 ${LIMIT_BREAK}`);
+  else if (!engine.canLimitBreak)
+    toast.error(`한계 돌파는 모든 능력치가 ${LIMITLESS_CAP}이 되면 열려요`);
+  else if (s.mode !== "match") toast.error("한계 돌파는 시즌 경기에서만 쓸 수 있어요");
+  else if (engine.limitActive) toast.error("이번 이닝에는 이미 한계 돌파 중이에요");
+};
+/** Skill buttons (T cheer, G limit break) with their current state. */
+function SkillBar({ engine, s }: { engine: BaseballEngine; s: GameState }) {
+  const cheerOpen = s.career.stage === "pro",
+    limitOpen = engine.canLimitBreak;
+  if (s.mode !== "match" || (!cheerOpen && !limitOpen)) return null;
+  return (
+    <div className="skill-bar" aria-label="스킬">
+      {cheerOpen && (
+        <button
+          className={`skill ${engine.cheerActive ? "on" : ""}`}
+          disabled={s.cheerUsed && !engine.cheerActive}
+          onClick={() => triggerCheer(engine)}
+          title={`우리 팀 치어리더와 팬들의 응원으로 한 이닝 동안 상대 능력치 −${CHEER_DROP} (경기당 1회)`}
+        >
+          <kbd>T</kbd> 📣 응원
+          <small>
+            {engine.cheerActive ? "효과 중" : s.cheerUsed ? "사용함" : `상대 −${CHEER_DROP} · 1회`}
+          </small>
+        </button>
+      )}
+      {limitOpen && (
+        <button
+          className={`skill limit ${engine.limitActive ? "on" : ""}`}
+          disabled={engine.limitActive}
+          onClick={() => triggerLimit(engine)}
+          title={`한 이닝 동안 모든 능력치 ${LIMIT_BREAK} (이닝마다 1회)`}
+        >
+          <kbd>G</kbd> ⚡ 한계 돌파
+          <small>{engine.limitActive ? "효과 중" : `전 능력치 ${LIMIT_BREAK} · 이닝당 1회`}</small>
+        </button>
+      )}
+    </div>
+  );
+}
+/** "한강 트리플스 2군", "뉴욕 하버 나이츠", or the school. */
+const clubLine = (c: Career) => {
+  const tier = tierOf(c);
+  if (tier === "mlb") {
+    const m = mlbTeamOf(c.mlbClub);
+    return m ? `${m.city} ${m.name}` : "메이저리그";
+  }
+  const t = teamOf(c.club);
+  if (tier === "high" || !t) return "미산고등학교 야구부";
+  return `${t.city} ${t.name}${tier === "farm" ? " 2군" : ""}`;
+};
 /** Developer-mode password (a simple lock for testers, not real security). */
 const DEV_CODE = "1324";
 export default function DiamondGame() {
@@ -2583,6 +2789,8 @@ export default function DiamondGame() {
       }
       if (k === "r") engine.resetPitch();
       if (k === "e") engine.steal();
+      if (k === "t") triggerCheer(engine);
+      if (k === "g") triggerLimit(engine);
       // F: pickoff throw to the lowest occupied base.
       if (k === "f") engine.pickoff(engine.state.bases.findIndex(Boolean) + 1);
       if (k.startsWith("arrow")) {
@@ -2747,7 +2955,7 @@ export default function DiamondGame() {
           <span className="brand-mark">D</span>
           <span>
             DIAMOND <b>ROAD</b>
-            <small>{s.career.stage === "pro" ? "프로 투수" : "고교 에이스"}</small>
+            <small>{s.career.stage === "pro" ? TIER_NAMES[tierOf(s.career)] : "고교 에이스"}</small>
           </span>
         </a>
         <button
@@ -2824,17 +3032,25 @@ export default function DiamondGame() {
                       DAY {s.career.day} · 경기 XP +{s.matchXp}
                     </span>
                   )}
-                  {s.mode === "match" && s.career.stage === "pro" && teamOf(s.career.club) && (
-                    <span
-                      className="xp-chip scout-chip"
-                      style={
-                        { "--team-color": teamOf(s.career.club)!.color } as React.CSSProperties
-                      }
-                    >
-                      🏟 {teamOf(s.career.club)!.name} · {STAGES.pro.goal}{" "}
-                      {Math.round(s.career.scout)}
-                    </span>
-                  )}
+                  {s.mode === "match" &&
+                    s.career.stage === "pro" &&
+                    (teamOf(s.career.club) || tierOf(s.career) === "mlb") && (
+                      <span
+                        className="xp-chip scout-chip"
+                        style={
+                          {
+                            "--team-color":
+                              mlbTeamOf(s.career.mlbClub)?.color ?? teamOf(s.career.club)?.color,
+                          } as React.CSSProperties
+                        }
+                      >
+                        {tierOf(s.career) === "mlb"
+                          ? `🌎 메이저리그 · 하드 모드 · 무한 모드`
+                          : tierOf(s.career) === "first"
+                            ? `🌎 MLB 스카우트 ${MLB_TEAMS.length}명 관전 · 최고 ${Math.round(Math.max(...MLB_TEAMS.map((t) => s.career.mlbScouts?.[t.id] ?? 0)))}`
+                            : `🏟 ${teamOf(s.career.club)!.name} 2군 · 1군 신뢰도 ${Math.round(s.career.scout)}`}
+                      </span>
+                    )}
                   {s.mode === "match" && s.career.stage !== "pro" && teamOf(s.career.team) && (
                     <span
                       className="xp-chip scout-chip"
@@ -2844,6 +3060,16 @@ export default function DiamondGame() {
                     >
                       👀 {teamOf(s.career.team)!.name} 스카우트 관전 · 평가{" "}
                       {Math.round(s.career.scout)}
+                    </span>
+                  )}
+                  {engine.cheerActive && (
+                    <span className="xp-chip skill-chip cheer">
+                      📣 응원 효과 · 상대 능력치 −{CHEER_DROP} ({s.cheerInning}회)
+                    </span>
+                  )}
+                  {engine.limitActive && (
+                    <span className="xp-chip skill-chip limit">
+                      ⚡ 한계 돌파 · 모든 능력치 {LIMIT_BREAK} ({s.limitInning}회)
                     </span>
                   )}
                 </div>
@@ -2943,7 +3169,7 @@ export default function DiamondGame() {
                       <RecapBreakdown
                         scoutParts={s.lastScoutParts}
                         xpParts={s.lastXpParts}
-                        scoutLabel={s.career.stage === "pro" ? STAGES.pro.goal : "스카우트 평가"}
+                        scoutLabel={gaugeName(s.career)}
                       />
                       <p>
                         경험치 <b>+{s.lastXpGain} XP</b> 획득 · 보유 {s.career.xp} XP
@@ -3273,6 +3499,7 @@ export default function DiamondGame() {
                 </div>
               </>
             )}
+            <SkillBar engine={engine} s={s} />
           </aside>
         </div>
         <div className="controls-footer">
@@ -3282,7 +3509,7 @@ export default function DiamondGame() {
           </span>
           <span>
             <kbd>1–0</kbd> <kbd>=</kbd> <kbd>[</kbd> <kbd>]</kbd> 구종 · <kbd>1–4</kbd> 송구 ·{" "}
-            <kbd>F</kbd> 견제 · <kbd>E</kbd> 도루
+            <kbd>F</kbd> 견제 · <kbd>E</kbd> 도루 · <kbd>T</kbd> 응원(프로) · <kbd>G</kbd> 한계 돌파
           </span>
           <span>
             <kbd>WASD</kbd> 수동 수비
@@ -3494,11 +3721,17 @@ export default function DiamondGame() {
                   onClick={() => {
                     engine.devGauge99();
                     toast.success(
-                      `${s.career.stage === "pro" ? "1군 신뢰도" : "스카우트 평가"}를 99로 올렸습니다 · 다음 경기에서 목표 달성`,
+                      tierOf(s.career) === "first"
+                        ? "메이저리그 스카우트 4명을 모두 99로 올렸습니다 · 다음 경기에서 100"
+                        : `${gaugeName(s.career)}를 99로 올렸습니다 · 다음 경기에서 목표 달성`,
                     );
                   }}
                 >
-                  {s.career.stage === "pro" ? "1군 신뢰도 99" : "스카우트 평가 99"}
+                  {tierOf(s.career) === "first"
+                    ? "MLB 스카우트 99"
+                    : tierOf(s.career) === "mlb"
+                      ? "게이지 없음 (MLB)"
+                      : `${gaugeName(s.career)} 99`}
                 </button>
                 <button
                   className="subtle-button"

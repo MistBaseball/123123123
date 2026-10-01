@@ -39,14 +39,20 @@ import {
   makeProRoster,
   formOf,
   TEAM_GROWTH,
+  tierOf,
+  TIER_RATINGS,
+  MLB_TEAMS,
+  matchTeams,
+  LIMITLESS_CAP,
+  LIMIT_BREAK,
+  CHEER_DROP,
+  fastballSpeed,
   HOME_SCHOOL,
   SCHOOLS,
   makeRoster,
   opponentSchool,
-  matchTeams,
   SWING_SWEET,
   SWING_STYLES,
-  fastballSpeed,
   pitchEnergyCost,
 } from "../lib/game/engine.ts";
 
@@ -1120,7 +1126,7 @@ check("K Scout 100 → contract → signing ending → pro mode, kept across rel
     assert.equal(again.state.career.stage, "pro");
     assert.equal(again.state.career.club, TEAMS[2].id);
     assert(again.state.career.proUnlocked);
-    assert.equal(again.teams[1], TEAMS[2].name);
+    assert.equal(again.teams[1], `${TEAMS[2].name} 2군`, "a new pro starts in the 2nd team");
     // A save cannot claim pro without a club; an old save with the contract recovers its club.
     store["diamond-road-career-v1"] = JSON.stringify({ ...c, club: "", draft: "" });
     const fake = new BaseballEngine();
@@ -1881,6 +1887,161 @@ check(
     );
     hs.enterPro();
     assert.equal(hs.state.career.teamBoost, 0);
+  },
+);
+const proCareer = (extra = {}) =>
+  Object.assign(
+    newCareer(),
+    { stage: "pro", club: TEAMS[0].id, proUnlocked: true, team: TEAMS[0].id },
+    extra,
+  );
+/** Ends the current match with a win (rewards and gauges as after a real game). */
+const winMatch = (g) => {
+  g.start("match");
+  Object.assign(g.state, { inning: 3, half: "bottom", outs: 3, score: [0, 2], phase: "result" });
+  g.next();
+};
+check(
+  "Pro ladder: 2nd team 120±30 → 1st team 170±30 → MLB 225±25, every player on both sides",
+  () => {
+    const ratings = (g) =>
+      [...g.awayRoster.lineup, ...Array.from({ length: 8 }, (_, i) => g.ourRunner(i + 1))].flatMap(
+        (p) => [p.contact, p.power, p.eye, p.speed],
+      );
+    for (const [extra, tier] of [
+      [{}, "farm"],
+      [{ proGoal: true }, "first"],
+      [{ proGoal: true, league: "mlb", mlbClub: MLB_TEAMS[1].id }, "mlb"],
+    ]) {
+      const all = [];
+      for (let day = 1; day <= 6; day++) {
+        const g = new BaseballEngine(proCareer({ ...extra, day }));
+        assert.equal(tierOf(g.state.career), tier);
+        all.push(...ratings(g));
+      }
+      const { mean, spread } = TIER_RATINGS[tier],
+        avg = all.reduce((a, v) => a + v, 0) / all.length;
+      assert(
+        all.every((v) => v >= mean - spread && v <= mean + spread),
+        tier,
+      );
+      assert(Math.abs(avg - mean) < spread * 0.35, `${tier} average ${avg}`);
+    }
+    // Names: 2nd teams, then the clubs, then MLB clubs.
+    assert(matchTeams(proCareer()).every((n) => n.endsWith(" 2군")));
+    assert.equal(matchTeams(proCareer({ proGoal: true }))[1], TEAMS[0].name);
+    assert.equal(
+      matchTeams(proCareer({ proGoal: true, league: "mlb", mlbClub: MLB_TEAMS[1].id }))[1],
+      MLB_TEAMS[1].name,
+    );
+  },
+);
+check(
+  "1st team: MLB scouts all evaluate; sign with any at 100, or refuse all for a 250 cap",
+  () => {
+    const store = {};
+    globalThis.localStorage = {
+      getItem: (k) => store[k] ?? null,
+      setItem: (k, v) => (store[k] = String(v)),
+    };
+    try {
+      // Trust 100 in the 2nd team promotes to the 1st team and opens the MLB scouts.
+      const g = new BaseballEngine(proCareer({ scout: 96 }), () => 0.5);
+      winMatch(g);
+      assert.equal(tierOf(g.state.career), "first");
+      assert.deepEqual(Object.values(g.state.career.mlbScouts), [0, 0, 0, 0]);
+      // Each match moves every scout, by different amounts (each likes something else).
+      winMatch(g);
+      const after = MLB_TEAMS.map((t) => g.state.career.mlbScouts[t.id]);
+      assert(after.every((v) => v > 0));
+      assert.equal(g.state.lastMlb.length, MLB_TEAMS.length);
+      assert(!g.signMlb(MLB_TEAMS[0].id), "no offer before 100");
+      assert(!g.refuseMlb(), "cannot refuse before every scout is at 100");
+      // One club at 100: the player may keep playing; the offer waits.
+      g.state.career.mlbScouts[MLB_TEAMS[2].id] = 100;
+      assert.deepEqual(
+        g.mlbOffers.map((t) => t.id),
+        [MLB_TEAMS[2].id],
+      );
+      winMatch(g);
+      assert.equal(g.mlbOffers[0].id, MLB_TEAMS[2].id, "the offer is still there");
+      // Refuse all (every scout at 100): the cap rises to 250 for the player only.
+      const r = new BaseballEngine(proCareer({ proGoal: true }), () => 0.5);
+      r.devGauge99();
+      winMatch(r);
+      assert.equal(r.mlbOffers.length, MLB_TEAMS.length);
+      assert(r.refuseMlb());
+      assert.equal(statCapOf(r.state.career), LIMITLESS_CAP);
+      assert.equal(r.mlbOffers.length, 0, "offers are gone once refused");
+      assert(
+        r.awayRoster.lineup.every((p) => p.contact <= 200),
+        "the rivals stay at the 1st-team level",
+      );
+      // Sign: MLB, cap 250, team growth restarts, kept after a reload.
+      const m = new BaseballEngine(proCareer({ proGoal: true, teamBoost: 7 }), () => 0.5);
+      m.state.career.mlbScouts = Object.fromEntries(MLB_TEAMS.map((t) => [t.id, 100]));
+      assert(m.signMlb(MLB_TEAMS[3].id));
+      assert.equal(tierOf(m.state.career), "mlb");
+      assert.equal(statCapOf(m.state.career), LIMITLESS_CAP);
+      assert.equal(m.state.career.teamBoost, 0);
+      assert.equal(m.teams[1], MLB_TEAMS[3].name);
+      const again = new BaseballEngine();
+      again.load();
+      assert.equal(tierOf(again.state.career), "mlb");
+      assert.equal(again.state.career.mlbClub, MLB_TEAMS[3].id);
+      again.state.career.stats.control = 240;
+      again.state.career.energy = 100;
+      again.state.career.actions = 5;
+      assert(again.train("bullpen", 1).ok, "training past 200 in the major league");
+      assert.equal(again.state.career.stats.control, 244);
+    } finally {
+      delete globalThis.localStorage;
+    }
+  },
+);
+check(
+  "Skills: T cheer (pros, once a match, rivals −15 for one inning); G limit break (all 250 → 300)",
+  () => {
+    // High school: no cheer.
+    const hs = new BaseballEngine(newCareer());
+    hs.start("match");
+    assert(!hs.cheer());
+    const g = new BaseballEngine(proCareer(), () => 0.5);
+    g.start("match");
+    const plain = { ...g.batter };
+    assert(g.cheer());
+    assert.equal(g.batter.contact, plain.contact - CHEER_DROP, "the rival batter is rattled");
+    g.state.half = "bottom";
+    const rival = g.defenseOf(false)[4],
+      raw = g.awayRoster.lineup.find((p) => p.name === rival.name);
+    assert.equal(rival.speed, raw.speed - CHEER_DROP, "rival fielders too");
+    assert(!g.cheer(), "once per match");
+    g.state.inning = 2;
+    g.state.half = "top";
+    assert.equal(
+      g.batter.contact,
+      g.awayRoster.lineup[g.state.order[0] % 9].contact,
+      "only that inning",
+    );
+    g.start("match");
+    assert(g.cheer(), "a new match, a new cheer");
+    // Limit break needs every stat at 250.
+    const L = new BaseballEngine(proCareer({ limitless: true, proGoal: true }), () => 0.5);
+    L.start("match");
+    assert(!L.limitBreak());
+    for (const k of Object.keys(L.state.career.stats)) L.state.career.stats[k] = LIMITLESS_CAP;
+    assert(L.limitBreak());
+    assert(Object.values(L.playerStats).every((v) => v === LIMIT_BREAK));
+    assert(!L.limitBreak(), "once per inning");
+    L.state.effort = 100;
+    L.state.energy = 100;
+    L.state.career.form = 100;
+    L.throwAt(0, 0.95);
+    assert(L.state.flight.speed > 180, `${L.state.flight.speed} km/h at 300`);
+    assert(Math.abs(fastballSpeed(LIMIT_BREAK) - 187) < 1);
+    L.state.inning = 2;
+    assert.equal(L.playerStats.velocity, LIMITLESS_CAP, "back to 250 next inning");
+    assert(L.limitBreak(), "and available again");
   },
 );
 console.log(`\n${passed} gameplay checks passed.`);
