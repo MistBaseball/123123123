@@ -417,6 +417,19 @@ export const SWING_STYLES: Record<
 /** How far (m) the bat aim may miss the ball and still make contact. */
 export const batReach = (contact: number, style: SwingStyle) =>
   (0.12 + clamp(over(contact), 0, 150) * 0.001) * SWING_STYLES[style].reach;
+/** Experience points: in-match plays, match result and daily actions. */
+export const XP = {
+  strikeout: 5,
+  out: 2,
+  walk: 2,
+  hit: [0, 7, 10, 13, 20] as const,
+  run: 4,
+  complete: 40,
+  win: 30,
+  draw: 12,
+  training: 8,
+  rest: 3,
+};
 /** Actions (training, rest, study) available each day before the day's match. */
 export const DAY_ACTIONS = 5;
 export type StatKey = keyof Career["stats"];
@@ -793,8 +806,12 @@ type PlayOut = {
   time: number;
   kind: "fly" | "force" | "tag";
 };
+/** One line of the end-of-match recap: what happened and how many points it was worth. */
+export type RecapLine = { label: string; value: number };
 export type Player = {
   name: string;
+  /** Nickname shown in front of the name, e.g. [번개맨]. */
+  nick?: string;
   hand: "R" | "L";
   contact: number;
   power: number;
@@ -805,15 +822,18 @@ export type Player = {
 export const HOME_SCHOOL = "미산고";
 export const HOME_LINEUP: Player[] = [
   { name: "", hand: "R", contact: 0, power: 0, eye: 66, speed: 0 },
-  { name: "이준호", hand: "R", contact: 71, power: 53, eye: 69, speed: 71 },
-  { name: "박시우", hand: "L", contact: 76, power: 72, eye: 70, speed: 65 },
-  { name: "강태오", hand: "R", contact: 62, power: 88, eye: 57, speed: 45 },
-  { name: "정민재", hand: "R", contact: 66, power: 67, eye: 64, speed: 58 },
-  { name: "윤서준", hand: "L", contact: 64, power: 57, eye: 73, speed: 69 },
-  { name: "최지호", hand: "R", contact: 57, power: 48, eye: 58, speed: 72 },
-  { name: "한유찬", hand: "R", contact: 54, power: 52, eye: 55, speed: 61 },
-  { name: "오지훈", hand: "L", contact: 52, power: 42, eye: 62, speed: 77 },
+  { name: "고하운", nick: "번개맨", hand: "R", contact: 76, power: 55, eye: 66, speed: 92 },
+  { name: "옥동규", nick: "미산고 요정", hand: "L", contact: 72, power: 45, eye: 70, speed: 99 },
+  { name: "김영호", nick: "발렌시아", hand: "R", contact: 99, power: 99, eye: 99, speed: 99 },
+  { name: "유동권", nick: "진격의 거인", hand: "R", contact: 58, power: 99, eye: 52, speed: 28 },
+  { name: "양서준", nick: "야구괴인", hand: "L", contact: 95, power: 95, eye: 75, speed: 62 },
+  { name: "송대현", nick: "면접의", hand: "R", contact: 92, power: 90, eye: 90, speed: 88 },
+  { name: "이지섭", nick: "그냥 웃김", hand: "R", contact: 55, power: 98, eye: 50, speed: 30 },
+  { name: "아모스", nick: "외국인 선수", hand: "L", contact: 80, power: 84, eye: 72, speed: 74 },
 ];
+/** "[별호] 이름", or just the name. */
+export const playerLabel = (p: Pick<Player, "name" | "nick">) =>
+  p.nick ? `[${p.nick}] ${p.name}` : p.name;
 /** Kept for older code paths: our teammates (slot 0 is filled in from the career). */
 export const RIVALS = HOME_LINEUP;
 /** An AI team's ace: km/h above the stage's base speed, control spread multiplier, pitch mix. */
@@ -1133,6 +1153,9 @@ export type GameState = {
   lastXpGain: number;
   /** Dream-club scout evaluation before/after the last finished match. */
   lastScout: { before: number; after: number } | null;
+  /** Why the gauge and XP moved after the last finished match (lines add up to the totals). */
+  lastScoutParts: RecapLine[];
+  lastXpParts: RecapLine[];
   /** Result type of the last pitch. */
   lastOutcome: PitchOutcome | null;
   /** E pressed: the runner on first goes with the next pitch (STEAL_READY). */
@@ -1192,6 +1215,8 @@ const initial = (career: Career, mode: Mode = "match", maxInnings = 3): GameStat
   matchXp: 0,
   lastXpGain: 0,
   lastScout: null,
+  lastScoutParts: [],
+  lastXpParts: [],
   lastOutcome: null,
   stealCall: false,
   stealTrack: null,
@@ -1246,20 +1271,36 @@ export class BaseballEngine {
     const school = opponentSchool(c.day);
     return makeRoster(school.name, school.strength, school.style);
   }
-  /** Our batter in lineup slot i: the player at slot 0, the fixed teammates elsewhere. */
-  private ourBatter(i: number): Player {
+  /**
+   * Who runs for lineup slot i once on base: the player at slot 0, a teammate elsewhere.
+   * The player takes every at-bat; the teammates only run the bases.
+   */
+  ourRunner(i: number): Player {
     const c = this.state.career,
       p = this.homeRoster.lineup[i % 9];
     return i % 9 === 0
       ? {
           ...p,
           name: c.name,
+          nick: "",
           hand: "R",
           contact: c.stats.contact,
           power: c.stats.power,
           speed: c.stats.speed,
         }
       : p;
+  }
+  /** Our at-bat in slot i: the player swings; that slot's runner makes the dash to first. */
+  private ourBatter(i: number): Player {
+    const c = this.state.career;
+    return {
+      name: c.name,
+      hand: "R",
+      contact: c.stats.contact,
+      power: c.stats.power,
+      eye: 66,
+      speed: this.ourRunner(i).speed,
+    };
   }
   get batter(): Player {
     const s = this.state;
@@ -1398,6 +1439,7 @@ export class BaseballEngine {
     this.state.autoCamera = previous.autoCamera;
     this.recorded = false;
     this.matchStrikeouts = 0;
+    this.xpParts.clear();
     this.matchHits = 0;
     this.matchRuns = 0;
     this.keys.clear();
@@ -1413,10 +1455,18 @@ export class BaseballEngine {
     }
     this.emit();
   }
-  /** Adds in-match XP for season matches only; practice modes do not give XP. */
-  private earn(xp: number) {
-    if (this.state.mode === "match" && this.state.phase !== "finished") this.state.matchXp += xp;
+  /** Adds in-match XP for season matches only, tallied by reason for the end-of-match recap. */
+  private earn(xp: number, reason: string) {
+    const s = this.state;
+    if (s.mode !== "match" || s.phase === "finished") return;
+    s.matchXp += xp;
+    const part = this.xpParts.get(reason) ?? { count: 0, xp: 0 };
+    part.count++;
+    part.xp += xp;
+    this.xpParts.set(reason, part);
   }
+  /** In-match XP by reason (reset each match). */
+  private xpParts = new Map<string, { count: number; xp: number }>();
   throwAt(x = this.state.aim.x, y = this.state.aim.y) {
     const s = this.state;
     if (
@@ -1603,7 +1653,7 @@ export class BaseballEngine {
   }
   /** Our runner on first is taken to be the previous batter in the order. */
   get runnerOnFirst(): Player {
-    return this.ourBatter(this.state.order[1] + 8);
+    return this.ourRunner(this.state.order[1] + 8);
   }
   /** Moves the E-steal runner during the delivery (dt in real game seconds). */
   private runSteal(dt: number) {
@@ -1767,7 +1817,7 @@ export class BaseballEngine {
       s.outs++;
       if (!this.batting && s.mode === "match") {
         this.matchStrikeouts++;
-        this.earn(3);
+        this.earn(XP.strikeout, "탈삼진");
       }
       this.advanceBatter();
       this.settlePitch(
@@ -1803,7 +1853,7 @@ export class BaseballEngine {
       // Ball four forces the runner from first anyway, so a steal attempt is moot.
       s.stealTrack = null;
       this.walk();
-      if (this.batting) this.earn(1);
+      if (this.batting) this.earn(XP.walk, "볼넷·사구");
       this.result("BASE ON BALLS", "볼넷 · 타자 1루 진루", this.batting ? "gold" : "red");
     } else this.settlePitch("BALL", "스트라이크 존 바깥", this.batting ? "gold" : "neutral");
   }
@@ -1814,7 +1864,7 @@ export class BaseballEngine {
     s.stealTrack = null;
     if (s.history[0]) s.history[0].kind = "ball";
     this.walk();
-    if (this.batting) this.earn(1);
+    if (this.batting) this.earn(XP.walk, "볼넷·사구");
     this.result(
       "HIT BY PITCH",
       "몸에 맞는 공 · 타자 1루, 밀려난 주자 진루",
@@ -1853,7 +1903,7 @@ export class BaseballEngine {
     s.score[i] += n;
     s.lines[i][s.inning - 1] = (s.lines[i][s.inning - 1] ?? 0) + n;
     if (i === 0 && s.mode === "match") this.matchRuns += n;
-    if (i === 1) this.earn(2 * n);
+    if (i === 1) for (let k = 0; k < n; k++) this.earn(XP.run, "득점");
   }
   walk() {
     const s = this.state;
@@ -2207,7 +2257,7 @@ export class BaseballEngine {
     r.out = true;
     l.outs.push({ runnerId: r.id, base, force: kind === "force", time, kind });
     this.state.outs++;
-    if (!this.batting) this.earn(1);
+    if (!this.batting) this.earn(XP.out, "수비 아웃");
     this.state.message = kind === "fly" ? "FLY OUT" : kind === "tag" ? "TAG OUT" : "FORCE OUT";
     this.state.detail =
       kind === "fly"
@@ -2501,7 +2551,10 @@ export class BaseballEngine {
       s.hits[this.batting ? 1 : 0]++;
       if (this.batting && s.mode === "match") {
         this.matchHits++;
-        this.earn(n >= 4 ? 10 : 3 + n);
+        this.earn(
+          XP.hit[Math.min(4, n)],
+          n >= 4 ? "홈런" : n === 3 ? "3루타" : n === 2 ? "2루타" : "안타",
+        );
       }
     }
     if (l.error) s.errors[this.batting ? 0 : 1]++;
@@ -2906,20 +2959,33 @@ export class BaseballEngine {
       c.day++;
       c.actions = DAY_ACTIONS;
       c.form = clamp(c.form - 4, 0, 100);
-      const gain = clamp(
-        Math.round(
-          clamp(
-            7 + this.matchStrikeouts + s.hits[1] - s.score[0] + (s.score[1] > s.score[0] ? 5 : 0),
-            3,
-            18,
-          ) * this.stageRules.gaugeGain,
-        ),
-        2,
-        18,
-      );
+      // Scout gauge: every reason as its own line; caps and the pro scale are lines too, so the
+      // recap always adds up to the real gain.
+      const won = s.score[1] > s.score[0],
+        drew = s.score[1] === s.score[0],
+        parts: RecapLine[] = [{ label: "경기 출전", value: 7 }];
+      if (this.matchStrikeouts)
+        parts.push({ label: `탈삼진 ${this.matchStrikeouts}개`, value: this.matchStrikeouts });
+      if (s.hits[1]) parts.push({ label: `팀 안타 ${s.hits[1]}개`, value: s.hits[1] });
+      if (s.score[0]) parts.push({ label: `실점 ${s.score[0]}`, value: -s.score[0] });
+      if (won) parts.push({ label: "승리", value: 5 });
+      const raw = parts.reduce((a, p) => a + p.value, 0),
+        bounded = clamp(raw, 3, 18);
+      if (bounded !== raw)
+        parts.push({
+          label: bounded > raw ? "최소 보장(3)" : "한 경기 최대(18)",
+          value: bounded - raw,
+        });
+      const scaled = clamp(Math.round(bounded * this.stageRules.gaugeGain), 2, 18);
+      if (scaled !== bounded)
+        parts.push({ label: `프로 기준 ×${this.stageRules.gaugeGain}`, value: scaled - bounded });
+      const gain = scaled;
       const before = c.scout;
       c.scout = clamp(c.scout + gain, 0, 100);
+      if (c.scout - before < gain)
+        parts.push({ label: "평가 최대 100", value: c.scout - before - gain });
       s.lastScout = { before, after: c.scout };
+      s.lastScoutParts = parts;
       const team = teamOf(c.team);
       // The dream comes true: the watching club offers a contract at 100.
       if (c.stage === "high" && team && c.scout >= 100 && !c.draft) {
@@ -2932,13 +2998,20 @@ export class BaseballEngine {
         c.proGoal = true;
         c.history = [`${STAGES.pro.goalReward}! 감독이 선발 한 자리를 맡겼다`, ...c.history];
       }
-      const won = s.score[1] > s.score[0],
-        xp = s.matchXp + 20 + (won ? 15 : s.score[1] === s.score[0] ? 5 : 0);
+      const xpParts: RecapLine[] = [...this.xpParts].map(([label, p]) => ({
+        label: `${label} ×${p.count}`,
+        value: p.xp,
+      }));
+      xpParts.push({ label: "경기 완주", value: XP.complete });
+      if (won) xpParts.push({ label: "승리", value: XP.win });
+      else if (drew) xpParts.push({ label: "무승부", value: XP.draw });
+      const xp = xpParts.reduce((a, p) => a + p.value, 0);
+      s.lastXpParts = xpParts;
       c.xp += xp;
       s.lastXpGain = xp;
       s.detail += ` · 경험치 +${xp} XP`;
       c.history = [
-        `${c.day - 1}일차 경기 · ${won ? "승리" : s.score[1] === s.score[0] ? "무승부" : "패배"} ${s.score[1]}:${s.score[0]} · +${xp} XP · 스카우트 +${gain}`,
+        `${c.day - 1}일차 경기 · ${won ? "승리" : drew ? "무승부" : "패배"} ${s.score[1]}:${s.score[0]} · +${xp} XP · 스카우트 +${c.scout - before}`,
         ...c.history,
       ].slice(0, 12);
       this.persist();
@@ -3004,7 +3077,7 @@ export class BaseballEngine {
     else if (kind === "study") o.gain = Math.round(2 + q * 4);
     c.energy = clamp(c.energy - o.cost, 0, 100);
     c.actions--;
-    c.xp += kind === "rest" ? 2 : 5;
+    c.xp += kind === "rest" ? XP.rest : XP.training;
     if (o.stat) c.stats[o.stat] = clamp(c.stats[o.stat] + o.gain, 0, cap);
     else c.form = clamp(c.form + o.gain, 0, 100);
     if (o.stat) c.form = clamp(c.form - 2, 0, 100);

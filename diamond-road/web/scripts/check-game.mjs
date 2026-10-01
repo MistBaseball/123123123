@@ -26,6 +26,8 @@ import {
   pitchData,
   STAT_INFO,
   STAT_NAMES,
+  XP,
+  HOME_LINEUP,
   HOME_SCHOOL,
   SCHOOLS,
   makeRoster,
@@ -481,7 +483,7 @@ check("Match XP is credited on finish and buys locked pitches", () => {
   assert(!g.buyPitch("changeup").ok, "no XP yet");
   g.state.strikes = 2;
   g.strike(true, "test");
-  assert.equal(g.state.matchXp, 3);
+  assert.equal(g.state.matchXp, XP.strikeout);
   assert.equal(g.state.career.xp, 0, "XP is credited only when the match ends");
   g.state.inning = 3;
   g.state.half = "bottom";
@@ -489,8 +491,25 @@ check("Match XP is credited on finish and buys locked pitches", () => {
   g.state.score = [0, 1];
   g.state.phase = "result";
   g.next();
-  assert.equal(g.state.career.xp, 3 + 20 + 15);
-  assert.equal(g.state.lastXpGain, 38);
+  const total = XP.strikeout + XP.complete + XP.win;
+  assert.equal(g.state.career.xp, total);
+  assert.equal(g.state.lastXpGain, total);
+  // The recap lists every reason, and the lines add up to the totals.
+  assert.deepEqual(
+    g.state.lastXpParts.map((p) => p.label),
+    ["탈삼진 ×1", "경기 완주", "승리"],
+  );
+  assert.equal(
+    g.state.lastXpParts.reduce((a, p) => a + p.value, 0),
+    g.state.lastXpGain,
+  );
+  const sc = g.state.lastScout;
+  assert.equal(
+    g.state.lastScoutParts.reduce((a, p) => a + p.value, 0),
+    sc.after - sc.before,
+    "scout lines add up to the real gain",
+  );
+  assert(g.state.lastScoutParts.some((p) => p.label === "승리"));
   g.state.career.xp = 100;
   assert(g.buyPitch("changeup").ok);
   assert.equal(g.state.career.xp, 10);
@@ -910,7 +929,8 @@ check(
   "F E steal: runner breaks with the delivery, catcher throws to second, arrival decides",
   () => {
     const verdicts = new Set();
-    for (const order of [1, 4]) {
+    // The runner on first is the previous slot: 옥동규 (speed 99) and 유동권 (speed 28).
+    for (const order of [3, 5]) {
       const g = new BaseballEngine(newCareer(), () => 0.5);
       g.state.half = "bottom";
       g.state.bases = [true, false, false];
@@ -1470,5 +1490,52 @@ check("미산고 vs a new rival school each day; every school's players never ch
   const weakDay = SCHOOLS.indexOf(weak) + 1,
     strongDay = SCHOOLS.indexOf(strong) + 1;
   assert(speedOn(strongDay) > speedOn(weakDay), "a stronger school's ace throws harder");
+});
+check("Scout recap lines always add up, including caps; the player bats, teammates run", () => {
+  // A blowout loss: the gain is held at the minimum and the recap says so.
+  for (const [score, hits, ks] of [
+    [[9, 0], 0, 0],
+    [[0, 8], 14, 12],
+  ]) {
+    const g = new BaseballEngine();
+    g.start("match");
+    Object.assign(g.state, { inning: 3, half: "bottom", outs: 3, phase: "result", score });
+    g.state.hits = [0, hits];
+    for (let k = 0; k < ks; k++) {
+      g.state.strikes = 2;
+      g.state.half = "top";
+      g.strike(true, "k");
+    }
+    Object.assign(g.state, { inning: 3, half: "bottom", outs: 3, phase: "result" });
+    const before = g.state.career.scout;
+    g.next();
+    const parts = g.state.lastScoutParts,
+      sum = parts.reduce((a, p) => a + p.value, 0);
+    assert.equal(sum, g.state.career.scout - before);
+    assert(parts.some((p) => p.label.includes(score[0] > score[1] ? "최소" : "최대")));
+  }
+  // Every at-bat is the player's; the slot's teammate runs once on base.
+  const g = new BaseballEngine();
+  g.state.half = "bottom";
+  for (let slot = 0; slot < 9; slot++) {
+    g.state.order[1] = slot;
+    assert.equal(g.batter.name, g.state.career.name, "the player always bats");
+    assert.equal(g.batter.contact, g.state.career.stats.contact);
+    const runner = g.ourRunner(slot);
+    assert.equal(g.batter.speed, runner.speed, "the runner's legs run to first");
+    if (slot) assert.equal(runner.name, HOME_LINEUP[slot].name);
+  }
+  const named = HOME_LINEUP.slice(1);
+  assert.equal(named.length, 8);
+  assert(
+    named.every((p) => p.nick),
+    "all eight teammates have a nickname",
+  );
+  const by = (n) => named.find((p) => p.name === n);
+  assert(["contact", "power", "eye", "speed"].every((k) => by("김영호")[k] === 99));
+  assert(by("송대현").contact >= 90 && by("송대현").power >= 90);
+  assert(by("양서준").contact >= 90 && by("양서준").power >= 90);
+  assert(by("옥동규").speed === Math.max(...named.map((p) => (p.name === "김영호" ? 0 : p.speed))));
+  for (const n of ["이지섭", "유동권"]) assert(by(n).speed <= 35 && by(n).power >= 95);
 });
 console.log(`\n${passed} gameplay checks passed.`);

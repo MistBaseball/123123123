@@ -4342,3 +4342,82 @@ kbd {
     width: calc(100vw - 16px);
   }
 }
+
+/* ---- End-of-match recap lines and the 미산고 lineup ---- */
+.recap-breakdown {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  width: 100%;
+  margin: 8px 0;
+  text-align: left;
+}
+.recap-breakdown section {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #ffffff0a;
+}
+.recap-breakdown h4 {
+  display: flex;
+  justify-content: space-between;
+  margin: 0 0 6px;
+  font-size: 0.875rem;
+  color: #eceee7;
+}
+.recap-breakdown h4 b {
+  color: #f4d48c;
+}
+.recap-breakdown ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 3px;
+}
+.recap-breakdown li {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8125rem;
+  color: #c9d3cf;
+}
+.recap-breakdown li b {
+  color: #9fc9a8;
+  font-weight: 600;
+}
+.recap-breakdown li.minus b {
+  color: #f0bba9;
+}
+.team-lineup {
+  list-style: none;
+  margin: 6px 0 14px;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.team-lineup li {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 0.8125rem;
+}
+.team-lineup li > span {
+  color: #e0ba76;
+}
+.team-lineup strong {
+  font-weight: 600;
+  color: #eceee7;
+}
+.team-lineup em {
+  font-style: normal;
+  color: #f4d48c;
+}
+.team-lineup small {
+  color: #b0bec3;
+  white-space: nowrap;
+}
+@media (max-width: 680px) {
+  .recap-breakdown {
+    grid-template-columns: 1fr;
+  }
+}

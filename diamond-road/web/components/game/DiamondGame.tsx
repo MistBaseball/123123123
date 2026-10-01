@@ -72,6 +72,9 @@ import {
   STAGES,
   STAT_NAMES,
   STAT_INFO,
+  HOME_LINEUP,
+  playerLabel,
+  type RecapLine,
   fastballSpeed,
   josa,
   type StatKey,
@@ -753,6 +756,35 @@ function CareerView({ engine, s }: { engine: BaseballEngine; s: GameState }) {
               </div>
             ))}
           </div>
+          {c.stage !== "pro" && (
+            <>
+              <h3>미산고 라인업</h3>
+              <p className="muted small">
+                타석은 언제나 내가 서고, 출루하면 그 타순의 동료가 주자로 뛴다.
+              </p>
+              <ol className="team-lineup">
+                {HOME_LINEUP.map((p, i) => (
+                  <li key={i}>
+                    <span>{i + 1}</span>
+                    <strong>
+                      {i === 0 ? (
+                        c.name
+                      ) : (
+                        <>
+                          <em>[{p.nick}]</em> {p.name}
+                        </>
+                      )}
+                    </strong>
+                    <small>
+                      {i === 0
+                        ? `주력 ${c.stats.speed}`
+                        : `컨 ${p.contact} · 파 ${p.power} · 주 ${p.speed}`}
+                    </small>
+                  </li>
+                ))}
+              </ol>
+            </>
+          )}
           <h3>나의 야구 일지</h3>
           <ol>
             {c.history.map((item, i) => (
@@ -1365,6 +1397,50 @@ function ScoutMeter({
   );
 }
 /** End of the day: a short recap before the next morning. */
+/** Why the scout gauge and XP moved: one line per reason, adding up to the totals. */
+function RecapBreakdown({
+  scoutParts,
+  xpParts,
+  scoutLabel,
+}: {
+  scoutParts: RecapLine[];
+  xpParts: RecapLine[];
+  scoutLabel: string;
+}) {
+  const block = (title: string, lines: RecapLine[], unit: string) => {
+    const total = lines.reduce((a, p) => a + p.value, 0);
+    return (
+      <section>
+        <h4>
+          {title}
+          <b>
+            {total >= 0 ? "+" : ""}
+            {total}
+            {unit}
+          </b>
+        </h4>
+        <ul>
+          {lines.map((p, i) => (
+            <li key={i} className={p.value < 0 ? "minus" : ""}>
+              <span>{p.label}</span>
+              <b>
+                {p.value >= 0 ? "+" : ""}
+                {p.value}
+              </b>
+            </li>
+          ))}
+        </ul>
+      </section>
+    );
+  };
+  if (!scoutParts.length && !xpParts.length) return null;
+  return (
+    <div className="recap-breakdown">
+      {scoutParts.length > 0 && block(scoutLabel, scoutParts, "")}
+      {xpParts.length > 0 && block("경험치", xpParts, " XP")}
+    </div>
+  );
+}
 function NightDialog({
   s,
   recap,
@@ -1377,6 +1453,8 @@ function NightDialog({
     score: string;
     xp: number;
     scout: { before: number; after: number } | null;
+    scoutParts: RecapLine[];
+    xpParts: RecapLine[];
   } | null;
   onClose: () => void;
 }) {
@@ -1432,6 +1510,13 @@ function NightDialog({
         </DialogHeader>
         {recap?.scout && (
           <ScoutMeter s={s} before={recap.scout.before} after={recap.scout.after} big />
+        )}
+        {recap && (
+          <RecapBreakdown
+            scoutParts={recap.scoutParts}
+            xpParts={recap.xpParts}
+            scoutLabel={s.career.stage === "pro" ? STAGES.pro.goal : "스카우트 평가"}
+          />
         )}
         <div className="night-recap">
           <div>
@@ -1906,6 +1991,8 @@ export default function DiamondGame() {
       score: string;
       xp: number;
       scout: { before: number; after: number } | null;
+      scoutParts: RecapLine[];
+      xpParts: RecapLine[];
     } | null>(null),
     [help, setHelp] = useState(false),
     [settings, setSettings] = useState(false),
@@ -2411,7 +2498,9 @@ export default function DiamondGame() {
                     <strong>{batting ? engine.batter.name : s.career.name}</strong>
                     <span>
                       {batting
-                        ? `${engine.batter.hand === "L" ? "좌" : "우"}타 · 컨택 ${engine.batter.contact}`
+                        ? s.mode === "match"
+                          ? `출루하면 주자 ${playerLabel(engine.ourRunner(s.order[1]))} · 주력 ${engine.batter.speed}`
+                          : `${engine.batter.hand === "L" ? "좌" : "우"}타 · 컨택 ${engine.batter.contact}`
                         : `우완 투수 · ${matchTeams(s.career)[1]}`}
                     </span>
                   </div>
@@ -2438,6 +2527,11 @@ export default function DiamondGame() {
                           big
                         />
                       )}
+                      <RecapBreakdown
+                        scoutParts={s.lastScoutParts}
+                        xpParts={s.lastXpParts}
+                        scoutLabel={s.career.stage === "pro" ? STAGES.pro.goal : "스카우트 평가"}
+                      />
                       <p>
                         경험치 <b>+{s.lastXpGain} XP</b> 획득 · 보유 {s.career.xp} XP
                       </p>
@@ -2458,6 +2552,8 @@ export default function DiamondGame() {
                           ),
                           xp: s.lastXpGain,
                           scout: s.lastScout,
+                          scoutParts: s.lastScoutParts,
+                          xpParts: s.lastXpParts,
                         });
                         engine.start("match");
                         setView("life");
