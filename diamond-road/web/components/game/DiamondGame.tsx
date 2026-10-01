@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import {
   Target,
   Crosshair,
@@ -1926,57 +1927,127 @@ function TutorialCoach({
 }) {
   const steps = TOURS[track],
     t = steps[step];
-  // Outline the element being explained and bring it into view.
+  // Spotlight: the page is dimmed except for the element being explained. Its box is tracked
+  // every frame so the hole follows scrolling, layout changes and smooth scrolls.
+  const [spot, setSpot] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   useEffect(() => {
-    if (!t?.target) return;
-    const el = document.querySelector(t.target);
-    if (!el) return;
-    el.classList.add("tutorial-focus");
-    if (track === "life") el.scrollIntoView({ behavior: "smooth", block: "center" });
-    return () => el.classList.remove("tutorial-focus");
+    if (!t?.target) {
+      setSpot(null);
+      return;
+    }
+    let raf = 0,
+      el: Element | null = document.querySelector(t.target);
+    // Jump (not glide) so the hole is right even on slow machines.
+    el?.scrollIntoView({ block: track === "life" ? "center" : "nearest" });
+    const pad = 6,
+      measure = () => {
+        if (!el?.isConnected) el = document.querySelector(t.target!);
+        const r = el?.getBoundingClientRect();
+        setSpot((prev) => {
+          if (!r || r.width === 0) return null;
+          const next = {
+            x: r.left - pad,
+            y: r.top - pad,
+            w: r.width + pad * 2,
+            h: r.height + pad * 2,
+          };
+          return prev &&
+            Math.abs(prev.x - next.x) < 0.5 &&
+            Math.abs(prev.y - next.y) < 0.5 &&
+            Math.abs(prev.w - next.w) < 0.5 &&
+            Math.abs(prev.h - next.h) < 0.5
+            ? prev
+            : next;
+        });
+      },
+      loop = () => {
+        measure();
+        raf = requestAnimationFrame(loop);
+      };
+    loop();
+    // Scrolling and resizing re-measure at once, without waiting for the next frame.
+    window.addEventListener("scroll", measure, true);
+    window.addEventListener("resize", measure);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("scroll", measure, true);
+      window.removeEventListener("resize", measure);
+    };
   }, [t, track]);
   if (!t) return null;
   const last = step === steps.length - 1;
-  return (
-    <aside className={`tutorial-coach ${track === "life" ? "floating" : ""}`} aria-label="튜토리얼">
-      <div className="tutorial-head">
-        <span>
-          {track === "life"
-            ? "하루 일정 안내"
-            : track === "pitch"
-              ? "튜토리얼 이닝 · 투수"
-              : "튜토리얼 이닝 · 타자"}
-        </span>
-        <span>
-          {step + 1} / {steps.length}
-        </span>
-      </div>
-      <div className="tutorial-progress" aria-hidden="true">
-        {steps.map((_, i) => (
-          <i key={i} className={i <= step ? "on" : ""} />
-        ))}
-      </div>
-      <h3>{t.title}</h3>
-      <p>{t.body}</p>
-      <div className="tutorial-actions">
-        <button className="subtle-button" onClick={onSkip}>
-          튜토리얼 끄기 <kbd>P</kbd>
-        </button>
-        {t.wait ? (
-          <span className="tutorial-wait">
-            {t.wait === "pitch"
-              ? "구종을 고르면 다음으로"
-              : t.wait === "throw"
-                ? "공을 던지면 다음으로"
-                : "결과가 나오면 다음으로"}
+  // Put the card in the first corner that does not cover the highlighted element.
+  const vw = typeof window === "undefined" ? 1280 : window.innerWidth,
+    vh = typeof window === "undefined" ? 800 : window.innerHeight,
+    cw = Math.min(400, vw - 40),
+    ch = 250,
+    corners: React.CSSProperties[] = [
+      { left: 20, bottom: 20 },
+      { right: 20, bottom: 20 },
+      { right: 20, top: 20 },
+      { left: 20, top: 20 },
+    ],
+    box = (c: React.CSSProperties) => {
+      const x = c.left !== undefined ? 20 : vw - 20 - cw,
+        y = c.top !== undefined ? 20 : vh - 20 - ch;
+      return { x, y };
+    },
+    overlaps = (c: React.CSSProperties) => {
+      if (!spot) return false;
+      const { x, y } = box(c);
+      return !(x + cw < spot.x || spot.x + spot.w < x || y + ch < spot.y || spot.y + spot.h < y);
+    },
+    corner = corners.find((c) => !overlaps(c)) ?? corners[0];
+  return createPortal(
+    <>
+      {spot && (
+        <div
+          className="tutorial-spot"
+          aria-hidden="true"
+          style={{ left: spot.x, top: spot.y, width: spot.w, height: spot.h }}
+        />
+      )}
+      <aside className="tutorial-coach floating" style={corner} aria-label="튜토리얼">
+        <div className="tutorial-head">
+          <span>
+            {track === "life"
+              ? "하루 일정 안내"
+              : track === "pitch"
+                ? "튜토리얼 이닝 · 투수"
+                : "튜토리얼 이닝 · 타자"}
           </span>
-        ) : (
-          <button className="primary-button" onClick={onNext}>
-            {last ? "알겠어요" : "다음"} <ChevronRight size={16} />
+          <span>
+            {step + 1} / {steps.length}
+          </span>
+        </div>
+        <div className="tutorial-progress" aria-hidden="true">
+          {steps.map((_, i) => (
+            <i key={i} className={i <= step ? "on" : ""} />
+          ))}
+        </div>
+        <h3>{t.title}</h3>
+        <p>{t.body}</p>
+        <div className="tutorial-actions">
+          <button className="subtle-button" onClick={onSkip}>
+            튜토리얼 끄기 <kbd>P</kbd>
           </button>
-        )}
-      </div>
-    </aside>
+          {t.wait ? (
+            <span className="tutorial-wait">
+              {t.wait === "pitch"
+                ? "구종을 고르면 다음으로"
+                : t.wait === "throw"
+                  ? "공을 던지면 다음으로"
+                  : "결과가 나오면 다음으로"}
+            </span>
+          ) : (
+            <button className="primary-button" onClick={onNext}>
+              {last ? "알겠어요" : "다음"} <ChevronRight size={16} />
+            </button>
+          )}
+        </div>
+      </aside>
+    </>,
+    document.body,
   );
 }
 export default function DiamondGame() {
