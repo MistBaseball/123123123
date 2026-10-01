@@ -829,7 +829,7 @@ export const HOME_LINEUP: Player[] = [
   { name: "양서준", nick: "야구괴인", hand: "L", contact: 95, power: 95, eye: 75, speed: 62 },
   { name: "송대현", nick: "면접의", hand: "R", contact: 92, power: 90, eye: 90, speed: 88 },
   { name: "이지섭", nick: "그냥 웃김", hand: "R", contact: 55, power: 98, eye: 50, speed: 30 },
-  { name: "아모스", nick: "외국인 선수", hand: "L", contact: 80, power: 84, eye: 72, speed: 74 },
+  { name: "아모스", nick: "몽골의", hand: "L", contact: 99, power: 84, eye: 99, speed: 74 },
 ];
 /** "[별호] 이름", or just the name. */
 export const playerLabel = (p: Pick<Player, "name" | "nick">) =>
