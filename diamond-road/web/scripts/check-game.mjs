@@ -260,6 +260,8 @@ check("A batter already on second cannot be retired by a late throw to first", (
     l.resultBases = 2;
     l.runners[0].progress = 2;
     l.runners[0].target = 2;
+    // Hand-made roll (very fast): only the late throw is tested here, not an outfield backup.
+    l.backedUp = true;
     Object.assign(l.fielderPos, l.land);
     if (!auto) assert(g.selectThrowBase(1));
     finishPlay(g);
@@ -2383,12 +2385,13 @@ check(
         let k = 0,
           downChecked = false;
         while (g.state.phase === "inplay" && k++ < 3000) {
-          const before = { ...l.fielderPos },
+          const diver = l.diver !== undefined ? l.defenders[l.diver] : null,
+            before = diver && { ...diver },
             wasDown = l.downUntil !== undefined && l.elapsed < l.downUntil - 0.05;
           g.tick(1 / 60);
-          // A fielder who missed a dive stays down until he gets up.
+          // A fielder who missed a dive stays down until he gets up (a backup may take over).
           if (wasDown && l.elapsed < l.downUntil - 0.05 && l.fieldedAt === null) {
-            assert.equal(l.fielderPos.x, before.x);
+            assert.equal(diver.x, before.x);
             downChecked = true;
           }
         }
@@ -2434,4 +2437,66 @@ check(
     assert(g.diveChance(4, 1.7, 3, 1.6) > g.diveChance(4, 2.9, 3, 1.6));
   },
 );
+check("Close plays at a base are replayed with the right call; the next batter waits", () => {
+  let close = 0,
+    outs = 0,
+    safes = 0;
+  for (let i = 1; i <= 900; i++) {
+    const g = evenDefense(new BaseballEngine(newCareer(), seed(i)), 65);
+    const r = seed(i * 13 + 5);
+    g.contact(0.21 + r() * 0.75, (r() - 0.5) * 0.2);
+    const l = g.state.live;
+    let k = 0;
+    while (g.state.phase === "inplay" && k++ < 3000) g.tick(1 / 60);
+    const rp = g.state.replay;
+    if (!rp?.base) continue;
+    close++;
+    const runner = l.runners.find((x) => x.id === rp.base.runner);
+    assert.equal(runner.out, rp.base.out, `call matches the play (seed ${i})`);
+    assert.equal(rp.text, rp.base.out ? "아웃" : "세이프");
+    if (rp.base.out) outs++;
+    else safes++;
+  }
+  assert(close >= 10 && close < 300, `close plays ${close} of 900`);
+  assert(outs > 0 && safes > 0, `both calls happen (${outs} out, ${safes} safe)`);
+  // While the 3D view shows a replay, the result screen does not move on (12 s at most).
+  const g = new BaseballEngine(newCareer(), seed(3));
+  g.state.phase = "result";
+  g.state.timer = 0.5;
+  g.state.replayBusy = true;
+  for (let i = 0; i < 300; i++) g.tick(1 / 60);
+  assert.equal(g.state.phase, "result", "waits for the replay");
+  g.state.replayBusy = false;
+  g.tick(1 / 60);
+  assert.notEqual(g.state.phase, "result", "goes on once the replay ends");
+});
+check("A grounder through the infield is taken by an outfielder; runners read the new play", () => {
+  let through = 0,
+    backups = 0,
+    extra = 0;
+  for (let i = 1; i <= 900; i++) {
+    const g = evenDefense(new BaseballEngine(newCareer(), seed(i)), 65);
+    const r = seed(i * 17 + 1);
+    g.contact(0.21 + r() * 0.75, (r() - 0.5) * 0.2);
+    const l = g.state.live;
+    if (!l.ground || l.bunt) continue;
+    const first = l.fielder;
+    let k = 0;
+    while (g.state.phase === "inplay" && l.fieldedAt === null && k++ < 3000) g.tick(1 / 60);
+    if (l.fieldedAt === null) continue;
+    const deep = Math.hypot(l.fielderPos.x, l.fielderPos.z);
+    if (deep > 45) {
+      through++;
+      // Nobody from the infield chases a ball out to the outfield grass.
+      assert(l.fielder >= 6, `outfielder fields a ball at ${deep.toFixed(0)} m (seed ${i})`);
+    }
+    if (l.backedUp) {
+      backups++;
+      assert(first < 6 && l.fielder >= 6);
+      if (l.runners.some((x) => x.target > x.from + 1)) extra++;
+    }
+  }
+  assert(through > 10 && backups > 0, `through ${through}, backups ${backups}`);
+  if (process.env.SHOW) console.log({ through, backups, extra });
+});
 console.log(`\n${passed} gameplay checks passed.`);

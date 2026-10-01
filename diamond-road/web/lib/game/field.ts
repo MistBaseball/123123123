@@ -17,6 +17,7 @@ import {
   type Vec,
 } from "./engine";
 import * as tex from "./textures";
+import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { Avatar, CLIP_KEYS, loadAvatarAssets, type AvatarAssets, type ClipName } from "./avatars";
 /** White "[별호] 이름" text for a fielder's head: no box, a dark outline keeps it readable. */
 function nameTag(label: string) {
@@ -80,14 +81,19 @@ const BAT_FOLLOW = 0.34;
 const REPLAY_SLOW = 0.4,
   REPLAY_BEFORE = 1.3,
   REPLAY_AFTER = 1.1;
-type ReplayFrame = {
-  t: number;
-  i: number;
+type ReplayActor = {
   x: number;
   z: number;
   yaw: number;
   clip: ClipName | null;
   time: number;
+  on: boolean;
+};
+/** One recorded frame: every fielder (f0..f8) and runner (r0..r3), and the ball. */
+type ReplayFrame = {
+  t: number;
+  chaser: number;
+  actors: Map<string, ReplayActor>;
   ball: THREE.Vector3;
   ballOn: boolean;
 };
@@ -139,9 +145,23 @@ export class BaseballField {
   private tape: ReplayFrame[] = [];
   private tapeLive: object | null = null;
   private replaySrc: object | null = null;
-  private replay: { text: string; frames: ReplayFrame[]; startedAt: number; at: number } | null =
-    null;
-  private replayAvatar: Avatar | null = null;
+  private replayPending: {
+    r: NonNullable<BaseballEngine["state"]["replay"]>;
+    play: object | null;
+  }[] = [];
+  private replayQueue: NonNullable<BaseballField["replay"]>[] = [];
+  private replay: {
+    play: object | null;
+    text: string;
+    frames: ReplayFrame[];
+    startedAt: number;
+    at: number;
+    /** Who is shown: actor key -> team/glove. */
+    cast: { key: string; team: "home" | "away"; glove: boolean; lefty: boolean }[];
+    base?: { base: number; out: boolean };
+    tvState: string;
+  } | null = null;
+  private replayAvatars: Avatar[] = [];
   private batSwing: { flight: object; press: number; contactAt: number; from: number } | null =
     null;
   private replayBall: THREE.Mesh | null = null;
@@ -624,14 +644,19 @@ export class BaseballField {
     hill.receiveShadow = true;
     this.scene.add(hill);
     this.box(0, 0.29, 18.6, 0.61, 0.03, 0.15, "#f4efe2");
-    // Bases: white canvas bags standing a little off the dirt.
-    const bagMaterial = new THREE.MeshStandardMaterial({ color: "#f3efe6", roughness: 0.7 });
+    // Bases: thick, cushioned canvas bags (rounded edges) on a dark rubber anchor plate.
+    const bagMaterial = new THREE.MeshStandardMaterial({ color: "#f5f1e8", roughness: 0.75 }),
+      anchorMaterial = new THREE.MeshStandardMaterial({ color: "#3a3a36", roughness: 0.9 }),
+      bagGeometry = new RoundedBoxGeometry(0.42, 0.14, 0.42, 3, 0.035);
     BASES.slice(0, 3).forEach((p) => {
-      const bag = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.09, 0.38), bagMaterial);
-      bag.position.set(p.x, 0.07, p.z);
+      const bag = new THREE.Mesh(bagGeometry, bagMaterial);
+      bag.position.set(p.x, 0.085, p.z);
       bag.rotation.y = Math.PI / 4;
       bag.castShadow = bag.receiveShadow = true;
-      this.scene.add(bag);
+      const anchor = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.02, 0.46), anchorMaterial);
+      anchor.position.set(p.x, 0.012, p.z);
+      anchor.rotation.y = Math.PI / 4;
+      this.scene.add(anchor, bag);
     });
     // Home plate: white pentagon on a thin black rubber edge.
     const plateOutline = (k: number) => [
@@ -966,9 +991,12 @@ export class BaseballField {
       for (const c of fig.root.children) if (!(c as THREE.Sprite).isSprite) c.visible = false;
     }
     // The highlight replay's own player and ball (shown only while the TV window draws).
-    this.replayAvatar = new Avatar(assets);
-    this.replayAvatar.object.visible = false;
-    this.scene.add(this.replayAvatar.object);
+    for (let k = 0; k < 2; k++) {
+      const a = new Avatar(assets);
+      a.object.visible = false;
+      this.scene.add(a.object);
+      this.replayAvatars.push(a);
+    }
     this.replayBall = this.ball.clone();
     this.replayBall.visible = false;
     this.scene.add(this.replayBall);
@@ -1005,16 +1033,9 @@ export class BaseballField {
       if (!l || s.phase !== "inplay") return false;
       const e = l.elapsed,
         t = l.throw;
-      if (l.fielder !== i) {
-        // Receiver: glove up as the throw arrives.
-        const arrive = t && t.receiver === i ? t.startedAt + t.duration : null;
-        if (arrive !== null && e > arrive - 0.45 && e < arrive + 0.7)
-          a.play("catch", { time: K.catchMoment + (e - arrive), fade: 0.12 });
-        else running(a, moved, i * 1.7);
-        return true;
-      }
-      // A dive (caught or not): launch at the moment, then get up in time for the throw.
-      const diveAt = l.diveTried ? l.catchMoment : undefined;
+      // A dive (caught or not): launch at the moment, then get up in time for the throw (or,
+      // after a miss, when he can move again; a backup may be chasing the ball meanwhile).
+      const diveAt = l.diveTried && l.diver === i ? l.catchMoment : undefined;
       if (diveAt !== undefined && e >= diveAt) {
         const endAt = l.downUntil ?? (l.fieldedAt ?? diveAt) + l.hold;
         if (e < endAt) {
@@ -1032,6 +1053,14 @@ export class BaseballField {
           a.play(side, { time: Math.min(K.diveUp, K.diveReach + (e - diveAt) * rate), fade: 0.1 });
           return true;
         }
+      }
+      if (l.fielder !== i) {
+        // Receiver: glove up as the throw arrives.
+        const arrive = t && t.receiver === i ? t.startedAt + t.duration : null;
+        if (arrive !== null && e > arrive - 0.45 && e < arrive + 0.7)
+          a.play("catch", { time: K.catchMoment + (e - arrive), fade: 0.12 });
+        else running(a, moved, i * 1.7);
+        return true;
       }
       if (t && l.state === "송구" && t.receivedAt === null)
         a.play("throw", { time: Math.min(K.throwEnd, K.throwRelease + (e - t.startedAt)) });
@@ -1115,21 +1144,24 @@ export class BaseballField {
         a.play(`bunt${side}` as "bunt_r", {
           time: s.phase === "windup" ? (1 - s.timer / 0.62) * K.buntSquare : K.buntSquare,
         });
-      else if (sw && since < 0.9) {
-        const time =
-          since < 0
-            ? lerp(
-                sw.from,
-                K.swingContact,
-                clamp((this.time - sw.press) / (sw.contactAt - sw.press), 0, 1),
-              )
-            : Math.min(K.swingFinish, K.swingContact + since * 1.4);
+      else if (sw && since < 0.6) {
+        // Into the contact point, then a decelerating follow-through that ends with the bat
+        // over the shoulder; a short hold, then a slow blend back into the stance.
+        const v = clamp(since / 0.3, 0, 1),
+          time =
+            since < 0
+              ? lerp(
+                  sw.from,
+                  K.swingContact,
+                  clamp((this.time - sw.press) / (sw.contactAt - sw.press), 0, 1),
+                )
+              : lerp(K.swingContact, K.swingFinish, 1 - (1 - v) * (1 - v));
         a.play(swingClip, { time, fade: 0.06 });
       } else if (s.phase === "flight" && f && !sw) {
         // Stride and load while the ball comes in; a take goes back to the stance afterwards.
         const u = clamp((f.elapsed / f.visualDuration - 0.2) / 0.65, 0, 1);
         a.play(swingClip, { time: lerp(0.35, 0.72, u * u * (3 - 2 * u)), fade: 0.25 });
-      } else a.play(`idle_bat${side}` as "idle_bat_r", { loop: true, fade: 0.35 });
+      } else a.play(`idle_bat${side}` as "idle_bat_r", { loop: true, fade: 0.5 });
     }
     // --- runners
     const batterSpot = this.avatars!.get(this.batter)!.object.position;
@@ -1152,7 +1184,7 @@ export class BaseballField {
     for (const a of this.avatars!.values()) a.update(dt);
     this.recordReplay();
   }
-  /** Records the chasing fielder each frame; starts the replay once a highlight has played out. */
+  /** Records everyone each frame; starts the replay once the highlight has played out. */
   private recordReplay() {
     const s = this.engine.state,
       l = s.live;
@@ -1161,37 +1193,84 @@ export class BaseballField {
         this.tape = [];
         this.tapeLive = l;
       }
-      const a = this.avatars!.get(this.players[l.fielder])!;
+      const actors = new Map<string, ReplayActor>(),
+        rec = (key: string, fig: Figure) => {
+          const a = this.avatars!.get(fig)!;
+          actors.set(key, {
+            x: a.object.position.x,
+            z: a.object.position.z,
+            yaw: a.object.rotation.y,
+            clip: a.clip,
+            time: a.clipTime,
+            on: a.object.visible,
+          });
+        };
+      this.players.forEach((fig, i) => rec("f" + i, fig));
+      this.runners.forEach((fig, i) => rec("r" + i, fig));
       this.tape.push({
         t: l.elapsed,
-        i: l.fielder,
-        x: a.object.position.x,
-        z: a.object.position.z,
-        yaw: a.object.rotation.y,
-        clip: a.clip,
-        time: a.clipTime,
+        chaser: l.fielder,
+        actors,
         ball: this.ball.position.clone(),
         ballOn: this.ball.visible,
       });
       while (this.tape.length && this.tape[0].t < l.elapsed - 4) this.tape.shift();
     }
+    // New highlight from the rules: wait until its window has been recorded.
     const r = s.replay;
-    if (!r || r === this.replaySrc) return;
-    const over =
-      !l || s.phase !== "inplay" || l !== this.tapeLive || l.elapsed >= r.at + REPLAY_AFTER;
-    if (!over) return;
-    this.replaySrc = r;
-    const frames = this.tape.filter(
-      (f) => f.i === r.fielder && f.t >= r.at - REPLAY_BEFORE && f.t <= r.at + REPLAY_AFTER,
-    );
-    if (frames.length < 10 || !this.replayAvatar) return;
-    this.replay = { text: r.text, frames, startedAt: this.time, at: r.at };
-    // Same uniform and glove hand as the fielder who made the play.
-    this.replayAvatar.setTeam(this.engine.batting ? "away" : "home");
-    this.replayAvatar.setGlove(true, this.engine.fielders[r.fielder]?.hand === "L");
-    this.drawTv(r.text);
+    if (r && r !== this.replaySrc) {
+      this.replaySrc = r;
+      this.replayPending.push({ r, play: l });
+    }
+    this.replayPending = this.replayPending.filter(({ r, play }) => {
+      const after = r.base ? 0.8 : REPLAY_AFTER,
+        over =
+          !l ||
+          s.phase !== "inplay" ||
+          l !== play ||
+          l !== this.tapeLive ||
+          l.elapsed >= r.at + after;
+      if (!over) return true;
+      const frames = this.tape.filter((f) => f.t >= r.at - REPLAY_BEFORE && f.t <= r.at + after);
+      // At most two replays from one play (a double play shows both calls).
+      if (frames.length < 10 || this.replayQueue.filter((q) => q.play === play).length >= 2)
+        return false;
+      const defense = this.engine.batting ? "away" : "home",
+        offense = this.engine.batting ? "home" : "away",
+        lefty = this.engine.fielders[r.fielder]?.hand === "L";
+      this.replayQueue.push({
+        play,
+        text: r.text,
+        frames,
+        startedAt: 0,
+        at: r.at,
+        cast: r.base
+          ? [
+              { key: "r" + r.base.runner, team: offense, glove: false, lefty: false },
+              { key: "f" + r.fielder, team: defense, glove: true, lefty },
+            ]
+          : // A fielding highlight follows the fielder who made it.
+            [{ key: "f" + r.fielder, team: defense, glove: true, lefty }],
+        base: r.base ? { base: r.base.base, out: r.base.out } : undefined,
+        tvState: "",
+      });
+      return false;
+    });
+    // One replay at a time, in order; a new one never cuts off the one on screen.
+    if (!this.replay && this.replayQueue.length && this.replayAvatars.length) {
+      const next = this.replayQueue.shift()!;
+      next.startedAt = this.time;
+      this.replay = next;
+      next.cast.forEach((c, k) => {
+        const a = this.replayAvatars[k];
+        a.setTeam(c.team);
+        a.setGlove(c.glove, c.lefty);
+      });
+    }
+    // The next batter/inning waits while a replay is pending, queued or on screen.
+    s.replayBusy = !!this.replay || this.replayQueue.length > 0 || this.replayPending.length > 0;
   }
-  private drawTv(text: string) {
+  private drawTv(label: string, verdict: string, tone: string) {
     if (!this.tv) {
       const canvas = document.createElement("canvas");
       canvas.width = 640;
@@ -1220,69 +1299,124 @@ export class BaseballField {
     g.fillStyle = "#ffffff";
     g.fillText("REPLAY", 52, 42);
     g.fillStyle = "#f2c14e";
-    g.fillText(text, 206, 42);
-    g.font = "700 26px Pretendard, sans-serif";
-    g.fillStyle = "#cfd8e3";
+    g.fillText(label, 206, 42);
     g.textAlign = "right";
-    g.fillText(`SLOW ×${REPLAY_SLOW}`, 624, 42);
+    if (verdict) {
+      g.font = "900 40px Pretendard, 'Noto Sans KR', sans-serif";
+      g.fillStyle = tone;
+      g.fillText(verdict, 624, 42);
+    } else {
+      g.font = "700 26px Pretendard, sans-serif";
+      g.fillStyle = "#cfd8e3";
+      g.fillText(`SLOW ×${REPLAY_SLOW}`, 624, 42);
+    }
     g.textAlign = "left";
     this.tv.tex.needsUpdate = true;
   }
   /** The small TV window (bottom-left): the highlight again, in slow motion. */
   private renderReplay() {
     const R = this.replay,
-      av = this.replayAvatar,
       ball = this.replayBall;
-    if (!R || !av || !ball || !this.tv) return;
+    if (!R || !ball) return;
     const fr = R.frames,
       t0 = fr[0].t,
       t1 = fr[fr.length - 1].t,
       real = this.time - R.startedAt;
     // The replay plays once, holds the last frame a moment, then the window closes.
-    if (real > (t1 - t0) / REPLAY_SLOW + 1 || this.engine.state.phase === "windup") {
+    // (A close play holds the call on screen a little longer.)
+    if (real > (t1 - t0) / REPLAY_SLOW + (R.base ? 1.8 : 1.2)) {
       this.replay = null;
+      this.engine.state.replayBusy = this.replayQueue.length > 0 || this.replayPending.length > 0;
       return;
     }
     const tt = Math.min(t1, t0 + real * REPLAY_SLOW);
     let k = 0;
     while (k < fr.length - 2 && fr[k + 1].t <= tt) k++;
-    const a = fr[k],
-      b = fr[k + 1] ?? a,
-      u = b.t > a.t ? clamp((tt - a.t) / (b.t - a.t), 0, 1) : 0;
-    av.object.position.set(lerp(a.x, b.x, u), 0, lerp(a.z, b.z, u));
-    av.object.rotation.set(0, a.yaw, 0);
-    if (a.clip)
-      av.pose(a.clip, a.clip === b.clip && b.time >= a.time ? lerp(a.time, b.time, u) : a.time);
-    ball.position.lerpVectors(a.ball, b.ball, u);
-    // Camera: side-on to the run (the side facing home plate), following the player.
-    const at = fr.find((f) => f.t >= R.at) ?? fr[fr.length - 1],
-      rx = at.x - fr[0].x,
-      rz = at.z - fr[0].z,
-      rl = Math.hypot(rx, rz);
-    let sx = rl > 0.5 ? -rz / rl : -at.x / (Math.hypot(at.x, at.z) || 1),
-      sz = rl > 0.5 ? rx / rl : -at.z / (Math.hypot(at.x, at.z) || 1);
-    if (sx * -at.x + sz * -at.z < 0) {
-      sx = -sx;
-      sz = -sz;
+    const A = fr[k],
+      B = fr[k + 1] ?? A,
+      u = B.t > A.t ? clamp((tt - A.t) / (B.t - A.t), 0, 1) : 0;
+    // Caption: the call appears once the ball is in the glove at the bag.
+    const call = R.base
+        ? tt >= Math.min(R.at, t1) - 1e-6
+          ? R.base.out
+            ? "아웃!"
+            : "세이프!"
+          : ""
+        : "",
+      label = R.base ? (R.base.base === 4 ? "홈" : R.base.base + "루") + " 접전" : R.text,
+      tvState = label + call;
+    if (tvState !== R.tvState) {
+      R.tvState = tvState;
+      this.drawTv(label, call, R.base?.out ? "#ff6b5e" : "#5fd38a");
     }
-    const p = av.object.position;
-    this.replayCam.position.set(p.x + sx * 5, 1.7, p.z + sz * 5);
-    this.replayCam.lookAt(p.x, 1.05, p.z);
-    // Hide what belongs to the live view: name tags, the live ball and the real fielder.
+    R.cast.forEach((c, n) => {
+      const av = this.replayAvatars[n],
+        a = A.actors.get(c.key),
+        b = B.actors.get(c.key) ?? a;
+      if (!av || !a || !b) return;
+      av.object.position.set(lerp(a.x, b.x, u), 0, lerp(a.z, b.z, u));
+      av.object.rotation.set(0, a.yaw, 0);
+      if (a.clip)
+        av.pose(a.clip, a.clip === b.clip && b.time >= a.time ? lerp(a.time, b.time, u) : a.time);
+      av.object.visible = a.on;
+    });
+    ball.position.lerpVectors(A.ball, B.ball, u);
+    // Camera.
+    if (R.base) {
+      // Close play: low and side-on to the runner's path, the bag in the middle.
+      const bag = BASES[R.base.base - 1],
+        prev = BASES[(R.base.base + 2) % 4],
+        dx = bag.x - prev.x,
+        dz = bag.z - prev.z,
+        dl = Math.hypot(dx, dz) || 1;
+      let sx = -dz / dl,
+        sz = dx / dl;
+      // From outside the diamond (away from its centre).
+      if (sx * (bag.x - 0) + sz * (bag.z - 19.4) < 0) {
+        sx = -sx;
+        sz = -sz;
+      }
+      this.replayCam.position.set(
+        bag.x + sx * 5.5 - (dx / dl) * 1.2,
+        1.25,
+        bag.z + sz * 5.5 - (dz / dl) * 1.2,
+      );
+      this.replayCam.lookAt(bag.x, 0.55, bag.z);
+    } else {
+      // Fielding highlight: side-on to his run (the side facing home), following him.
+      const f0 = fr[0].actors.get(R.cast[0].key)!,
+        atF = fr.find((f) => f.t >= R.at) ?? fr[fr.length - 1],
+        at = atF.actors.get(R.cast[0].key)!,
+        rx = at.x - f0.x,
+        rz = at.z - f0.z,
+        rl = Math.hypot(rx, rz);
+      let sx = rl > 0.5 ? -rz / rl : -at.x / (Math.hypot(at.x, at.z) || 1),
+        sz = rl > 0.5 ? rx / rl : -at.z / (Math.hypot(at.x, at.z) || 1);
+      if (sx * -at.x + sz * -at.z < 0) {
+        sx = -sx;
+        sz = -sz;
+      }
+      const p = this.replayAvatars[0].object.position;
+      this.replayCam.position.set(p.x + sx * 5, 1.7, p.z + sz * 5);
+      this.replayCam.lookAt(p.x, 1.05, p.z);
+    }
+    // Hide what belongs to the live view: name tags, the live ball and the real players shown.
     const hidden: [THREE.Object3D, boolean][] = [];
     const hide = (o: THREE.Object3D) => {
       hidden.push([o, o.visible]);
       o.visible = false;
     };
+    const shown = new Set(R.cast.map((c) => c.key));
     for (const [fig, live] of this.avatars!) {
       hide(fig.root);
-      if (fig === this.players[a.i]) hide(live.object);
+      const i = this.players.indexOf(fig),
+        j = this.runners.indexOf(fig);
+      if ((i >= 0 && shown.has("f" + i)) || (j >= 0 && shown.has("r" + j))) hide(live.object);
     }
     hide(this.ball);
     hide(this.halo);
     hide(this.trail);
-    av.object.visible = true;
-    ball.visible = a.ballOn;
+    ball.visible = A.ballOn;
     const r = this.renderer,
       size = r.getSize(new THREE.Vector2()),
       w = Math.round(Math.min(size.x * 0.36, 440)),
@@ -1305,12 +1439,12 @@ export class BaseballField {
     r.shadowMap.autoUpdate = shadows;
     r.autoClear = false;
     r.clearDepth();
-    r.render(this.tv.scene, this.tv.cam);
+    r.render(this.tv!.scene, this.tv!.cam);
     r.autoClear = true;
     r.setScissorTest(false);
     r.setViewport(0, 0, size.x, size.y);
     r.setClearColor(clear, alpha);
-    av.object.visible = false;
+    for (const av of this.replayAvatars) av.object.visible = false;
     ball.visible = false;
     for (const [o, v] of hidden) o.visible = v;
   }

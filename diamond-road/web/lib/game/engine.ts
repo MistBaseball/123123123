@@ -405,6 +405,10 @@ export const RULES = {
   wildPitchMax: 0.09,
   /** Diving catch: the fielder dives for a ball this far past his reach (m, fly / grounder). */
   diveReach: 3.0,
+  /** An outfielder takes over a grounder through the infield if he gets there this much sooner (s). */
+  backupMargin: 0.25,
+  /** A throw and a runner this close at a base (s) make a slow-motion replay of the call. */
+  closePlay: 0.35,
   groundDiveReach: 4.0,
   /** Dive success: base chance at the edge of reach, + per point of (speed+eye)/2 over 65,
    *  − scaled by how far the ball is; capped. Rain takes some off. */
@@ -1079,6 +1083,8 @@ export type RunnerTrack = {
   stealing?: boolean;
   /** Full sprint pace; `pace` may be lower while a fly ball is still in the air. */
   fullPace?: number;
+  /** Last base he touched while advancing, and when (play time, s): judges close plays. */
+  touched?: { base: number; at: number };
 };
 /** A runner is at rest when standing on the base it is heading to (or out). */
 export const runnerSettled = (r: RunnerTrack) =>
@@ -1593,6 +1599,10 @@ export type LivePlay = {
   /** A dive was tried on this ball (one per play); the fielder is down until this time. */
   diveTried?: boolean;
   downUntil?: number;
+  /** Who made the dive (the play may then pass to a backup fielder). */
+  diver?: number;
+  /** An outfielder took over a grounder that got through the infield. */
+  backedUp?: boolean;
   /** Low, hard liner (the fielder may have to leap for it). */
   lineDrive?: boolean;
 };
@@ -1669,7 +1679,16 @@ export type GameState = {
    * Fielding highlight (diving/jumping catch, diving stop): the 3D view shows it again in a
    * small slow-motion "TV" window. `fielder` made it at play time `at` (s); `id` is new each time.
    */
-  replay: { text: string; fielder: number; at: number; id: number } | null;
+  replay: {
+    text: string;
+    fielder: number;
+    at: number;
+    id: number;
+    /** Close play at a base: the runner (track id), the base, and the call. */
+    base?: { runner: number; base: number; out: boolean };
+  } | null;
+  /** The 3D view is still showing a replay: the next batter/inning waits for it. */
+  replayBusy: boolean;
   /** Settings: rain may fall (off = always clear). Kept in this browser. */
   rainOn: boolean;
   /** The match was called off by rain. */
@@ -1750,6 +1769,7 @@ const initial = (career: Career, mode: Mode = "match", maxInnings = 3): GameStat
   rainedOut: false,
   flash: null,
   replay: null,
+  replayBusy: false,
   limitUsed: 0,
   limitArmed: false,
 });
@@ -2289,7 +2309,8 @@ export class BaseballEngine {
       this.tickLivePlay(dt);
     } else if (s.phase === "result") {
       s.timer -= dt;
-      if (s.timer <= 0) this.next();
+      // A replay on screen holds the next batter/inning (at most 12 s, in case it never ends).
+      if (s.timer <= 0 && (!s.replayBusy || s.timer < -12)) this.next();
     }
     if (this.emitClock > 0.05) {
       this.emitClock = 0;
@@ -2806,6 +2827,65 @@ export class BaseballEngine {
     }
     return this.liveBall(l, l.elapsed + 12);
   }
+  /** Seconds the chasing fielder is still down after his own missed dive. */
+  private downTime(l: LivePlay) {
+    return l.diver === l.fielder ? (l.downUntil ?? 0) : 0;
+  }
+  /** Earliest play time fielder `who`, from where he stands now, can reach the loose ball. */
+  private interceptFrom(l: LivePlay, who: number) {
+    const { speed, reaction } = this.fielderStats(who, l),
+      from = l.defenders[who],
+      wait = Math.max(
+        0,
+        reaction - l.elapsed,
+        (who === l.diver ? (l.downUntil ?? 0) : 0) - l.elapsed,
+      );
+    for (let dt = 0.05; dt <= 12; dt += 0.05) {
+      const p = this.liveBall(l, l.elapsed + dt);
+      if (Math.hypot(p.x - from.x, p.z - from.z) / speed + wait <= dt) return l.elapsed + dt;
+    }
+    return Infinity;
+  }
+  /**
+   * A grounder that got past the infielder chasing it (through the hole, or past a missed
+   * dive): the outfielder who gets there first takes over, and the runners read the new
+   * play — each takes the next base if he beats the pickup and throw there.
+   */
+  private backUp(l: LivePlay) {
+    if (l.kind !== "batted" || !l.ground || l.bunt || l.backedUp || l.fielder >= 6) return;
+    const ball = this.state.ball,
+      past = Math.hypot(ball.x, ball.z) > Math.hypot(l.fielderPos.x, l.fielderPos.z) + 1.5;
+    if (!past && !(l.diver === l.fielder && l.elapsed < (l.downUntil ?? 0))) return;
+    let best = l.fielder,
+      soonest = this.interceptFrom(l, l.fielder) - RULES.backupMargin;
+    for (const i of [6, 7, 8]) {
+      const t = this.interceptFrom(l, i);
+      if (t < soonest) {
+        soonest = t;
+        best = i;
+      }
+    }
+    if (best === l.fielder) return;
+    l.backedUp = true;
+    l.fielder = best;
+    l.fielderPos = l.defenders[best];
+    this.state.detail = "공이 내야를 빠져나갔습니다 · 외야수가 처리";
+    // Runners re-read the play (lead runner first; nobody passes the runner ahead).
+    const pickup = soonest + l.hold;
+    let ahead = 5;
+    for (const r of [...l.runners].filter((x) => !x.out).sort((a, b) => b.progress - a.progress)) {
+      if (r.progress <= r.target + 1e-9)
+        while (r.target < 4 && (r.target + 1 < ahead || r.target + 1 === 4)) {
+          const next = r.target + 1,
+            pace = r.fullPace ?? r.pace,
+            runAt = l.elapsed + Math.max(0, r.delay - l.elapsed) + (next - r.progress) / pace;
+          if (runAt + RULES.advanceMargin >= this.throwArrival(l, next, pickup)) break;
+          r.target = next;
+          r.pace = pace;
+        }
+      ahead = r.target === 4 ? 5 : r.target;
+    }
+  }
   private moveFielder(p: Vec, target: Vec, dt: number, speed = 8.2) {
     const d = Math.hypot(target.x - p.x, target.z - p.z),
       k = d ? Math.min(1, (dt * speed) / d) : 0;
@@ -2873,6 +2953,31 @@ export class BaseballEngine {
     this.log(text + "!");
   }
   private replayId = 0;
+  /**
+   * Bang-bang play at a base (throw and runner within RULES.closePlay seconds): replayed in
+   * slow motion with the call. Runs right after the force/tag decision at the catch.
+   */
+  private closePlay(l: LivePlay, t: FieldThrow) {
+    const r = l.runners.find((x) => x.id === t.runnerId);
+    if (!r || !t.receivedAt) return;
+    let margin: number,
+      out = r.out;
+    if (r.touched?.base === t.base) margin = t.receivedAt - r.touched.at;
+    else if (r.progress < t.base - 1e-8 && r.target >= t.base) {
+      // Still on his way: a non-forced runner is tagged as he arrives, a forced one is out.
+      margin = (t.base - r.progress) / r.pace;
+      out = true;
+    } else return;
+    if (margin > RULES.closePlay) return;
+    this.replayId++;
+    this.state.replay = {
+      text: out ? "아웃" : "세이프",
+      fielder: t.receiver,
+      at: t.receivedAt,
+      id: this.replayId,
+      base: { runner: r.id, base: t.base, out },
+    };
+  }
   /** Throw speed of the fielder holding the ball (the pitcher's pickoff throw is fixed). */
   private armOf(l: LivePlay) {
     return l.kind === "pickoff" ? l.throwSpeed : this.fielderStats(l.fielder, l).arm;
@@ -2990,6 +3095,9 @@ export class BaseballEngine {
           continue;
         }
       }
+      const reach = Math.floor(next + 1e-9);
+      if (reach > Math.floor(before + 1e-9))
+        r.touched = { base: reach, at: previousTime + remainingDelay + (reach - before) / r.pace };
       r.progress = next;
       if (next >= 4 && r.scoredAt === null)
         r.scoredAt = previousTime + remainingDelay + (4 - before) / r.pace;
@@ -3028,6 +3136,8 @@ export class BaseballEngine {
     // Cover the bags while the selected fielder follows the ball.
     for (let base = 1; base <= 4; base++) {
       const i = this.receiver(base, l.fielder);
+      // A fielder still on the ground after a missed dive cannot cover yet.
+      if (i === l.diver && l.elapsed < (l.downUntil ?? 0)) continue;
       this.moveFielder(l.defenders[i], BASES[base - 1], dt);
     }
     if (l.resultBases === 4) {
@@ -3036,6 +3146,7 @@ export class BaseballEngine {
         this.resolvePlay();
       return;
     }
+    if (l.fieldedAt === null) this.backUp(l);
     if (l.fieldedAt === null) {
       const { speed: fielderSpeed, reaction: fielderReaction } = this.fielderStats(l.fielder, l),
         oldPos = { ...l.fielderPos },
@@ -3052,7 +3163,7 @@ export class BaseballEngine {
         // after a missed dive).
         const moving = Math.max(
           0,
-          l.elapsed - Math.max(previous, fielderReaction, l.downUntil ?? 0),
+          l.elapsed - Math.max(previous, fielderReaction, this.downTime(l)),
         );
         if (moving > 0) this.moveFielder(l.fielderPos, target, moving, fielderSpeed);
       }
@@ -3076,6 +3187,7 @@ export class BaseballEngine {
           l.fielder !== 1
         ) {
           l.diveTried = true;
+          l.diver = l.fielder;
           l.catchMoment = l.catchAt;
           dove = true;
           if (this.rng() < this.diveChance(l.fielder, gap, RULES.diveReach, CATCH_REACH)) {
@@ -3165,7 +3277,7 @@ export class BaseballEngine {
         !l.bunt &&
         l.fielder !== 1 &&
         !l.diveTried &&
-        l.elapsed + 1e-8 >= Math.max(fielderReaction, l.downUntil ?? 0) &&
+        l.elapsed + 1e-8 >= Math.max(fielderReaction, this.downTime(l)) &&
         ballGap >= GROUND_REACH &&
         ballGap <= RULES.groundDiveReach &&
         s.ball.y < 1.1
@@ -3175,6 +3287,7 @@ export class BaseballEngine {
           away = Math.hypot(ahead.x - l.fielderPos.x, ahead.z - l.fielderPos.z) >= ballGap;
         if (away) {
           l.diveTried = true;
+          l.diver = l.fielder;
           l.catchStyle = "dive";
           l.catchMoment = l.elapsed;
           if (
@@ -3197,7 +3310,7 @@ export class BaseballEngine {
         diveStop ||
         (l.bounced &&
           // Nobody fields the ball before reacting to it (the catcher stands next to a bunt).
-          l.elapsed + 1e-8 >= Math.max(fielderReaction, l.downUntil ?? 0) &&
+          l.elapsed + 1e-8 >= Math.max(fielderReaction, this.downTime(l)) &&
           Math.hypot(s.ball.x - l.fielderPos.x, s.ball.z - l.fielderPos.z) < GROUND_REACH &&
           s.ball.y < 1.1)
       ) {
@@ -3263,6 +3376,7 @@ export class BaseballEngine {
           else
             s.detail =
               (t.base === 4 ? "홈" : t.base + "루") + " 포구 · 베이스에 도착한 주자는 세이프";
+          this.closePlay(l, t);
           if (
             forced?.out &&
             s.outs < 3 &&

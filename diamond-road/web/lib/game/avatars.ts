@@ -39,7 +39,8 @@ export const CLIP_KEYS = {
   pitchRelease: 0.93,
   pitchEnd: 2.3,
   swingContact: 1.0,
-  swingFinish: 1.45,
+  /** Bat wrapped over the shoulder; later frames drop the bat to run. */
+  swingFinish: 1.2,
   buntSquare: 1.05,
   throwRelease: 1.45,
   throwStart: 1.0,
@@ -229,7 +230,11 @@ export class Avatar {
       return;
     }
     const hand = leftHanded ? this.rightHand : this.leftHand;
-    this.throwHand = leftHanded ? this.leftHand : this.rightHand;
+    // The ball sits at the base of the middle finger (world units, whatever the bone scale).
+    const side = leftHanded ? "Left" : "Right";
+    this.throwHand =
+      this.object.getObjectByName(`${BONE}${side}HandMiddle1`) ??
+      (leftHanded ? this.leftHand : this.rightHand);
     if (!this.glove) this.glove = makeGlove();
     if (this.glove.parent !== hand) this.attach(this.glove, hand);
     this.glove.visible = true;
@@ -297,8 +302,7 @@ export class Avatar {
   /** Where a held ball sits: in the glove's pocket, or in the throwing hand while throwing. */
   ballPoint(out: THREE.Vector3): THREE.Vector3 | null {
     if (!this.glove?.visible) return null;
-    if (this.current === "throw" && this.throwHand)
-      return this.throwHand.localToWorld(out.set(0, 9, 3));
+    if (this.current === "throw" && this.throwHand) return this.throwHand.getWorldPosition(out);
     return this.glove.localToWorld(out.set(0, 0.09, 0.07));
   }
   get clip() {
