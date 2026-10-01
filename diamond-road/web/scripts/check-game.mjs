@@ -26,6 +26,8 @@ import {
   pitchData,
   STAT_INFO,
   STAT_NAMES,
+  SWING_SWEET,
+  SWING_STYLES,
   fastballSpeed,
   pitchEnergyCost,
 } from "../lib/game/engine.ts";
@@ -1255,5 +1257,100 @@ check("Stat guide numbers come from the game's own formulas; movement changes AI
     100,
     "odds add up to 100%",
   );
+});
+
+check("Pickoffs: about a quarter out on the first throw, rarer after, and never free", () => {
+  const rates = [0, 0, 0],
+    n = 500;
+  for (let i = 1; i <= n; i++) {
+    const g = new BaseballEngine(newCareer(), seed(i * 31));
+    const base = 1 + (i % 3);
+    for (let k = 0; k < 3; k++) {
+      Object.assign(g.state, { bases: [base === 1, base === 2, base === 3], outs: 0 });
+      Object.assign(g.state, { phase: "ready", live: null });
+      const before = g.state.energy;
+      assert(g.pickoff(base));
+      assert(g.state.energy < before, "a throw-over costs the pitcher energy");
+      settle(g);
+      if (g.state.message === "PICKOFF OUT") rates[k]++;
+    }
+    assert.equal(g.state.pickoffs, 3);
+    g.advanceBatter();
+    assert.equal(g.state.pickoffs, 0, "a new batter resets the runner's caution");
+  }
+  const [first, second, third] = rates.map((r) => r / n);
+  assert(first > 0.15 && first < 0.35, `first pickoff out rate ${first}`);
+  assert(second < first && third < second, `caution: ${first} ${second} ${third}`);
+});
+check("Swing styles: contact is forgiving, power is narrow but carries, bunts die in front", () => {
+  const c = SWING_STYLES.contact,
+    p = SWING_STYLES.power;
+  assert(p.reach < c.reach && p.window < c.window && p.boost > c.boost);
+  assert(c.cut > 1 && p.cut === 0);
+  assert(swingWindow("normal", "high", "power") < swingWindow("normal", "high", "contact"));
+  // A contact near miss is fouled off; the same swing with power is a strike.
+  for (const [style, foul] of [
+    ["contact", true],
+    ["power", false],
+  ]) {
+    const g = new BaseballEngine(newCareer(), () => 0.5);
+    g.state.half = "bottom";
+    g.state.swingStyle = style;
+    g.state.strikes = 2;
+    while (g.state.phase !== "flight") g.tick(1 / 60);
+    const f = g.state.flight,
+      reach = batReach(g.state.career.stats.contact, "contact");
+    f.swung = true;
+    f.swingTime = SWING_SWEET * f.visualDuration;
+    f.batAim = { x: f.target.x + reach * 1.3, y: f.target.y, z: 0 };
+    while (g.state.phase === "flight") g.tick(1 / 60);
+    assert.equal(g.state.lastOutcome === "Foul", foul, style);
+    assert.equal(g.state.outs, foul ? 0 : 1, "two-strike near miss: contact survives");
+  }
+  // Bunts: short slow rollers the catcher can field; sacrifices move the runner up.
+  let hits = 0,
+    advanced = 0;
+  for (let i = 1; i <= 300; i++) {
+    const g = new BaseballEngine(newCareer(), seed(i * 104729 + 7));
+    g.state.half = "bottom";
+    g.state.swingStyle = "bunt";
+    g.state.bases = [i % 2 === 0, false, false];
+    while (g.state.phase !== "flight") g.tick(1 / 60);
+    const f = g.state.flight;
+    f.swung = true;
+    f.swingTime = SWING_SWEET * f.visualDuration;
+    f.batAim = { ...f.target };
+    while (g.state.phase === "flight") g.tick(1 / 60);
+    const l = g.state.live;
+    assert(l && l.bunt, "a clean bunt is put in play");
+    const d = Math.hypot(l.land.x, l.land.z);
+    assert(d >= RULES.buntMin - 1e-9 && d <= RULES.buntMax + 1e-9, `bunt distance ${d}`);
+    // Where the untouched ball would come to rest (test-only access to the ball path).
+    const still = g.liveBall(l, 30),
+      rest = Math.hypot(still.x, still.z);
+    assert(rest < RULES.buntMax + 2, `a bunt must not roll away (${rest} m)`);
+    finishPlay(g);
+    if (!l.runners[0].out) hits++;
+    const runner = l.runners.find((r) => r.from === 1);
+    if (runner && !runner.out && runner.progress >= 2) advanced++;
+  }
+  // Perfectly placed bunts: a real chance at a hit, still mostly outs.
+  assert(hits > 30 && hits < 190, `bunt hits ${hits}/300`);
+  assert(advanced > 120, `sacrifice advances ${advanced}/150`);
+});
+check("Steal sign is accepted while the last result is shown and carries to the next pitch", () => {
+  const g = new BaseballEngine(newCareer(), () => 0.5);
+  g.state.half = "bottom";
+  g.state.bases = [true, false, false];
+  g.result("BALL", "test");
+  assert.equal(g.state.phase, "result");
+  assert(g.steal(), "E during the result display");
+  assert.equal(g.state.message, "BALL", "the result stays on screen");
+  g.next();
+  assert(g.state.stealCall, "the sign survives into the next pitch");
+  g.state.outs = 3;
+  g.state.phase = "result";
+  g.state.stealCall = false;
+  assert(!g.steal(), "no sign after the third out");
 });
 console.log(`\n${passed} gameplay checks passed.`);

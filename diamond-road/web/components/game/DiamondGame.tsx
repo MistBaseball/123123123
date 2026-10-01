@@ -82,6 +82,18 @@ import {
 import type { BaseballField } from "@/lib/game/field";
 import type { SoftwareField } from "@/lib/game/software-field";
 
+/**
+ * The physical key as a lowercase letter/digit. With Korean input on, e.key is "ㄷ" for E and
+ * "ㄹ" for F, so shortcuts read the key position (e.code) instead of the typed character.
+ */
+const keyOf = (e: KeyboardEvent) => {
+  const letter = /^Key([A-Z])$/.exec(e.code),
+    digit = /^(?:Digit|Numpad)(\d)$/.exec(e.code);
+  if (letter) return letter[1].toLowerCase();
+  if (digit) return digit[1];
+  if (e.code === "Space") return " ";
+  return e.key.toLowerCase();
+};
 const cameras: { id: Camera; label: string }[] = [
   { id: "pitcher", label: "투수" },
   { id: "catcher", label: "포수" },
@@ -522,7 +534,7 @@ function AimPad({ engine, s }: { engine: BaseballEngine; s: GameState }) {
 function TimingBar({ s, className }: { s: GameState; className: string }) {
   const f = s.flight,
     progress = f ? clamp(f.elapsed / f.visualDuration, 0, 1) : 0,
-    w = swingWindow(s.difficulty, s.career.stage),
+    w = swingWindow(s.difficulty, s.career.stage, s.swingStyle),
     pct = (v: number) => `${clamp(v, 0, 1) * 100}%`;
   return (
     <div className={className} aria-label={`투구 진행 ${Math.round(progress * 100)}%`}>
@@ -1631,6 +1643,8 @@ function BlessingDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
 
 export default function DiamondGame() {
   const [engine] = useState(() => new BaseballEngine());
+  // Development only: lets browser tests drive the engine. Stripped from production builds.
+  if (import.meta.env.DEV) (window as unknown as { __engine?: BaseballEngine }).__engine = engine;
   const s = useSyncExternalStore(engine.subscribe, engine.getSnapshot, engine.getSnapshot);
   const [view, setView] = useState<"life" | "game">("life"),
     [recap, setRecap] = useState<{
@@ -1687,15 +1701,18 @@ export default function DiamondGame() {
   }, [view, help, settings, pending, manualPause, engine]);
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
       if (
         view !== "game" ||
         help ||
         settings ||
         pending ||
-        (e.target as HTMLElement)?.closest("input,textarea,[role=slider],[role=combobox]")
+        target?.closest?.("input,textarea,[role=combobox]")
       )
         return;
-      const k = e.key.toLowerCase();
+      const k = keyOf(e);
+      // A focused slider (투구 강도) keeps its arrow keys; every other shortcut still works.
+      if (target?.closest?.("[role=slider]") && k.startsWith("arrow")) return;
       engine.keys.add(k);
       if (e.repeat) return;
       if (k === "p" || k === "escape") {
@@ -1709,7 +1726,7 @@ export default function DiamondGame() {
         const p = PITCHES.find((p) => p.key === k);
         if (p) engine.selectPitch(p.id);
       }
-      if (k === " " && !(e.target as HTMLElement).closest("button,[role=button]")) {
+      if (k === " " && !target?.closest?.("button,[role=button],[role=slider]")) {
         e.preventDefault();
         engine.batting ? engine.swing() : engine.throwAt();
       }
@@ -1732,7 +1749,7 @@ export default function DiamondGame() {
         engine.emit();
       }
     };
-    const up = (e: KeyboardEvent) => engine.keys.delete(e.key.toLowerCase());
+    const up = (e: KeyboardEvent) => engine.keys.delete(keyOf(e));
     const blur = () => {
       engine.keys.clear();
       setManualPause(true);
@@ -2224,9 +2241,9 @@ export default function DiamondGame() {
                 </h3>
                 <div className="pp-swings">
                   {[
-                    { id: "contact", name: "컨택", sub: "기본 범위" },
-                    { id: "power", name: "강타", sub: "좁고 멀리" },
-                    { id: "bunt", name: "번트", sub: "넓고 짧게" },
+                    { id: "contact", name: "컨택", sub: "넓게 · 아슬하면 파울" },
+                    { id: "power", name: "강타", sub: "아주 좁게 · 장타" },
+                    { id: "bunt", name: "번트", sub: "짧게 굴려 진루" },
                   ].map((p) => (
                     <button
                       className={s.swingStyle === p.id ? "selected" : ""}
@@ -2242,7 +2259,11 @@ export default function DiamondGame() {
                 {s.mode === "match" && (
                   <button
                     className={`subtle-button steal-button ${s.stealCall ? "selected" : ""}`}
-                    disabled={!canPitch || !s.bases[0] || s.bases[1]}
+                    disabled={
+                      !(canPitch || (s.phase === "result" && s.outs < 3 && !s.paused)) ||
+                      !s.bases[0] ||
+                      s.bases[1]
+                    }
                     onClick={() => engine.steal()}
                     aria-pressed={s.stealCall}
                   >
