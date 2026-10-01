@@ -26,6 +26,11 @@ import {
   pitchData,
   STAT_INFO,
   STAT_NAMES,
+  HOME_SCHOOL,
+  SCHOOLS,
+  makeRoster,
+  opponentSchool,
+  matchTeams,
   SWING_SWEET,
   SWING_STYLES,
   fastballSpeed,
@@ -716,6 +721,7 @@ check("Creation spends exactly the stat budget; minigame quality sets the traini
     stamina: 61,
     contact: 61,
     power: 62,
+    speed: 45,
   };
   assert(!g.createPlayer("과다", { ...even, power: 80 }).ok, "over budget");
   assert(!g.createPlayer("범위", { ...even, velocity: 90, control: 34 }).ok, "outside 45–80");
@@ -1354,5 +1360,115 @@ check("Steal sign is accepted while the last result is shown and carries to the 
   g.state.phase = "result";
   g.state.stealCall = false;
   assert(!g.steal(), "no sign after the third out");
+});
+check("Stat caps: 100 in high school, 200 in the pros, where the fastball reaches 170", () => {
+  assert.equal(STAGES.high.statCap, 100);
+  assert.equal(STAGES.pro.statCap, 200);
+  assert(Math.abs(fastballSpeed(100) - 153) < 1e-9 && Math.abs(fastballSpeed(200) - 170) < 1e-9);
+  // Every stat formula keeps improving past 100 and stays sane at 200.
+  for (const [k, info] of Object.entries(STAT_INFO)) {
+    const a = info.metric(100),
+      b = info.metric(200);
+    assert(Number.isFinite(b) && b > 0, k);
+    assert(info.lowerIsBetter ? b < a : b > a, `${k} improves past 100`);
+  }
+  const hs = new BaseballEngine(newCareer(), () => 0.99);
+  hs.state.career.stats.control = 100;
+  hs.state.career.energy = 100;
+  hs.state.actions = 5;
+  assert(!hs.train("bullpen", 1).ok, "high-school cap is 100");
+  hs.devMaxStats();
+  assert(Object.values(hs.state.career.stats).every((v) => v === 100));
+  const pro = new BaseballEngine(
+    Object.assign(newCareer(), { stage: "pro", club: TEAMS[0].id, proUnlocked: true }),
+    () => 0.5,
+  );
+  const before = pro.state.career.stats.control;
+  assert(pro.train("bullpen", 1).ok);
+  assert.equal(pro.state.career.stats.control, before + 4, "pro training gains are doubled");
+  pro.devMaxStats();
+  assert(Object.values(pro.state.career.stats).every((v) => v === 200));
+  pro.state.effort = 100;
+  pro.state.career.form = 100;
+  pro.start("bullpen");
+  pro.state.effort = 100;
+  pro.state.energy = 100;
+  pro.throwAt(0, 0.95);
+  // rng 0.5 adds a fixed −1.06 km/h of release noise to the 170 km/h fastball.
+  const noise = Math.sqrt(-2 * Math.log(0.5)) * Math.cos(Math.PI) * 0.9;
+  assert(Math.abs(pro.state.flight.speed - (170 + noise)) < 1e-6, `${pro.state.flight.speed}`);
+});
+check("Speed stat: older saves get it, and it drives our player's base running", () => {
+  const store = {};
+  globalThis.localStorage = {
+    getItem: (k) => store[k] ?? null,
+    setItem: (k, v) => (store[k] = String(v)),
+  };
+  try {
+    const old = newCareer();
+    delete old.stats.speed;
+    old.name = "예전선수";
+    store["diamond-road-career-v1"] = JSON.stringify(old);
+    const g = new BaseballEngine();
+    g.load();
+    assert.equal(g.state.career.name, "예전선수", "an old save is not thrown away");
+    assert.equal(g.state.career.stats.speed, newCareer().stats.speed);
+  } finally {
+    delete globalThis.localStorage;
+  }
+  const fast = new BaseballEngine(newCareer()),
+    slow = new BaseballEngine(newCareer());
+  for (const e of [fast, slow]) {
+    e.state.half = "bottom";
+    e.state.order[1] = 0;
+  }
+  fast.state.career.stats.speed = 95;
+  slow.state.career.stats.speed = 40;
+  assert.equal(fast.batter.name, fast.state.career.name, "slot 0 is the player");
+  assert(fast.runnerPace(fast.batter.speed) > slow.runnerPace(slow.batter.speed));
+  assert(STAT_INFO.speed.metric(95) < STAT_INFO.speed.metric(40), "faster to first");
+});
+check("미산고 vs a new rival school each day; every school's players never change", () => {
+  const c = newCareer();
+  assert.equal(matchTeams(c)[1], HOME_SCHOOL);
+  const names = new Set();
+  for (let day = 1; day <= SCHOOLS.length; day++) names.add(matchTeams({ ...c, day })[0]);
+  assert.equal(names.size, SCHOOLS.length, "a different school each match day");
+  assert.notEqual(opponentSchool(1).name, opponentSchool(2).name);
+  for (const school of SCHOOLS) {
+    const a = makeRoster(school.name, school.strength, school.style),
+      b = makeRoster(school.name, school.strength, school.style);
+    assert.equal(a.lineup.length, 9);
+    assert.deepEqual(a, b, "same school, same players");
+    assert.equal(new Set(a.lineup.map((p) => p.name)).size, 9, "nine different players");
+    for (const p of a.lineup)
+      for (const k of ["contact", "power", "eye", "speed"]) assert(p[k] >= 35 && p[k] <= 95);
+  }
+  // Different schools field different players, and the strong school is stronger.
+  const weak = SCHOOLS.reduce((a, b) => (a.strength < b.strength ? a : b)),
+    strong = SCHOOLS.reduce((a, b) => (a.strength > b.strength ? a : b)),
+    avg = (r) => r.lineup.reduce((t, p) => t + p.contact + p.power, 0) / 9;
+  assert(
+    avg(makeRoster(strong.name, strong.strength, strong.style)) >
+      avg(makeRoster(weak.name, weak.strength, weak.style)),
+  );
+  // The engine bats the day's school, and its ace changes the AI pitcher.
+  const g = new BaseballEngine(newCareer(), () => 0.5);
+  g.state.career.day = 1;
+  assert.equal(
+    g.batter.name,
+    makeRoster(SCHOOLS[0].name, SCHOOLS[0].strength, SCHOOLS[0].style).lineup[0].name,
+  );
+  const speedOn = (day) => {
+    const e = new BaseballEngine(newCareer(), () => 0.5);
+    e.state.career.day = day;
+    e.start("batting");
+    e.state.timer = 0;
+    e.tick(1 / 60);
+    return e.state.flight.speed;
+  };
+  const weakDay = SCHOOLS.indexOf(weak) + 1,
+    strongDay = SCHOOLS.indexOf(strong) + 1;
+  assert(speedOn(strongDay) > speedOn(weakDay), "a stronger school's ace throws harder");
 });
 console.log(`\n${passed} gameplay checks passed.`);

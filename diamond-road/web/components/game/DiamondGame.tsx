@@ -30,6 +30,7 @@ import {
   Lock,
   CalendarDays,
   Sparkles,
+  Footprints,
 } from "lucide-react";
 import { TrainingMinigame, TRAINING_GAMES } from "@/components/game/Minigames";
 import {
@@ -129,7 +130,7 @@ const statMetric = (k: StatKey, v: number) => {
 /** How much one more point changes the effect, e.g. "+0.4 km/h" or "−0.2 cm". */
 const statStep = (k: StatKey, v: number) => {
   const i = STAT_INFO[k],
-    d = i.metric(Math.min(99, v + 1)) - i.metric(v),
+    d = i.metric(v + 1) - i.metric(v),
     digits = Math.abs(d) < 0.95 ? (Math.abs(d) < 0.095 ? 2 : 1) : 0;
   return `${d >= 0 ? "+" : "−"}${Math.abs(d).toFixed(digits)}${i.unit ? " " + i.unit : ""}`;
 };
@@ -138,13 +139,15 @@ const statStep = (k: StatKey, v: number) => {
  * player can see what a training session will actually change.
  */
 function StatGuide({ c }: { c: Career }) {
+  const cap = STAGES[c.stage].statCap;
   return (
     <section className="stat-guide" aria-labelledby="stat-guide-title">
       <header>
         <h2 id="stat-guide-title">내 능력치와 효과</h2>
         <p>
           숫자는 지금 능력치로 게임에서 실제로 쓰이는 값입니다. 훈련으로 1 오를 때마다 오른쪽처럼
-          바뀝니다. 최대 99.
+          바뀝니다. 최대 {cap}
+          {c.stage === "pro" ? "" : " (프로에 가면 200까지)"}.
         </p>
       </header>
       <ol>
@@ -157,13 +160,13 @@ function StatGuide({ c }: { c: Career }) {
                 <span className="stat-role">{i.role}</span>
                 <strong>{statNames[k]}</strong>
                 <b>{v}</b>
-                <Progress value={(v / 99) * 100} aria-label={`${statNames[k]} ${v}`} />
+                <Progress value={(v / cap) * 100} aria-label={`${statNames[k]} ${v}`} />
               </div>
               <p className="stat-what">{i.what}</p>
               <div className="stat-effect">
                 <span>{i.label}</span>
                 <strong>{statMetric(k, v)}</strong>
-                <small>{v >= 99 ? "최대치에 도달" : `+1마다 ${statStep(k, v)}`}</small>
+                <small>{v >= cap ? "최대치에 도달" : `+1마다 ${statStep(k, v)}`}</small>
                 <em>{i.training} 훈련으로 상승</em>
               </div>
             </li>
@@ -665,7 +668,7 @@ function CareerView({ engine, s }: { engine: BaseballEngine; s: GameState }) {
             <span>
               {c.stage === "pro"
                 ? `${teamOf(c.club)?.city ?? ""} ${teamOf(c.club)?.name ?? ""}`
-                : "하늘고등학교 야구부"}
+                : "미산고등학교 야구부"}
             </span>
             <Shield size={24} />
           </div>
@@ -673,7 +676,11 @@ function CareerView({ engine, s }: { engine: BaseballEngine; s: GameState }) {
             <h2>{c.name}</h2>
             <p>{c.stage === "pro" ? "프로 1년차 우완 투수" : "고교 3학년 우완 투수"}</p>
             <div className="player-rating">
-              <strong>{Math.round(Object.values(c.stats).reduce((a, b) => a + b, 0) / 6)}</strong>
+              <strong>
+                {Math.round(
+                  Object.values(c.stats).reduce((a, b) => a + b, 0) / Object.values(c.stats).length,
+                )}
+              </strong>
               <span>종합 능력</span>
             </div>
           </div>
@@ -805,9 +812,18 @@ const trainings: {
     id: "running",
     stat: "stamina" as StatKey,
     icon: Activity,
-    name: "러닝",
+    name: "장거리 러닝",
     desc: "마지막 이닝까지 흔들림 없이",
     gain: "지구력 +0~2",
+    cost: 16,
+  },
+  {
+    id: "sprint",
+    stat: "speed" as StatKey,
+    icon: Footprints,
+    name: "스프린트",
+    desc: "한 베이스를 더 훔치는 다리",
+    gain: "주력 +0~2",
     cost: 16,
   },
   {
@@ -991,7 +1007,7 @@ function LifeView({
               <span className="mg-tag">미니게임 · {TRAINING_GAMES[t.id].title}</span>
             )}
             <div>
-              <b>{t.gain}</b>
+              <b>{c.stage === "pro" ? t.gain.replace("+0~2", "+0~4") : t.gain}</b>
               <span>
                 {t.cost > 0 ? `체력 −${t.cost}` : "체력 회복"}
                 <ArrowUpRight size={15} />
@@ -1101,17 +1117,17 @@ const PRESETS: { name: string; desc: string; add: Career["stats"] }[] = [
   {
     name: "정통파 에이스",
     desc: "빠른 공과 체력으로 윽박지르는 투수",
-    add: { velocity: 30, control: 15, movement: 15, stamina: 20, contact: 10, power: 10 },
+    add: { velocity: 28, control: 14, movement: 14, stamina: 20, contact: 8, power: 8, speed: 8 },
   },
   {
     name: "기교파",
     desc: "제구와 변화로 타자를 요리하는 투수",
-    add: { velocity: 10, control: 30, movement: 30, stamina: 15, contact: 10, power: 5 },
+    add: { velocity: 8, control: 28, movement: 28, stamina: 14, contact: 8, power: 4, speed: 10 },
   },
   {
     name: "투타 겸업",
     desc: "마운드와 타석 모두에서 빛나는 선수",
-    add: { velocity: 18, control: 16, movement: 16, stamina: 10, contact: 20, power: 20 },
+    add: { velocity: 15, control: 14, movement: 14, stamina: 9, contact: 18, power: 18, speed: 12 },
   },
 ];
 const statKeys = Object.keys(statNames) as (keyof Career["stats"])[];
@@ -1147,7 +1163,7 @@ function CreationDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
             <DialogHeader>
               <DialogTitle>꿈의 구단을 고르세요</DialogTitle>
               <DialogDescription>
-                고른 구단의 스카우트가 이번 시즌 하늘고의 모든 경기를 지켜봅니다. 스카우트 평가
+                고른 구단의 스카우트가 이번 시즌 미산고의 모든 경기를 지켜봅니다. 스카우트 평가
                 100점을 채우면 그 구단의 입단 제의를 받습니다.
               </DialogDescription>
             </DialogHeader>
@@ -1197,7 +1213,7 @@ function CreationDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
                 <b>언젠가 저 유니폼을 입고 저 마운드에 서겠다.</b>
               </p>
               <p>
-                그리고 지금, 하늘고 야구부 3학년. 드래프트까지 남은 기회는 이번 시즌뿐이다. 매일
+                그리고 지금, 미산고 야구부 3학년. 드래프트까지 남은 기회는 이번 시즌뿐이다. 매일
                 아침 훈련으로 몸을 만들고, 오후에는 시즌 경기에서 스카우트 앞에 선다.
               </p>
               <p>
@@ -1214,7 +1230,7 @@ function CreationDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
             <DialogHeader>
               <DialogTitle>선수 등록</DialogTitle>
               <DialogDescription>
-                {teamOf(team)?.name} 입단을 꿈꾸는 하늘고 3학년 투수. 이름을 정하고 능력치{" "}
+                {teamOf(team)?.name} 입단을 꿈꾸는 미산고 3학년 투수. 이름을 정하고 능력치{" "}
                 {STAT_POINTS}
                 포인트를 나눠 주세요. 각 능력은 {STAT_BASE}에서 시작해 최대 {STAT_CAP}까지 올릴 수
                 있습니다.
@@ -1475,7 +1491,7 @@ function EndingDialog({
         </DialogHeader>
         <div className="story">
           <p>
-            하늘고 마운드에서 던진 공 하나하나가 결국 여기까지 왔다. 새벽 러닝, 불펜의 땀, 관중석의
+            미산고 마운드에서 던진 공 하나하나가 결국 여기까지 왔다. 새벽 러닝, 불펜의 땀, 관중석의
             {` ${t.scout}`} 스카우트를 의식하며 던진 승부구들.
           </p>
           <p>
@@ -2074,7 +2090,7 @@ export default function DiamondGame() {
           </div>
           <span className="park-label">
             <Flag size={14} />
-            하늘 야구장 <span>15:00 · 맑음</span>
+            미산 야구장 <span>15:00 · 맑음</span>
           </span>
         </div>
         <div className="game-layout">
@@ -2311,6 +2327,47 @@ export default function DiamondGame() {
                   </span>
                   <span>
                     선구 <b>{engine.batter.eye}</b>
+                  </span>
+                  <span>
+                    주력 <b>{engine.batter.speed}</b>
+                  </span>
+                </span>
+              </div>
+            )}
+            {batting && s.mode !== "bullpen" && (
+              <div className="pp-rival">
+                <span className="pp-order">{String((s.order[1] % 9) + 1).padStart(2, "0")}</span>
+                <span className="pp-rival-name">
+                  <small>
+                    {engine.awayRoster.name} 에이스 ·{" "}
+                    {engine.awayRoster.ace.hand === "L" ? "좌" : "우"}투
+                  </small>
+                  <strong>{engine.awayRoster.ace.name}</strong>
+                </span>
+                <span className="pp-rival-stats">
+                  <span>
+                    구속 <b>{STAGES[s.career.stage].aiVelocity + engine.awayRoster.ace.velocity}</b>
+                  </span>
+                  <span>
+                    제구{" "}
+                    <b>
+                      {engine.awayRoster.ace.control <= 0.85
+                        ? "A"
+                        : engine.awayRoster.ace.control <= 1.05
+                          ? "B"
+                          : engine.awayRoster.ace.control <= 1.2
+                            ? "C"
+                            : "D"}
+                    </b>
+                  </span>
+                  <span>
+                    구종{" "}
+                    <b>
+                      {Math.min(
+                        STAGES[s.career.stage].aiPitchKinds,
+                        engine.awayRoster.ace.kinds + 2,
+                      )}
+                    </b>
                   </span>
                 </span>
               </div>
@@ -2653,7 +2710,7 @@ export default function DiamondGame() {
                 className="subtle-button"
                 onClick={() => {
                   engine.devMaxStats();
-                  toast.success("모든 능력치를 99로 올렸습니다");
+                  toast.success(`모든 능력치를 ${STAGES[s.career.stage].statCap}로 올렸습니다`);
                 }}
               >
                 모든 능력치 최대

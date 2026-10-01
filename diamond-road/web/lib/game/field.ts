@@ -718,7 +718,7 @@ export class BaseballField {
     fans.count = count;
     this.scene.add(fans);
     // Behind-home sign on the backstop padding.
-    this.label("HANEUL BASEBALL", "#ead7a8", "#1f4038", 5.2, 1.3, 0, 0.75, -25.5, 0);
+    this.label("MISAN BASEBALL", "#ead7a8", "#1f4038", 5.2, 1.3, 0, 0.75, -25.5, 0);
     // Scoreboard above the centre-field bleachers.
     this.box(0, 16, 128, 30, 13, 1.2, "#16252c");
     this.label("DIAMOND ROAD", "#f2c778", "#16252c", 26, 5, 0, 18.8, 127.3);
@@ -1049,9 +1049,10 @@ export class BaseballField {
       look.set(0, 0, 28);
       fov = 51;
     } else if (cam === "top") {
-      pos.set(0, 125, 35);
-      look.set(0, 0, 35.01);
-      fov = 61;
+      // Low overhead view from behind home: the whole diamond large, the outfield still in frame.
+      pos.set(0, 66, -30);
+      look.set(0, 0, 44);
+      fov = 56;
     } else {
       const b = s.ball;
       pos.set(b.x * 0.42 + 25, Math.max(25, b.y + 17), b.z * 0.45 - 18);

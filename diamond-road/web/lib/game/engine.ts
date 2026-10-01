@@ -319,6 +319,10 @@ export const STAGES: Record<
     leadGamble: number;
     /** Scale of the gauge gain after each match. */
     gaugeGain: number;
+    /** Highest rating any stat can reach on this stage. */
+    statCap: number;
+    /** Multiplier on the stat gain from one training session. */
+    trainGain: number;
   }
 > = {
   high: {
@@ -338,6 +342,8 @@ export const STAGES: Record<
     catcherArm: 30,
     leadGamble: 1,
     gaugeGain: 1,
+    statCap: 100,
+    trainGain: 1,
   },
   pro: {
     name: "프로",
@@ -356,6 +362,8 @@ export const STAGES: Record<
     catcherArm: 31,
     leadGamble: 0.85,
     gaugeGain: 0.75,
+    statCap: 200,
+    trainGain: 2,
   },
 };
 export const swingWindow = (
@@ -408,7 +416,7 @@ export const SWING_STYLES: Record<
 };
 /** How far (m) the bat aim may miss the ball and still make contact. */
 export const batReach = (contact: number, style: SwingStyle) =>
-  (0.12 + clamp(contact, 0, 99) * 0.001) * SWING_STYLES[style].reach;
+  (0.12 + clamp(over(contact), 0, 150) * 0.001) * SWING_STYLES[style].reach;
 /** Actions (training, rest, study) available each day before the day's match. */
 export const DAY_ACTIONS = 5;
 export type StatKey = keyof Career["stats"];
@@ -420,21 +428,30 @@ export const STAT_NAMES: Record<StatKey, string> = {
   stamina: "지구력",
   contact: "컨택",
   power: "파워",
+  speed: "주력",
 };
-/** Player fastball speed (km/h) at 100% effort, before fatigue and form. */
-export const fastballSpeed = (velocity: number) => 110 + velocity * 0.43;
+/**
+ * Ratings above 100 exist only in the pros (cap 200). Past 100 each point is worth `k` of a
+ * point, so a 200 is clearly better than a 100 without breaking the physics.
+ */
+export const over = (v: number, k = 0.5) => (v <= 100 ? v : 100 + (v - 100) * k);
+/** Player fastball speed (km/h) at 100% effort: 153 at a rating of 100, 170 at 200. */
+export const fastballSpeed = (velocity: number) =>
+  velocity <= 100 ? 110 + velocity * 0.43 : 153 + (velocity - 100) * 0.17;
 /** Energy one pitch costs at this effort (%) and stamina rating (before the pitch's own cost). */
 export const pitchEnergyCost = (effort: number, stamina: number) =>
-  (0.38 + (effort - 70) * 0.012) * (1.3 - stamina / 180);
+  (0.38 + (effort - 70) * 0.012) * (1.3 - over(stamina) / 180);
 /** Batted-ball carry multiplier from the batter's power rating. */
-export const carryScale = (power: number) => 0.78 + power / 240;
+export const carryScale = (power: number) => 0.78 + over(power) / 240;
+/** Base-running speed (m/s) for a speed rating. */
+export const runSpeed = (speed: number) => 6.2 + over(speed) * 0.02;
 /** Batted balls that travel farther than this (m) are home runs. */
 export const HOME_RUN_DISTANCE = 104;
 /**
  * How sharply the pitcher's pitches bite against AI batters (1 at a movement of 65): scales each
  * pitch's chase / whiff / weak-contact data and slightly lowers contact on every pitch.
  */
-export const movementBite = (movement: number) => clamp(movement, 0, 99) / 65;
+export const movementBite = (movement: number) => clamp(over(movement), 0, 150) / 65;
 /**
  * What each stat does, in plain words, with a live number from the same formulas the game
  * uses. `metric` turns a rating into that number (lower is better when `lowerIsBetter`).
@@ -442,7 +459,7 @@ export const movementBite = (movement: number) => clamp(movement, 0, 99) / 65;
 export const STAT_INFO: Record<
   StatKey,
   {
-    role: "투구" | "타격";
+    role: "투구" | "타격" | "주루";
     what: string;
     label: string;
     unit: string;
@@ -511,6 +528,16 @@ export const STAT_INFO: Record<
     digits: 0,
     metric: (v) => (8 + 0.81 * 115) * carryScale(v),
     training: "장타",
+  },
+  speed: {
+    role: "주루",
+    what: "베이스 사이를 달리는 빠르기. 내야 안타, 한 베이스 더 가기, 도루가 쉬워져요.",
+    label: "홈→1루",
+    unit: "초",
+    digits: 2,
+    lowerIsBetter: true,
+    metric: (v) => BASE_PATH_LENGTH / runSpeed(v),
+    training: "스프린트",
   },
 };
 const statLabel = (k: StatKey) => STAT_NAMES[k];
@@ -608,7 +635,7 @@ export const teamOf = (id: string) => TEAMS.find((t) => t.id === id) ?? null;
 /** [visiting team, our team]: high-school rivals, or our club against a rotating pro rival. */
 export const matchTeams = (c: Pick<Career, "stage" | "club" | "day">): [string, string] => {
   const club = c.stage === "pro" ? teamOf(c.club) : null;
-  if (!club) return ["한빛고", "하늘고"];
+  if (!club) return [opponentSchool(c.day).name, HOME_SCHOOL];
   const rivals = TEAMS.filter((t) => t.id !== club.id);
   return [rivals[c.day % rivals.length].name, club.name];
 };
@@ -685,8 +712,8 @@ const HANG_BASE = 1.4;
 const HANG_DIV = 38;
 export function pitchMovement(id: PitchId, movement: number) {
   const p = PITCHES.find((p) => p.id === id)!,
-    x = (p.breakX * movement) / 75,
-    y = (p.breakY * movement) / 75;
+    x = (p.breakX * over(movement, 0.4)) / 75,
+    y = (p.breakY * over(movement, 0.4)) / 75;
   return {
     x,
     y,
@@ -701,8 +728,15 @@ export function pitchMovement(id: PitchId, movement: number) {
  * higher effort and poor form all widen it; the control stat narrows it.
  */
 export const controlSpread = (control: number, energy: number, effort: number, form: number) =>
-  (0.022 + (100 - control) * 0.0019 + (100 - energy) * 0.0016 + (effort - 70) * 0.001) *
-  (1 + (100 - form) * 0.003);
+  Math.max(
+    0.008,
+    (0.022 +
+      (100 - Math.min(control, 100)) * 0.0019 -
+      Math.max(0, control - 100) * 0.00012 +
+      (100 - energy) * 0.0016 +
+      (effort - 70) * 0.001) *
+      (1 + (100 - form) * 0.003),
+  );
 export type RunnerTrack = {
   id: number;
   from: number;
@@ -767,8 +801,10 @@ export type Player = {
   eye: number;
   speed: number;
 };
-export const RIVALS: Player[] = [
-  { name: "김도윤", hand: "L", contact: 68, power: 48, eye: 63, speed: 80 },
+/** Our school. The player bats first in its lineup; the eight teammates never change. */
+export const HOME_SCHOOL = "미산고";
+export const HOME_LINEUP: Player[] = [
+  { name: "", hand: "R", contact: 0, power: 0, eye: 66, speed: 0 },
   { name: "이준호", hand: "R", contact: 71, power: 53, eye: 69, speed: 71 },
   { name: "박시우", hand: "L", contact: 76, power: 72, eye: 70, speed: 65 },
   { name: "강태오", hand: "R", contact: 62, power: 88, eye: 57, speed: 45 },
@@ -778,6 +814,122 @@ export const RIVALS: Player[] = [
   { name: "한유찬", hand: "R", contact: 54, power: 52, eye: 55, speed: 61 },
   { name: "오지훈", hand: "L", contact: 52, power: 42, eye: 62, speed: 77 },
 ];
+/** Kept for older code paths: our teammates (slot 0 is filled in from the career). */
+export const RIVALS = HOME_LINEUP;
+/** An AI team's ace: km/h above the stage's base speed, control spread multiplier, pitch mix. */
+export type Ace = {
+  name: string;
+  hand: "R" | "L";
+  velocity: number;
+  control: number;
+  kinds: number;
+};
+export type Roster = { name: string; style: string; lineup: Player[]; ace: Ace };
+/**
+ * Rival high schools. A new one comes each match day; each has its own style and strength, and
+ * its players (made from the school's name) are the same every time you meet them.
+ */
+export const SCHOOLS: {
+  name: string;
+  strength: number;
+  style: "speed" | "power" | "contact" | "balanced";
+}[] = [
+  { name: "한빛고", strength: 58, style: "balanced" },
+  { name: "청운고", strength: 62, style: "speed" },
+  { name: "동해고", strength: 66, style: "power" },
+  { name: "새벽고", strength: 56, style: "contact" },
+  { name: "백송고", strength: 64, style: "balanced" },
+  { name: "금강고", strength: 70, style: "power" },
+  { name: "은하고", strength: 60, style: "contact" },
+  { name: "해솔고", strength: 63, style: "speed" },
+  { name: "보람고", strength: 55, style: "balanced" },
+  { name: "태백고", strength: 72, style: "contact" },
+  { name: "서림고", strength: 61, style: "power" },
+  { name: "가람고", strength: 67, style: "speed" },
+];
+export const STYLE_NAMES = {
+  speed: "발 빠른 팀",
+  power: "장타 팀",
+  contact: "정교한 팀",
+  balanced: "균형 잡힌 팀",
+} as const;
+const SURNAMES = "김이박최정강조윤장임한오서신권황안송류홍전고문양손배백허남심노".split("");
+const GIVEN = "민서준도윤시우하지현예건우진태영성재호수빈현석동훈승찬유원규한결".split("");
+const hashName = (text: string) => {
+  let h = 2166136261;
+  for (const ch of text) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+  return h >>> 0;
+};
+/** Batting-order roles: leadoff speed, table-setters, the heart of the order, the bottom. */
+const SLOT_ROLES = [
+  { contact: 6, power: -12, eye: 4, speed: 18 },
+  { contact: 8, power: -6, eye: 6, speed: 8 },
+  { contact: 8, power: 8, eye: 6, speed: 0 },
+  { contact: 0, power: 20, eye: -2, speed: -12 },
+  { contact: 2, power: 12, eye: 0, speed: -6 },
+  { contact: 0, power: 2, eye: 0, speed: 0 },
+  { contact: -4, power: -2, eye: -2, speed: 2 },
+  { contact: -8, power: -8, eye: -4, speed: 6 },
+  { contact: -10, power: -10, eye: -4, speed: 10 },
+];
+const STYLE_BONUS = {
+  speed: { contact: 2, power: -4, eye: 0, speed: 10 },
+  power: { contact: -3, power: 10, eye: -2, speed: -4 },
+  contact: { contact: 8, power: -4, eye: 6, speed: 0 },
+  balanced: { contact: 2, power: 2, eye: 2, speed: 2 },
+};
+const rosterCache = new Map<string, Roster>();
+/** The fixed roster of a team: same names and ratings every time (seeded by the team name). */
+export function makeRoster(
+  name: string,
+  strength: number,
+  style: keyof typeof STYLE_BONUS = "balanced",
+): Roster {
+  const key = `${name}|${strength}|${style}`,
+    cached = rosterCache.get(key);
+  if (cached) return cached;
+  let seed = hashName(name);
+  const rnd = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296,
+    pick = <T>(a: T[]) => a[Math.floor(rnd() * a.length)],
+    used = new Set<string>(),
+    person = () => {
+      let n = "";
+      do n = pick(SURNAMES) + pick(GIVEN) + pick(GIVEN);
+      while (used.has(n) || n[1] === n[2]);
+      used.add(n);
+      return n;
+    },
+    bonus = STYLE_BONUS[style],
+    rate = (base: number) => Math.round(clamp(base + (rnd() - 0.5) * 10, 35, 95));
+  const lineup = SLOT_ROLES.map((r) => ({
+    name: person(),
+    hand: (rnd() < 0.32 ? "L" : "R") as "L" | "R",
+    contact: rate(strength + r.contact + bonus.contact),
+    power: rate(strength + r.power + bonus.power),
+    eye: rate(strength + r.eye + bonus.eye),
+    speed: rate(strength + r.speed + bonus.speed),
+  }));
+  const roster: Roster = {
+    name,
+    style: STYLE_NAMES[style],
+    lineup,
+    ace: {
+      name: person(),
+      hand: rnd() < 0.3 ? "L" : "R",
+      velocity: Math.round((strength - 62) * 0.45 + (rnd() - 0.5) * 4),
+      control:
+        Math.round(clamp(1.25 - (strength - 50) * 0.014 + (rnd() - 0.5) * 0.15, 0.7, 1.4) * 100) /
+        100,
+      kinds: strength >= 68 ? 4 : strength >= 60 ? 3 : 2,
+    },
+  };
+  rosterCache.set(key, roster);
+  return roster;
+}
+/** Today's rival school (a different one each match day). */
+export const opponentSchool = (day: number) => SCHOOLS[(Math.max(1, day) - 1) % SCHOOLS.length];
+/** Strength of a pro club's roster. */
+const PRO_STRENGTH = 80;
 export type Career = {
   version: 1;
   name: string;
@@ -791,6 +943,8 @@ export type Career = {
     stamina: number;
     contact: number;
     power: number;
+    /** Base-running speed (added later; older saves get the default). */
+    speed: number;
   };
   scout: number;
   xp: number;
@@ -827,7 +981,15 @@ export const newCareer = (): Career => ({
   day: 1,
   energy: 100,
   form: 76,
-  stats: { velocity: 64, control: 65, movement: 62, stamina: 66, contact: 60, power: 56 },
+  stats: {
+    velocity: 64,
+    control: 65,
+    movement: 62,
+    stamina: 66,
+    contact: 60,
+    power: 56,
+    speed: 60,
+  },
   scout: 22,
   xp: 0,
   games: 0,
@@ -1021,7 +1183,7 @@ const initial = (career: Career, mode: Mode = "match", maxInnings = 3): GameStat
   lastError: 0,
   lastPitch: "—",
   history: [],
-  log: ["하늘고 vs 한빛고 · 경기 준비"],
+  log: [`${HOME_SCHOOL} vs ${opponentSchool(career.day).name} · 경기 준비`],
   practice: { pitches: 0, strikes: 0, hits: 0, best: 0 },
   career,
   saveStatus: "이 브라우저에 자동 저장",
@@ -1068,16 +1230,40 @@ export class BaseballEngine {
       this.state.mode === "batting" || (this.state.mode === "match" && this.state.half === "bottom")
     );
   }
+  /** Our team: 미산고 in high school, the signed club in the pros. Slot 0 is the player. */
+  get homeRoster(): Roster {
+    const c = this.state.career,
+      club = c.stage === "pro" ? teamOf(c.club) : null;
+    return club
+      ? makeRoster(club.name, PRO_STRENGTH)
+      : { name: HOME_SCHOOL, style: "", lineup: HOME_LINEUP, ace: makeRoster(HOME_SCHOOL, 60).ace };
+  }
+  /** Today's opponent: a rival high school (new each day) or a rival pro club. */
+  get awayRoster(): Roster {
+    const c = this.state.career,
+      [away] = matchTeams(c);
+    if (c.stage === "pro" && teamOf(c.club)) return makeRoster(away, PRO_STRENGTH);
+    const school = opponentSchool(c.day);
+    return makeRoster(school.name, school.strength, school.style);
+  }
+  /** Our batter in lineup slot i: the player at slot 0, the fixed teammates elsewhere. */
+  private ourBatter(i: number): Player {
+    const c = this.state.career,
+      p = this.homeRoster.lineup[i % 9];
+    return i % 9 === 0
+      ? {
+          ...p,
+          name: c.name,
+          hand: "R",
+          contact: c.stats.contact,
+          power: c.stats.power,
+          speed: c.stats.speed,
+        }
+      : p;
+  }
   get batter(): Player {
     const s = this.state;
-    return this.batting
-      ? {
-          ...RIVALS[s.order[1] % 9],
-          name: s.order[1] % 9 === 0 ? s.career.name : RIVALS[s.order[1] % 9].name,
-          contact: s.career.stats.contact,
-          power: s.career.stats.power,
-        }
-      : RIVALS[s.order[0] % 9];
+    return this.batting ? this.ourBatter(s.order[1]) : this.awayRoster.lineup[s.order[0] % 9];
   }
   onSound(fn: (kind: string) => void) {
     this.soundCallback = fn;
@@ -1111,12 +1297,14 @@ export class BaseballEngine {
       const raw = localStorage.getItem("diamond-road-career-v1");
       if (raw) {
         const c = JSON.parse(raw),
-          keys = Object.keys(newCareer().stats) as (keyof Career["stats"])[];
+          keys = Object.keys(newCareer().stats) as (keyof Career["stats"])[],
+          // Stats added after the first release may be missing from older saves.
+          required = keys.filter((k) => k !== "speed");
         if (
           c?.version !== 1 ||
           typeof c.name !== "string" ||
           !c.stats ||
-          !keys.every((k) => typeof c.stats[k] === "number" && Number.isFinite(c.stats[k])) ||
+          !required.every((k) => typeof c.stats[k] === "number" && Number.isFinite(c.stats[k])) ||
           ![
             c.day,
             c.energy,
@@ -1143,7 +1331,11 @@ export class BaseballEngine {
         clean.scout = clamp(c.scout, 0, 100);
         clean.history = c.history.slice(0, 12);
         clean.stats = { ...newCareer().stats };
-        keys.forEach((k) => (clean.stats[k] = clamp(c.stats[k], 0, 99)));
+        const cap = c.stage === "pro" ? STAGES.pro.statCap : STAGES.high.statCap;
+        keys.forEach((k) => {
+          const v = c.stats[k];
+          if (typeof v === "number" && Number.isFinite(v)) clean.stats[k] = clamp(v, 0, cap);
+        });
         // Saves made before the pitch shop already had the original four pitches.
         const known = Array.isArray(c.pitches)
           ? c.pitches.filter((id: unknown) => PITCHES.some((p) => p.id === id))
@@ -1244,12 +1436,17 @@ export class BaseballEngine {
       stats = s.career.stats,
       stage = this.stageRules,
       pitch = ai
-        ? PITCHES[Math.floor(this.rng() * Math.min(PITCHES.length, stage.aiPitchKinds))]
+        ? PITCHES[
+            Math.floor(
+              this.rng() *
+                Math.min(PITCHES.length, stage.aiPitchKinds, this.awayRoster.ace.kinds + 2),
+            )
+          ]
         : pitchData(s.selected);
     const fatigue = ai ? Math.max(0, s.pitchCount[0] - 25) * 0.18 : 100 - s.energy;
     const formPenalty = ai ? 0 : (100 - s.career.form) * 0.02;
     const speed = clamp(
-      (ai ? stage.aiVelocity : fastballSpeed(stats.velocity)) +
+      (ai ? stage.aiVelocity + this.awayRoster.ace.velocity : fastballSpeed(stats.velocity)) +
         pitch.delta -
         fatigue * 0.065 -
         (100 - s.effort) * 0.09 -
@@ -1262,7 +1459,9 @@ export class BaseballEngine {
       ? V(gaussian(this.rng) * 0.29, 0.95 + gaussian(this.rng) * 0.34, 0)
       : { ...s.aim };
     const sigma =
-      (ai ? 0.04 : controlSpread(stats.control, s.energy, s.effort, s.career.form)) * pitch.control;
+      (ai
+        ? 0.04 * this.awayRoster.ace.control
+        : controlSpread(stats.control, s.energy, s.effort, s.career.form)) * pitch.control;
     const target = V(
         clamp(aim.x + gaussian(this.rng) * sigma, -1.05, 1.05),
         clamp(aim.y + gaussian(this.rng) * sigma, 0.09, 2.1),
@@ -1400,11 +1599,11 @@ export class BaseballEngine {
   }
   /** Base-running pace (bases per second) for a runner with this speed rating. */
   runnerPace(speed: number) {
-    return (6.2 + speed * 0.02) / BASE_PATH_LENGTH;
+    return runSpeed(speed) / BASE_PATH_LENGTH;
   }
   /** Our runner on first is taken to be the previous batter in the order. */
   get runnerOnFirst(): Player {
-    return RIVALS[(this.state.order[1] + 8) % 9];
+    return this.ourBatter(this.state.order[1] + 8);
   }
   /** Moves the E-steal runner during the delivery (dt in real game seconds). */
   private runSteal(dt: number) {
@@ -2781,7 +2980,8 @@ export class BaseballEngine {
         bullpen: { cost: 18, stat: "control", gain: 1, name: "불펜 제구 훈련" },
         weights: { cost: 22, stat: "velocity", gain: 1, name: "하체·코어 훈련" },
         breaking: { cost: 18, stat: "movement", gain: 1, name: "변화구 그립 훈련" },
-        running: { cost: 16, stat: "stamina", gain: 1, name: "러닝·회복력 훈련" },
+        running: { cost: 16, stat: "stamina", gain: 1, name: "장거리 러닝" },
+        sprint: { cost: 16, stat: "speed", gain: 1, name: "스프린트·주루 훈련" },
         batting: { cost: 20, stat: "contact", gain: 1, name: "타격 훈련" },
         power: { cost: 22, stat: "power", gain: 1, name: "타격 파워 훈련" },
         study: { cost: 6, gain: 4, name: "영상 분석·학교 수업" },
@@ -2795,16 +2995,17 @@ export class BaseballEngine {
         message: "오늘 행동력을 모두 썼습니다. 경기를 치르면 다음 날로 넘어갑니다.",
       };
     if (c.energy < o.cost) return { ok: false, message: "체력이 부족합니다. 먼저 휴식하세요." };
-    if (o.stat && c.stats[o.stat] >= 99)
+    const cap = this.stageRules.statCap;
+    if (o.stat && c.stats[o.stat] >= cap)
       return { ok: false, message: "이미 최고 능력치입니다. 다른 훈련을 선택하세요." };
     const q = clamp(Number.isFinite(quality) ? quality : 0, 0, 1),
       grade = q >= 0.85 ? "완벽" : q >= 0.4 ? "좋음" : "아쉬움";
-    if (o.stat) o.gain = q >= 0.85 ? 2 : q >= 0.4 ? 1 : 0;
+    if (o.stat) o.gain = (q >= 0.85 ? 2 : q >= 0.4 ? 1 : 0) * this.stageRules.trainGain;
     else if (kind === "study") o.gain = Math.round(2 + q * 4);
     c.energy = clamp(c.energy - o.cost, 0, 100);
     c.actions--;
     c.xp += kind === "rest" ? 2 : 5;
-    if (o.stat) c.stats[o.stat] = clamp(c.stats[o.stat] + o.gain, 0, 99);
+    if (o.stat) c.stats[o.stat] = clamp(c.stats[o.stat] + o.gain, 0, cap);
     else c.form = clamp(c.form + o.gain, 0, 100);
     if (o.stat) c.form = clamp(c.form - 2, 0, 100);
     c.scout = clamp(c.scout + (o.stat ? 0.5 : 0), 0, 100);
@@ -2872,10 +3073,10 @@ export class BaseballEngine {
     this.emit();
     return { ok: true, message: "선수 등록 완료" };
   }
-  /** Developer mode: every stat to the 99 cap. */
+  /** Developer mode: every stat to the stage cap (100 in high school, 200 in the pros). */
   devMaxStats() {
     const c = this.state.career;
-    for (const k of Object.keys(c.stats) as StatKey[]) c.stats[k] = 99;
+    for (const k of Object.keys(c.stats) as StatKey[]) c.stats[k] = this.stageRules.statCap;
     c.history = ["개발자 모드 · 모든 능력치 최대", ...c.history].slice(0, 12);
     this.persist();
     this.emit();

@@ -354,7 +354,7 @@ export class SoftwareField {
         ],
         "#e2d0b4",
       );
-    this.label("HANEUL BASEBALL", V(0, 3, -16.6), "#ecd5a8", 30);
+    this.label("MISAN BASEBALL", V(0, 3, -16.6), "#ecd5a8", 30);
     this.label("DIAMOND ROAD", V(0, 10, 114), "#ecd5a8", 30);
     const l = s.phase === "inplay" ? s.live : null;
     const chars = DEFENSE.map((p, i) => ({
