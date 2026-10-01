@@ -34,6 +34,8 @@ import {
   flutterOffset,
   statCapOf,
   visualFlightTime,
+  fieldSkill,
+  teamRatings,
   HOME_SCHOOL,
   SCHOOLS,
   makeRoster,
@@ -64,6 +66,19 @@ const allPitches = () => {
 const advance = (g, n = 400) => {
   for (let i = 0; i < n; i++) g.tick(1 / 60);
 };
+/** Every fielder rated 65 (skill multipliers of 1), to test the base balance. */
+const evenDefense = (g, rating = 65) =>
+  Object.defineProperty(g, "fielders", {
+    get: () =>
+      Array(9).fill({
+        name: "",
+        hand: "R",
+        contact: 65,
+        power: rating,
+        eye: rating,
+        speed: rating,
+      }),
+  });
 const finishPlay = (g, dt = 1 / 60) => {
   let n = 0;
   while (g.state.phase === "inplay" && n++ < 3000) g.tick(dt);
@@ -682,7 +697,7 @@ check("Starting blessing grants exactly one random extra pitch, weighted by rari
 check("Balls in play: fly outs are not dominant and the result waits for the fielder", () => {
   const out = { fly: 0, hit: 0, total: 0 };
   for (let i = 1; i <= 600; i++) {
-    const g = new BaseballEngine(newCareer(), seed(i));
+    const g = evenDefense(new BaseballEngine(newCareer(), seed(i)));
     const r = seed(i * 7 + 3);
     g.contact(0.21 + r() * 0.75, (r() - 0.5) * 0.2);
     const l = g.state.live;
@@ -1705,5 +1720,45 @@ check("Pitch speed is easier to see: on-screen time gap is wider than the physic
   // The difficulty still sets the overall pace, and the swing window stays a share of it.
   assert(visualFlightTime(0.5, 140, "easy") > visualFlightTime(0.5, 140, "normal"));
   assert(visualFlightTime(0.5, 140, "normal") > visualFlightTime(0.5, 140, "hard"));
+});
+check("Fielders have names and their own stats: quick, sharp fielders take away hits", () => {
+  const g = new BaseballEngine(newCareer());
+  g.start("match");
+  // Our defense: the player pitches, 김영호 plays shortstop, 고하운 center field.
+  assert.equal(g.fielders.length, 9);
+  assert.equal(g.fielders[0].name, g.state.career.name);
+  assert.equal(g.fielders[4].name, "김영호");
+  assert.equal(g.fielders[7].name, "고하운");
+  assert.equal(new Set(g.fielders.map((p) => p.name)).size, 9, "nine different players");
+  // Their defense: the rival ace pitches, the rest come from the fixed school roster.
+  g.state.half = "bottom";
+  assert.equal(g.fielders[0].name, g.awayRoster.ace.name);
+  assert(g.fielders.slice(1).every((p) => g.awayRoster.lineup.includes(p)));
+  // Faster legs, a quicker read and a stronger arm than an average (65) fielder.
+  const fast = fieldSkill({ speed: 99, eye: 99, power: 99 }),
+    slow = fieldSkill({ speed: 28, eye: 50, power: 40 });
+  assert(fast.run > 1 && fast.react < 1 && fast.arm > 1);
+  assert(slow.run < 1 && slow.react > 1 && slow.arm < 1);
+  const hits = (rating) => {
+    let n = 0;
+    for (let i = 1; i <= 300; i++) {
+      const x = evenDefense(new BaseballEngine(newCareer(), seed(i)), rating);
+      const r = seed(i * 7 + 3);
+      x.contact(0.21 + r() * 0.75, (r() - 0.5) * 0.2);
+      const l = x.state.live;
+      finishPlay(x);
+      if (!l.caughtFly && !l.outs.length) n++;
+    }
+    return n;
+  };
+  assert(hits(95) < hits(65) && hits(65) < hits(35), `${hits(95)} ${hits(65)} ${hits(35)}`);
+  // Team strength panel numbers are plain averages.
+  assert.deepEqual(
+    teamRatings([
+      { contact: 60, power: 50, eye: 70, speed: 80 },
+      { contact: 80, power: 70, eye: 50, speed: 60 },
+    ]),
+    { contact: 70, power: 60, eye: 60, speed: 70 },
+  );
 });
 console.log(`\n${passed} gameplay checks passed.`);

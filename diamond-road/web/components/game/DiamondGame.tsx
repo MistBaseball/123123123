@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import {
   Target,
@@ -676,6 +676,54 @@ function LineScore({ s }: { s: GameState }) {
   );
 }
 
+/** Both teams' strength side by side (lineup averages, defense, starting pitcher). */
+function TeamStrength({ engine }: { engine: BaseballEngine }) {
+  const teams = [engine.teamStrength(false), engine.teamStrength(true)],
+    rows: [string, "contact" | "power" | "eye" | "speed" | "defense"][] = [
+      ["컨택", "contact"],
+      ["파워", "power"],
+      ["선구", "eye"],
+      ["주력", "speed"],
+      ["수비", "defense"],
+    ];
+  return (
+    <div className="team-strength" aria-label="양 팀 전력">
+      <span className="eyebrow">양 팀 전력 · 라인업 평균</span>
+      <div className="ts-grid">
+        <span />
+        {teams.map((t, i) => (
+          <strong key={i} className={i ? "home" : "away"}>
+            {t.name}
+          </strong>
+        ))}
+        {rows.map(([label, k]) => (
+          <Fragment key={k}>
+            <span className="ts-label">{label}</span>
+            {teams.map((t, i) => {
+              const v = t[k],
+                better = v > teams[1 - i][k];
+              return (
+                <span
+                  key={i}
+                  className={`ts-cell ${i ? "home" : "away"} ${better ? "better" : ""}`}
+                >
+                  <i style={{ width: `${Math.min(100, v)}%` }} />
+                  <b>{v}</b>
+                </span>
+              );
+            })}
+          </Fragment>
+        ))}
+        <span className="ts-label">선발</span>
+        {teams.map((t, i) => (
+          <span key={i} className="ts-pitcher">
+            {t.pitcher} <small>{t.velocity} km/h</small>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
 function CareerView({ engine, s }: { engine: BaseballEngine; s: GameState }) {
   const c = s.career;
   const [name, setName] = useState(c.name);
@@ -2926,6 +2974,7 @@ export default function DiamondGame() {
                   %
                 </span>
               </div>
+              {s.mode === "match" && <TeamStrength engine={engine} />}
             </div>
           </section>
           <aside className="pitch-panel compact">
@@ -3444,6 +3493,14 @@ export default function DiamondGame() {
               id="auto-camera"
               checked={s.autoCamera}
               onCheckedChange={(v) => engine.set("autoCamera", v)}
+            />
+          </div>
+          <div className="settings-row">
+            <label htmlFor="name-tags">수비수 이름 표시</label>
+            <Switch
+              id="name-tags"
+              checked={s.nameTags}
+              onCheckedChange={(v) => engine.set("nameTags", v)}
             />
           </div>
           <div className="settings-row">

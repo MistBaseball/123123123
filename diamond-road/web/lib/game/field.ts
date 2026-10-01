@@ -13,6 +13,43 @@ import {
   type Vec,
 } from "./engine";
 import * as tex from "./textures";
+/** Short position names for the fielder tags (DEFENSE order). */
+const TAG_POS = ["투수", "포수", "1루", "2루", "유격", "3루", "좌익", "중견", "우익"];
+/** Canvas texture for a fielder's name tag: position chip + name, team-coloured. */
+function nameTag(pos: string, name: string, ours: boolean) {
+  const c = document.createElement("canvas"),
+    g = c.getContext("2d")!,
+    font = '"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif',
+    h = 56;
+  g.font = `700 30px ${font}`;
+  const nameW = g.measureText(name).width;
+  g.font = `600 24px ${font}`;
+  const posW = g.measureText(pos).width;
+  c.width = Math.ceil(posW + nameW + 54);
+  c.height = h;
+  g.fillStyle = "rgba(10, 18, 24, 0.78)";
+  g.beginPath();
+  g.roundRect(1, 1, c.width - 2, h - 2, 12);
+  g.fill();
+  g.strokeStyle = ours ? "rgba(232, 182, 90, 0.85)" : "rgba(133, 189, 228, 0.85)";
+  g.lineWidth = 2;
+  g.stroke();
+  g.fillStyle = ours ? "#e8b65a" : "#85bde4";
+  g.beginPath();
+  g.roundRect(8, 9, posW + 18, h - 18, 8);
+  g.fill();
+  g.textBaseline = "middle";
+  g.fillStyle = "#0b1418";
+  g.font = `600 24px ${font}`;
+  g.fillText(pos, 17, h / 2 + 1);
+  g.fillStyle = "#f4f1e6";
+  g.font = `700 30px ${font}`;
+  g.fillText(name, posW + 36, h / 2 + 1);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
 /** Trail colour of the fastest pitches. */
 const HOT = new THREE.Color("#fff1c9");
 
@@ -37,6 +74,8 @@ export class BaseballField {
   private scene = new THREE.Scene();
   private camera = new THREE.PerspectiveCamera(32, 1, 0.1, 900);
   private players: Figure[] = [];
+  /** Name tag above each fielder (DEFENSE order) and the text it currently shows. */
+  private tags: { sprite: THREE.Sprite; text: string }[] = [];
   private batter: Figure;
   private runners: Figure[] = [];
   private ball: THREE.Mesh;
@@ -117,6 +156,14 @@ export class BaseballField {
       fig.root.rotation.y = Math.PI;
       this.scene.add(fig.root);
       this.players.push(fig);
+      const sprite = new THREE.Sprite(
+        new THREE.SpriteMaterial({ transparent: true, depthTest: false, sizeAttenuation: false }),
+      );
+      sprite.position.set(0, 2.35, 0);
+      sprite.renderOrder = 10;
+      sprite.visible = false;
+      fig.root.add(sprite);
+      this.tags.push({ sprite, text: "" });
     });
     this.batter = this.figure("#c06645", "#26353e", true);
     this.scene.add(this.batter.root);
@@ -1101,6 +1148,29 @@ export class BaseballField {
       p.kneeR.rotation.x = 0;
       p.root.position.y = 0;
     };
+    // Name tags: position + name of whoever is on defense now (our team or the rival school).
+    const fielders = this.engine.fielders,
+      ours = !this.engine.batting,
+      tagH = narrow ? 0.036 : 0.03;
+    this.tags.forEach((t, i) => {
+      const text = `${TAG_POS[i]} ${fielders[i]?.name ?? ""}|${ours ? 1 : 0}`;
+      if (t.text !== text) {
+        t.text = text;
+        const m = t.sprite.material;
+        m.map?.dispose();
+        m.map = nameTag(TAG_POS[i], fielders[i]?.name ?? "", ours);
+        m.needsUpdate = true;
+        const img = m.map.image as HTMLCanvasElement;
+        t.sprite.userData.aspect = img.width / img.height;
+      }
+      // Hide the tag of the player the camera is standing behind.
+      t.sprite.visible =
+        s.nameTags &&
+        !(cam === "pitcher" && i === 0) &&
+        !(cam === "catcher" && i === 1) &&
+        s.mode === "match";
+      t.sprite.scale.set(tagH * (t.sprite.userData.aspect ?? 4), tagH, 1);
+    });
     this.players.forEach((p, i) => {
       const pos = s.phase === "inplay" && s.live ? s.live.defenders[i] : DEFENSE[i];
       p.root.position.set(pos.x, 0, pos.z);

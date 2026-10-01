@@ -903,6 +903,40 @@ export const HOME_LINEUP: Player[] = [
 /** "[별호] 이름", or just the name. */
 export const playerLabel = (p: Pick<Player, "name" | "nick">) =>
   p.nick ? `[${p.nick}] ${p.name}` : p.name;
+/** Position names in DEFENSE order. */
+export const POSITIONS = [
+  "투수",
+  "포수",
+  "1루수",
+  "2루수",
+  "유격수",
+  "3루수",
+  "좌익수",
+  "중견수",
+  "우익수",
+];
+/**
+ * Lineup slot playing each DEFENSE position. Ours: the player pitches (slot 0), 김영호 at
+ * shortstop, the fastest legs (옥동규, 고하운) up the middle, the slow sluggers at C and 1B.
+ */
+export const HOME_POSITIONS = [0, 7, 4, 2, 3, 6, 5, 1, 8];
+/** Opponents: the ace pitches; lineup slots by position (slot 8 is the DH). */
+export const AWAY_POSITIONS = [-1, 7, 4, 1, 2, 5, 3, 0, 6];
+/**
+ * A fielder's skill as multipliers of the stage's base values (1 at rating 65):
+ * speed → chase speed, eye → first-step reaction (lower is quicker), power → throwing arm.
+ */
+export const fieldSkill = (p: Pick<Player, "speed" | "eye" | "power">) => ({
+  run: clamp(1 + (p.speed - 65) * 0.004, 0.8, 1.2),
+  react: clamp(1 - (p.eye - 65) * 0.004, 0.82, 1.15),
+  arm: clamp(1 + (p.power - 65) * 0.004, 0.84, 1.2),
+});
+/** Team averages for the strength panel. */
+export const teamRatings = (players: Player[]) => {
+  const avg = (k: "contact" | "power" | "eye" | "speed") =>
+    Math.round(players.reduce((a, p) => a + p[k], 0) / Math.max(1, players.length));
+  return { contact: avg("contact"), power: avg("power"), eye: avg("eye"), speed: avg("speed") };
+};
 /** Kept for older code paths: our teammates (slot 0 is filled in from the career). */
 export const RIVALS = HOME_LINEUP;
 /** An AI team's ace: km/h above the stage's base speed, control spread multiplier, pitch mix. */
@@ -1213,6 +1247,8 @@ export type GameState = {
   camera: Camera;
   autoCamera: boolean;
   autoField: boolean;
+  /** Show name tags above the fielders. */
+  nameTags: boolean;
   aim: Vec;
   selected: PitchId;
   effort: number;
@@ -1276,6 +1312,7 @@ const initial = (career: Career, mode: Mode = "match", maxInnings = 3): GameStat
   camera: mode === "batting" ? "catcher" : "pitcher",
   autoCamera: true,
   autoField: true,
+  nameTags: true,
   aim: V(0, 0.95, 0),
   selected: "fastball",
   effort: 90,
@@ -1388,6 +1425,49 @@ export class BaseballEngine {
   /** True when the player character (leadoff, slot 0) is at the plate. */
   get playerUp() {
     return this.batting && (this.state.mode !== "match" || this.state.order[1] % 9 === 0);
+  }
+  /** The nine fielders now on defense, in DEFENSE order (index 0 = pitcher). */
+  get fielders(): Player[] {
+    return this.defenseOf(!this.batting);
+  }
+  /** Nine fielders of our team (home) or the rival (away), in DEFENSE order. */
+  defenseOf(home: boolean): Player[] {
+    if (home) return HOME_POSITIONS.map((slot) => this.ourRunner(slot));
+    const r = this.awayRoster;
+    return AWAY_POSITIONS.map((slot) =>
+      slot < 0
+        ? { name: r.ace.name, hand: r.ace.hand, contact: 50, power: 66, eye: 62, speed: 58 }
+        : r.lineup[slot],
+    );
+  }
+  /** Team strength for the panel: batting/running averages, defense, and the pitcher. */
+  teamStrength(home: boolean) {
+    const hitters = home
+        ? Array.from({ length: 9 }, (_, i) => this.ourRunner(i))
+        : this.awayRoster.lineup,
+      d = this.defenseOf(home).slice(1),
+      r = this.awayRoster;
+    return {
+      name: this.teams[home ? 1 : 0],
+      ...teamRatings(hitters),
+      defense: Math.round(d.reduce((a, p) => a + (p.speed + p.eye + p.power) / 3, 0) / d.length),
+      pitcher: home ? this.state.career.name : r.ace.name,
+      velocity: Math.round(
+        home
+          ? fastballSpeed(this.state.career.stats.velocity)
+          : this.stageRules.aiVelocity + r.ace.velocity,
+      ),
+    };
+  }
+  /** Chase speed (m/s), first-step reaction (s) and throw speed (m/s) of fielder i. */
+  fielderStats(i: number, l?: Pick<LivePlay, "reactionExtra" | "throwSpeed">) {
+    const k = fieldSkill(this.fielders[i] ?? { speed: 65, eye: 65, power: 65 }),
+      st = this.stageRules;
+    return {
+      speed: st.fielderSpeed * k.run,
+      reaction: st.fielderReaction * k.react + (l?.reactionExtra ?? 0),
+      arm: (l?.throwSpeed ?? st.throwSpeed) * k.arm,
+    };
   }
   get batter(): Player {
     const s = this.state;
@@ -1534,6 +1614,7 @@ export class BaseballEngine {
     this.state.difficulty = previous.difficulty;
     this.state.autoField = previous.autoField;
     this.state.autoCamera = previous.autoCamera;
+    this.state.nameTags = previous.nameTags;
     this.state.hiddenUnlock = previous.hiddenUnlock;
     this.recorded = false;
     this.matchStrikeouts = 0;
@@ -2163,7 +2244,7 @@ export class BaseballEngine {
       let soonest = Infinity;
       DEFENSE.forEach((p, i) => {
         if (i === 1 && !bunt) return;
-        const t = this.interceptTime(l, p);
+        const t = this.interceptTime(l, p, i);
         if (t < soonest) {
           soonest = t;
           l.fielder = i;
@@ -2230,9 +2311,8 @@ export class BaseballEngine {
       lerp(l.start.z, l.land.z, u),
     );
   }
-  private interceptTime(l: LivePlay, from: Vec) {
-    const { fielderSpeed } = this.stageRules,
-      fielderReaction = this.stageRules.fielderReaction + (l.reactionExtra ?? 0);
+  private interceptTime(l: LivePlay, from: Vec, who = l.fielder) {
+    const { speed: fielderSpeed, reaction: fielderReaction } = this.fielderStats(who, l);
     for (let t = 0.05; t <= 12; t += 0.05) {
       const p = this.liveBall(l, t);
       if (Math.hypot(p.x - from.x, p.z - from.z) / fielderSpeed + fielderReaction <= t) return t;
@@ -2241,8 +2321,7 @@ export class BaseballEngine {
   }
   /** Earliest point on the ball's ground path the chasing fielder can reach in time. */
   private interceptPoint(l: LivePlay) {
-    const { fielderSpeed } = this.stageRules,
-      fielderReaction = this.stageRules.fielderReaction + (l.reactionExtra ?? 0),
+    const { speed: fielderSpeed, reaction: fielderReaction } = this.fielderStats(l.fielder, l),
       wait = Math.max(0, fielderReaction - l.elapsed);
     for (let dt = 0.05; dt <= 12; dt += 0.05) {
       const t = l.elapsed + dt;
@@ -2293,12 +2372,16 @@ export class BaseballEngine {
       null
     );
   }
+  /** Throw speed of the fielder holding the ball (the pitcher's pickoff throw is fixed). */
+  private armOf(l: LivePlay) {
+    return l.kind === "pickoff" ? l.throwSpeed : this.fielderStats(l.fielder, l).arm;
+  }
   /** Throw flight time; it never lands before the covering fielder reaches the bag. */
   private throwTime(l: LivePlay, base: number) {
     const bag = BASES[base - 1],
       cover = l.defenders[this.receiver(base, l.fielder)],
       eta = Math.max(0, Math.hypot(cover.x - bag.x, cover.z - bag.z) - 0.9) / 8.2;
-    return Math.max(0.22, distance(l.fielderPos, bag) / l.throwSpeed, eta + 0.02);
+    return Math.max(0.22, distance(l.fielderPos, bag) / this.armOf(l), eta + 0.02);
   }
   /**
    * Picks the base to throw to. forceOnly: only a force out (relay). sureOnly: only a throw
@@ -2453,8 +2536,7 @@ export class BaseballEngine {
       return;
     }
     if (l.fieldedAt === null) {
-      const { fielderSpeed } = this.stageRules,
-        fielderReaction = this.stageRules.fielderReaction + (l.reactionExtra ?? 0),
+      const { speed: fielderSpeed, reaction: fielderReaction } = this.fielderStats(l.fielder, l),
         oldPos = { ...l.fielderPos },
         // Before landing: run to the catch point. After it lands: cut off the rolling ball.
         target = !l.ground && !l.bounced ? l.catchPoint : this.interceptPoint(l);
@@ -2838,7 +2920,7 @@ export class BaseballEngine {
     // Each runner (lead runner first) reads the catcher's chase: he takes a base when he
     // beats the pickup-and-throw with time to spare, a second one if the ball got far
     // enough away. A runner never passes the one ahead of him.
-    const chase = this.interceptTime(l, l.defenders[1]) + l.hold;
+    const chase = this.interceptTime(l, l.defenders[1], 1) + l.hold;
     let limit = 5;
     for (const r of [...runners].sort((a, b) => b.from - a.from)) {
       let target = r.from;
@@ -2866,7 +2948,7 @@ export class BaseballEngine {
       at = this.liveBall(l, pickup),
       cover = l.defenders[this.receiver(base, l.fielder)],
       eta = Math.max(0, Math.hypot(cover.x - bag.x, cover.z - bag.z) - 0.9) / 8.2;
-    return Math.max(pickup + Math.max(0.22, distance(at, bag) / l.throwSpeed), eta + 0.02);
+    return Math.max(pickup + Math.max(0.22, distance(at, bag) / this.armOf(l)), eta + 0.02);
   }
   /** E-steal: the pitch reached the catcher, who throws to second. Arrival order decides. */
   private startStealThrow(call: string) {
