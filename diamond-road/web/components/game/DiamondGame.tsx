@@ -1641,6 +1641,86 @@ function BlessingDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
   );
 }
 
+const TUTORIAL_KEY = "diamond-road-tutorial-v1";
+/**
+ * First-match coach. Each step says what to do; the action steps move on by themselves when the
+ * player does it. P skips the whole tutorial (it pauses the game only when no tutorial is shown).
+ */
+const TUTORIAL: { title: string; body: string; wait?: "pitch" | "throw" | "result" }[] = [
+  {
+    title: "Diamond Road에 오신 걸 환영해요",
+    body: "지금은 수비 이닝, 당신은 마운드 위 투수입니다. 오른쪽 투구 플랜을 위에서부터 차례로 따라가 볼게요.",
+  },
+  {
+    title: "① 구종 고르기",
+    body: "숫자키나 투구 플랜의 구종 버튼으로 던질 공을 고르세요. 구종마다 속도와 휘는 방향이 달라요.",
+    wait: "pitch",
+  },
+  {
+    title: "② 강도와 목표, 그리고 투구",
+    body: "투구 강도는 왼쪽일수록 정확하고 오른쪽일수록 빨라요. 스트라이크 존이나 조준판을 클릭(또는 Space)해 던지세요. 공은 노린 곳에서 제구 오차만큼 벗어납니다.",
+    wait: "throw",
+  },
+  {
+    title: "③ 판정 확인",
+    body: "볼·스트라이크·파울·타구 결과가 화면 가운데와 아래 '직전 플레이'에 나와요. 3아웃을 잡으면 공수 교대 버튼이 나타납니다.",
+    wait: "result",
+  },
+  {
+    title: "④ 수비 중 할 수 있는 것",
+    body: "주자가 있으면 F 또는 견제 버튼으로 견제구를 던질 수 있어요. 타구가 나오면 수비수가 자동으로 움직이고, 설정에서 자동 수비를 끄면 WASD로 직접 움직이고 1–4로 송구합니다.",
+  },
+  {
+    title: "⑤ 공격(타격)",
+    body: "공격 이닝에는 투구가 시작되면 흐릿한 빛이 공이 올 범위를 알려 줘요. 노란 원(배트 범위)을 공에 맞추고, 위쪽 게이지의 밝은 금색 구간에서 클릭하세요. 컨택은 넓고 안전, 강타는 좁지만 멀리, 번트는 짧게 굴려요. 1루에 주자가 있으면 E로 도루 사인.",
+  },
+  {
+    title: "⑥ 하루와 성장",
+    body: "경기가 끝나면 밤이 지나고 아침에 훈련(미니게임)으로 능력치를 올려요. 경기 경험치로 새 구종을 사고, 꿈의 구단 스카우트 평가 100을 채우면 프로 무대가 열립니다. 조작법은 언제든 오른쪽 위 ? 버튼에서 다시 볼 수 있어요.",
+  },
+];
+function TutorialCoach({
+  step,
+  onNext,
+  onSkip,
+}: {
+  step: number;
+  onNext: () => void;
+  onSkip: () => void;
+}) {
+  const t = TUTORIAL[step];
+  if (!t) return null;
+  const last = step === TUTORIAL.length - 1;
+  return (
+    <aside className="tutorial-coach" aria-label="튜토리얼">
+      <div className="tutorial-progress" aria-hidden="true">
+        {TUTORIAL.map((_, i) => (
+          <i key={i} className={i <= step ? "on" : ""} />
+        ))}
+      </div>
+      <h3>{t.title}</h3>
+      <p>{t.body}</p>
+      <div className="tutorial-actions">
+        <button className="subtle-button" onClick={onSkip}>
+          건너뛰기 <kbd>P</kbd>
+        </button>
+        {t.wait ? (
+          <span className="tutorial-wait">
+            {t.wait === "pitch"
+              ? "구종을 고르면 다음으로"
+              : t.wait === "throw"
+                ? "공을 던지면 다음으로"
+                : "판정이 나오면 다음으로"}
+          </span>
+        ) : (
+          <button className="primary-button" onClick={onNext}>
+            {last ? "시작하기" : "다음"} <ChevronRight size={16} />
+          </button>
+        )}
+      </div>
+    </aside>
+  );
+}
 export default function DiamondGame() {
   const [engine] = useState(() => new BaseballEngine());
   // Development only: lets browser tests drive the engine. Stripped from production builds.
@@ -1657,7 +1737,21 @@ export default function DiamondGame() {
     [help, setHelp] = useState(false),
     [settings, setSettings] = useState(false),
     [manualPause, setManualPause] = useState(false),
-    [pending, setPending] = useState<Mode | null>(null);
+    [pending, setPending] = useState<Mode | null>(null),
+    [tutorial, setTutorial] = useState<number | null>(null);
+  const tutorialSeen = () => {
+    try {
+      return localStorage.getItem(TUTORIAL_KEY) === "done";
+    } catch {
+      return true;
+    }
+  };
+  const endTutorial = () => {
+    setTutorial(null);
+    try {
+      localStorage.setItem(TUTORIAL_KEY, "done");
+    } catch {}
+  };
   const stage = useRef<HTMLDivElement>(null);
   const audio = useRef<AudioContext | null>(null);
   const [innings, setInnings] = useState(3);
@@ -1696,9 +1790,41 @@ export default function DiamondGame() {
       void audio.current?.close();
     };
   }, [engine]);
+  // First season match: start the coach once.
+  useEffect(() => {
+    if (
+      view === "game" &&
+      s.mode === "match" &&
+      s.career.created &&
+      tutorial === null &&
+      !tutorialSeen()
+    )
+      setTutorial(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, s.mode, s.career.created]);
+  // Action steps move on when the player does the thing.
+  const tutorialStart = useRef({ selected: s.selected });
+  useEffect(() => {
+    tutorialStart.current = { selected: s.selected };
+    // Only when a new step begins.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tutorial]);
+  useEffect(() => {
+    if (tutorial === null) return;
+    const wait = TUTORIAL[tutorial]?.wait;
+    if (wait === "pitch" && s.selected !== tutorialStart.current.selected)
+      setTutorial(tutorial + 1);
+    else if (wait === "throw" && (s.phase === "windup" || s.phase === "flight"))
+      setTutorial(tutorial + 1);
+    // Step ③ begins during the pitch, so the next verdict on screen is that pitch's result.
+    else if (wait === "result" && ["result", "between", "finished"].includes(s.phase))
+      setTutorial(tutorial + 1);
+  }, [tutorial, s.selected, s.phase]);
   useEffect(() => {
     engine.set("paused", view !== "game" || help || settings || !!pending || manualPause);
   }, [view, help, settings, pending, manualPause, engine]);
+  const tutorialRef = useRef(tutorial);
+  tutorialRef.current = tutorial;
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -1715,6 +1841,11 @@ export default function DiamondGame() {
       if (target?.closest?.("[role=slider]") && k.startsWith("arrow")) return;
       engine.keys.add(k);
       if (e.repeat) return;
+      // During the tutorial P skips it; otherwise P / Esc pause the game.
+      if (k === "p" && tutorialRef.current !== null) {
+        endTutorial();
+        return;
+      }
       if (k === "p" || k === "escape") {
         setManualPause((v) => !v);
         return;
@@ -1954,6 +2085,15 @@ export default function DiamondGame() {
               ref={stage}
             >
               <Field engine={engine} />
+              {tutorial !== null && (
+                <TutorialCoach
+                  step={tutorial}
+                  onNext={() =>
+                    tutorial >= TUTORIAL.length - 1 ? endTutorial() : setTutorial(tutorial + 1)
+                  }
+                  onSkip={endTutorial}
+                />
+              )}
               <div className="field-top">
                 <div className="chip-stack">
                   <span className="inning-chip">{batting ? "공격 · 타격" : "수비 · 투구"}</span>
@@ -2402,6 +2542,16 @@ export default function DiamondGame() {
               투구 · 타격 · 주루 · 수비를 한 경기에서 점검합니다.
             </DialogDescription>
           </DialogHeader>
+          <button
+            className="subtle-button tutorial-replay"
+            onClick={() => {
+              setHelp(false);
+              setView("game");
+              setTutorial(0);
+            }}
+          >
+            튜토리얼 다시 보기
+          </button>
           <div className="help-steps">
             <section>
               <h3>투구</h3>
@@ -2489,7 +2639,7 @@ export default function DiamondGame() {
         </DialogContent>
       </Dialog>
       <Dialog open={settings} onOpenChange={setSettings}>
-        <DialogContent>
+        <DialogContent className="settings-dialog">
           <DialogHeader>
             <DialogTitle>경기 설정</DialogTitle>
             <DialogDescription>나에게 맞는 속도와 조작으로 플레이하세요.</DialogDescription>
@@ -2573,6 +2723,30 @@ export default function DiamondGame() {
           >
             선수 처음부터 다시 시작
           </button>
+          <div className="dev-mode">
+            <h4>개발자 모드</h4>
+            <p>테스트용입니다. 선수 기록에 바로 저장됩니다.</p>
+            <div>
+              <button
+                className="subtle-button"
+                onClick={() => {
+                  engine.devMaxStats();
+                  toast.success("모든 능력치를 99로 올렸습니다");
+                }}
+              >
+                모든 능력치 최대
+              </button>
+              <button
+                className="subtle-button"
+                onClick={() => {
+                  engine.devUnlockPitches();
+                  toast.success(`${PITCHES.length}개 구종을 모두 열었습니다`);
+                }}
+              >
+                모든 구종 열기
+              </button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
       <Dialog

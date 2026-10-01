@@ -2871,6 +2871,23 @@ export class BaseballEngine {
     this.emit();
     return { ok: true, message: "선수 등록 완료" };
   }
+  /** Developer mode: every stat to the 99 cap. */
+  devMaxStats() {
+    const c = this.state.career;
+    for (const k of Object.keys(c.stats) as StatKey[]) c.stats[k] = 99;
+    c.history = ["개발자 모드 · 모든 능력치 최대", ...c.history].slice(0, 12);
+    this.persist();
+    this.emit();
+  }
+  /** Developer mode: learn every pitch without spending XP. */
+  devUnlockPitches() {
+    const c = this.state.career;
+    c.pitches = PITCHES.map((p) => p.id);
+    if (!c.blessing) c.blessing = "none";
+    c.history = ["개발자 모드 · 모든 구종 열기", ...c.history].slice(0, 12);
+    this.persist();
+    this.emit();
+  }
   resetCareer() {
     this.state.career = newCareer();
     this.persist();
