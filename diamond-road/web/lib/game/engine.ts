@@ -368,6 +368,15 @@ export const HIDDEN_UNLOCKS: { id: PitchId; test: (stats: Career["stats"]) => bo
   { id: "knuckle", test: (st) => st.velocity <= STAT_BASE && st.movement >= 75 },
 ];
 export type Weather = "clear" | "rain";
+/** Rain on/off from the settings, remembered in this browser (default on). */
+const RAIN_KEY = "diamond-road-rain";
+export const rainSetting = () => {
+  try {
+    return typeof localStorage === "undefined" || localStorage.getItem(RAIN_KEY) !== "off";
+  } catch {
+    return true;
+  }
+};
 /**
  * The day's weather (fixed per day, so the daily screen can forecast it). Day 1 — the tutorial
  * match — is always clear; after that rain comes about RULES.rainChance of the days.
@@ -1633,6 +1642,8 @@ export type GameState = {
   coin: { result: "go" | "cancel" } | null;
   /** Big centre-screen callout ("폭투", "풀카운트"); `id` changes each time one fires. */
   flash: { text: string; tone: string; id: number } | null;
+  /** Settings: rain may fall (off = always clear). Kept in this browser. */
+  rainOn: boolean;
   /** The match was called off by rain. */
   rainedOut: boolean;
   /** Limit break: uses this match, and armed for the very next pitch. */
@@ -1705,7 +1716,8 @@ const initial = (career: Career, mode: Mode = "match", maxInnings = 3): GameStat
   lastMlb: [],
   cheerUsed: false,
   cheerInning: 0,
-  weather: mode === "match" ? weatherOf(career) : "clear",
+  weather: mode === "match" && rainSetting() ? weatherOf(career) : "clear",
+  rainOn: rainSetting(),
   coin: null,
   rainedOut: false,
   flash: null,
@@ -1995,7 +2007,8 @@ export class BaseballEngine {
         this.state.career = clean;
         this.state.energy = clean.energy;
         // The match being prepared belongs to the loaded day: its weather too.
-        if (this.state.mode === "match" && !this.matchActive) this.state.weather = weatherOf(clean);
+        if (this.state.mode === "match" && !this.matchActive)
+          this.state.weather = this.state.rainOn ? weatherOf(clean) : "clear";
         if (this.checkHiddenPitches()) this.persist();
       }
     } catch {
@@ -2029,6 +2042,9 @@ export class BaseballEngine {
     this.state.autoField = previous.autoField;
     this.state.autoCamera = previous.autoCamera;
     this.state.nameTags = previous.nameTags;
+    // Rain setting carries over; with rain off every match is clear.
+    this.state.rainOn = previous.rainOn;
+    if (!previous.rainOn) this.state.weather = "clear";
     this.state.hiddenUnlock = previous.hiddenUnlock;
     this.recorded = false;
     this.matchStrikeouts = 0;
@@ -3935,6 +3951,32 @@ export class BaseballEngine {
     c.history = [`개발자 모드 · ${gaugeName(c)} 99`, ...c.history].slice(0, 12);
     this.persist();
     this.emit();
+  }
+  /** Today's weather as the daily screen forecasts it (always clear with rain turned off). */
+  get forecast(): Weather {
+    return this.state.rainOn ? weatherOf(this.state.career) : "clear";
+  }
+  /** Settings: turn rain on or off. Off also stops the rain in the current match. */
+  setRain(on: boolean) {
+    const s = this.state;
+    s.rainOn = on;
+    try {
+      if (typeof localStorage !== "undefined") localStorage.setItem(RAIN_KEY, on ? "on" : "off");
+    } catch {}
+    if (!on) {
+      s.weather = "clear";
+      s.coin = null;
+    } else if (s.mode === "match" && !this.matchActive) s.weather = weatherOf(s.career);
+    this.emit();
+  }
+  /** Developer mode: make it rain on this match now (a new match if the last one is over). */
+  devRain() {
+    if (this.state.mode !== "match" || this.state.phase === "finished") this.start("match");
+    const s = this.state;
+    s.weather = "rain";
+    this.log("개발자 모드 · 비가 내리기 시작했다");
+    this.emit();
+    return true;
   }
   /** Rain is falling on this season match. */
   get raining() {

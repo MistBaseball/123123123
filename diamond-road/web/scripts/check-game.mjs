@@ -2317,4 +2317,48 @@ check("MLB rosters use English names; Korean clubs keep Korean ones", () => {
   assert(k.lineup.every((p) => /^[가-힣]{3}$/.test(p.name)));
   assert(MLB_TEAMS.every((t) => /^[A-Za-z' ]+$/.test(t.name + t.city + t.scout)));
 });
+check(
+  "Rain setting: off means always clear (and stops the rain now); dev button makes it rain",
+  () => {
+    const store = {};
+    globalThis.localStorage = {
+      getItem: (k) => store[k] ?? null,
+      setItem: (k, v) => (store[k] = String(v)),
+    };
+    try {
+      const rainyDay = Array.from({ length: 400 }, (_, i) => i + 2).find(
+        (day) => weatherOf({ ...newCareer(), day }) === "rain",
+      );
+      const g = new BaseballEngine(Object.assign(newCareer(), { day: rainyDay }));
+      g.start("match");
+      assert(g.raining && g.forecast === "rain");
+      g.setRain(false);
+      assert(!g.raining, "the rain stops at once");
+      assert.equal(g.forecast, "clear");
+      g.start("match");
+      assert(!g.raining, "and stays off for the next matches");
+      const again = new BaseballEngine(Object.assign(newCareer(), { day: rainyDay }));
+      again.start("match");
+      assert(!again.raining && !again.state.rainOn, "remembered in this browser");
+      // Dev: rain now, even with rain switched off.
+      assert(again.devRain());
+      assert(again.raining);
+      Object.assign(again.state, {
+        inning: 1,
+        half: "bottom",
+        outs: 3,
+        score: [0, 1],
+        phase: "result",
+      });
+      again.next();
+      assert(again.state.coin, "the coin toss comes with it");
+      again.setRain(true);
+      const on = new BaseballEngine(Object.assign(newCareer(), { day: rainyDay }));
+      on.start("match");
+      assert(on.raining);
+    } finally {
+      delete globalThis.localStorage;
+    }
+  },
+);
 console.log(`\n${passed} gameplay checks passed.`);

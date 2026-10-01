@@ -1062,7 +1062,7 @@ function LifeView({
           <span>오후 · 시즌 경기</span>
           <strong>{live ? "경기 중" : `${matchTeams(c)[1]} vs ${matchTeams(c)[0]}`}</strong>
           <small>
-            {weatherOf(c) === "rain"
+            {engine.forecast === "rain"
               ? "🌧 비 예보 · 제구·구속·주루 저하, 수비 실수, 이닝마다 우천취소 판정"
               : "☀ 맑음 · 삼진·안타·승리로 XP"}
           </small>
@@ -3083,7 +3083,7 @@ export default function DiamondGame() {
             {s.career.stage === "pro" ? "프로 구장" : "미산 야구장"}{" "}
             <span>
               15:00 ·{" "}
-              {(view === "game" && s.mode === "match" ? s.weather : weatherOf(s.career)) === "rain"
+              {(view === "game" && s.mode === "match" ? s.weather : engine.forecast) === "rain"
                 ? "🌧 비"
                 : "☀ 맑음"}
             </span>
@@ -3856,6 +3856,17 @@ export default function DiamondGame() {
                 <button
                   className="subtle-button"
                   onClick={() => {
+                    engine.devRain();
+                    setSettings(false);
+                    setView("game");
+                    toast.success("🌧 이번 경기에 비가 내립니다");
+                  }}
+                >
+                  🌧 지금 비 오게
+                </button>
+                <button
+                  className="subtle-button"
+                  onClick={() => {
                     engine.devGauge99();
                     toast.success(
                       tierOf(s.career) === "first"
@@ -3926,6 +3937,21 @@ export default function DiamondGame() {
               id="auto-camera"
               checked={s.autoCamera}
               onCheckedChange={(v) => engine.set("autoCamera", v)}
+            />
+          </div>
+          <div className="settings-row">
+            <label htmlFor="rain-on">
+              비 날씨<small>끄면 항상 맑음 · 지금 내리는 비도 그침</small>
+            </label>
+            <Switch
+              id="rain-on"
+              checked={s.rainOn}
+              onCheckedChange={(v) => {
+                engine.setRain(v);
+                toast.success(
+                  v ? "비 날씨를 켰습니다 (약 10% 확률)" : "비 날씨를 껐습니다 · 항상 맑음",
+                );
+              }}
             />
           </div>
           <div className="settings-row">
