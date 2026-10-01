@@ -4,6 +4,7 @@ import {
   BASES,
   DEFENSE,
   pitchData,
+  playerLabel,
   V,
   batReach,
   clamp,
@@ -13,38 +14,22 @@ import {
   type Vec,
 } from "./engine";
 import * as tex from "./textures";
-/** Short position names for the fielder tags (DEFENSE order). */
-const TAG_POS = ["투수", "포수", "1루", "2루", "유격", "3루", "좌익", "중견", "우익"];
-/** Canvas texture for a fielder's name tag: position chip + name, team-coloured. */
-function nameTag(pos: string, name: string, ours: boolean) {
+/** Small white "[별호] 이름" text for a fielder's head: no box, only a soft shadow. */
+function nameTag(label: string) {
   const c = document.createElement("canvas"),
     g = c.getContext("2d")!,
-    font = '"Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif',
-    h = 56;
-  g.font = `700 30px ${font}`;
-  const nameW = g.measureText(name).width;
-  g.font = `600 24px ${font}`;
-  const posW = g.measureText(pos).width;
-  c.width = Math.ceil(posW + nameW + 54);
+    font = '700 30px "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif',
+    h = 44;
+  g.font = font;
+  c.width = Math.ceil(g.measureText(label).width + 16);
   c.height = h;
-  g.fillStyle = "rgba(10, 18, 24, 0.78)";
-  g.beginPath();
-  g.roundRect(1, 1, c.width - 2, h - 2, 12);
-  g.fill();
-  g.strokeStyle = ours ? "rgba(232, 182, 90, 0.85)" : "rgba(133, 189, 228, 0.85)";
-  g.lineWidth = 2;
-  g.stroke();
-  g.fillStyle = ours ? "#e8b65a" : "#85bde4";
-  g.beginPath();
-  g.roundRect(8, 9, posW + 18, h - 18, 8);
-  g.fill();
+  g.font = font;
   g.textBaseline = "middle";
-  g.fillStyle = "#0b1418";
-  g.font = `600 24px ${font}`;
-  g.fillText(pos, 17, h / 2 + 1);
-  g.fillStyle = "#f4f1e6";
-  g.font = `700 30px ${font}`;
-  g.fillText(name, posW + 36, h / 2 + 1);
+  g.textAlign = "center";
+  g.shadowColor = "rgba(0, 0, 0, 0.85)";
+  g.shadowBlur = 6;
+  g.fillStyle = "#ffffff";
+  g.fillText(label, c.width / 2, h / 2 + 1);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 4;
@@ -159,7 +144,7 @@ export class BaseballField {
       const sprite = new THREE.Sprite(
         new THREE.SpriteMaterial({ transparent: true, depthTest: false, sizeAttenuation: false }),
       );
-      sprite.position.set(0, 2.35, 0);
+      sprite.position.set(0, 2.2, 0);
       sprite.renderOrder = 10;
       sprite.visible = false;
       fig.root.add(sprite);
@@ -1150,15 +1135,15 @@ export class BaseballField {
     };
     // Name tags: position + name of whoever is on defense now (our team or the rival school).
     const fielders = this.engine.fielders,
-      ours = !this.engine.batting,
-      tagH = narrow ? 0.036 : 0.03;
+      tagH = narrow ? 0.026 : 0.02;
     this.tags.forEach((t, i) => {
-      const text = `${TAG_POS[i]} ${fielders[i]?.name ?? ""}|${ours ? 1 : 0}`;
+      const p = fielders[i],
+        text = p ? playerLabel(p) : "";
       if (t.text !== text) {
         t.text = text;
         const m = t.sprite.material;
         m.map?.dispose();
-        m.map = nameTag(TAG_POS[i], fielders[i]?.name ?? "", ours);
+        m.map = nameTag(text);
         m.needsUpdate = true;
         const img = m.map.image as HTMLCanvasElement;
         t.sprite.userData.aspect = img.width / img.height;
