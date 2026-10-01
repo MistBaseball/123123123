@@ -117,12 +117,14 @@ export class BaseballField {
       this.scene.add(runner.root);
       this.runners.push(runner);
     }
+    // Leather ball with red stitches; a faint glow keeps it readable against the crowd.
     this.ball = new THREE.Mesh(
-      new THREE.SphereGeometry(0.075, 12, 10),
+      new THREE.SphereGeometry(0.075, 24, 16),
       new THREE.MeshStandardMaterial({
-        color: "#fffde5",
-        emissive: "#b7a97b",
-        emissiveIntensity: 0.5,
+        map: tex.ballTexture(),
+        roughness: 0.45,
+        emissive: "#8f8668",
+        emissiveIntensity: 0.35,
       }),
     );
     this.ball.castShadow = true;
@@ -225,6 +227,15 @@ export class BaseballField {
     this.renderer.domElement.addEventListener("pointermove", this.pointerMove);
     this.renderer.domElement.addEventListener("pointerdown", this.pointerDown);
     this.update(0);
+    // Development only: lets browser tests read draw-call counts. Stripped from builds.
+    if (import.meta.env.DEV) (window as unknown as { __field?: BaseballField }).__field = this;
+  }
+  /** Draw calls and triangles of the last frame (performance check). */
+  get stats() {
+    return {
+      calls: this.renderer.info.render.calls,
+      triangles: this.renderer.info.render.triangles,
+    };
   }
   private material(color: string) {
     if (!this.materials.has(color))
@@ -552,7 +563,7 @@ export class BaseballField {
       bowl(112, 12, 3.6, -Math.PI / 4 - 0.02, Math.PI / 2 + 0.04),
     ];
     // Crowd: seated fans as instanced capsules in team-ish colours, most seats filled.
-    const fanGeometry = new THREE.CapsuleGeometry(0.17, 0.3, 3, 8),
+    const fanGeometry = new THREE.CylinderGeometry(0.15, 0.19, 0.62, 6),
       fans = new THREE.InstancedMesh(
         fanGeometry,
         new THREE.MeshStandardMaterial({ roughness: 0.9 }),
@@ -593,7 +604,7 @@ export class BaseballField {
     fans.count = count;
     this.scene.add(fans);
     // Behind-home sign on the backstop padding.
-    this.label("HANEUL BASEBALL", "#ead7a8", "#1f4038", 7, 0.95, 0, 0.75, -25.8, 0);
+    this.label("HANEUL BASEBALL", "#ead7a8", "#1f4038", 5.2, 1.3, 0, 0.75, -25.5, 0);
     // Scoreboard above the centre-field bleachers.
     this.box(0, 16, 128, 30, 13, 1.2, "#16252c");
     this.label("DIAMOND ROAD", "#f2c778", "#16252c", 26, 5, 0, 18.8, 127.3);
@@ -921,6 +932,7 @@ export class BaseballField {
       }
     });
     this.ball.position.set(s.ball.x, s.ball.y, s.ball.z);
+    if (s.phase === "flight" || s.phase === "inplay") this.ball.rotation.x += dt * 30;
     this.ball.visible = s.phase === "flight" || s.phase === "inplay" || s.phase === "result";
     const ballDistance = this.camera.position.distanceTo(this.ball.position);
     this.ball.scale.setScalar(Math.max(1, ballDistance / 18));
