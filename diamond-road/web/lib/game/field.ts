@@ -14,22 +14,25 @@ import {
   type Vec,
 } from "./engine";
 import * as tex from "./textures";
-/** Small white "[별호] 이름" text for a fielder's head: no box, only a soft shadow. */
+/** White "[별호] 이름" text for a fielder's head: no box, a dark outline keeps it readable. */
 function nameTag(label: string) {
   const c = document.createElement("canvas"),
     g = c.getContext("2d")!,
-    font = '700 30px "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif',
-    h = 44;
+    // Drawn at double size so the text stays sharp when the tag is shown large.
+    font = '800 60px "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif',
+    h = 84;
   g.font = font;
-  c.width = Math.ceil(g.measureText(label).width + 16);
+  c.width = Math.ceil(g.measureText(label).width + 28);
   c.height = h;
   g.font = font;
   g.textBaseline = "middle";
   g.textAlign = "center";
-  g.shadowColor = "rgba(0, 0, 0, 0.85)";
-  g.shadowBlur = 6;
+  g.lineJoin = "round";
+  g.lineWidth = 10;
+  g.strokeStyle = "rgba(8, 14, 18, 0.9)";
+  g.strokeText(label, c.width / 2, h / 2 + 2);
   g.fillStyle = "#ffffff";
-  g.fillText(label, c.width / 2, h / 2 + 1);
+  g.fillText(label, c.width / 2, h / 2 + 2);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 4;
@@ -1137,7 +1140,7 @@ export class BaseballField {
     const fielders = this.engine.fielders,
       // Far cameras (broadcast, ball, top) get larger names; close ones keep them small.
       far = cam === "broadcast" || cam === "ball" || cam === "top",
-      tagH = (narrow ? 1.3 : 1) * (far ? 0.032 : 0.02);
+      tagH = (narrow ? 1.3 : 1) * (far ? 0.044 : 0.026);
     this.tags.forEach((t, i) => {
       const p = fielders[i],
         text = p ? playerLabel(p) : "";
