@@ -21,6 +21,8 @@ type Figure = {
   legL: THREE.Group;
   legR: THREE.Group;
   bat?: THREE.Mesh;
+  /** Jersey texture, flipped back when the model is mirrored so the number still reads. */
+  jersey: THREE.Texture;
 };
 export class BaseballField {
   private renderer: THREE.WebGLRenderer;
@@ -545,56 +547,142 @@ export class BaseballField {
       this.box(x, 7 + (i % 4) * 3, z, 9, 14 + (i % 4) * 6, 9, i % 2 ? "#88a4a4" : "#789798");
     }
   }
+  private figureCount = 0;
+  /**
+   * A 1.85 m ballplayer facing local −Z. Joints (shoulders, hips) are groups so the animation
+   * code can swing arms and legs; everything else hangs off the root.
+   */
   private figure(shirt: string, cap: string, withBat = false): Figure {
-    const root = new THREE.Group();
-    const torso = this.mesh(
-      new THREE.CylinderGeometry(0.25, 0.2, 0.62, 8),
-      shirt,
-      0,
-      1.12,
-      0,
-      root,
-    );
-    torso.castShadow = true;
-    this.mesh(new THREE.SphereGeometry(0.19, 10, 8), "#d9ac86", 0, 1.67, 0, root);
-    this.mesh(new THREE.CylinderGeometry(0.21, 0.21, 0.12, 10), cap, 0, 1.84, 0, root);
-    this.box(0, 1.81, -0.16, 0.26, 0.035, 0.22, cap, root);
-    this.box(0, 0.86, 0, 0.4, 0.07, 0.32, cap, root);
-    const limb = (x: number, y: number, length: number, color: string) => {
-      const g = new THREE.Group();
-      g.position.set(x, y, 0);
-      const m = this.mesh(
-        new THREE.CylinderGeometry(0.072, 0.065, length, 7),
-        color,
+    const root = new THREE.Group(),
+      n = this.figureCount++,
+      skins = ["#e0b28c", "#c99872", "#a8754f", "#e8c09c"],
+      skin = new THREE.MeshStandardMaterial({ color: skins[n % skins.length], roughness: 0.55 }),
+      cloth = (color: string) => new THREE.MeshStandardMaterial({ color, roughness: 0.85 }),
+      pants = cloth(shirt === "#eeeade" ? "#ece9df" : "#c9c7bf"),
+      socks = cloth(cap),
+      shoes = new THREE.MeshStandardMaterial({ color: "#1b1c1e", roughness: 0.5 }),
+      part = (
+        geo: THREE.BufferGeometry,
+        mat: THREE.Material,
+        x: number,
+        y: number,
+        z: number,
+        parent: THREE.Object3D = root,
+      ) => {
+        const m = new THREE.Mesh(geo, mat);
+        m.position.set(x, y, z);
+        m.castShadow = true;
+        m.receiveShadow = true;
+        parent.add(m);
+        return m;
+      };
+    // Torso: jersey with the number on the back (the texture's centre faces +Z after the turn).
+    const jerseyMat = new THREE.MeshStandardMaterial({
+      map: tex.jersey(shirt, cap, String([18, 7, 24, 3, 11, 52, 9, 31, 5, 27][n % 10])),
+      roughness: 0.82,
+    });
+    const torso = part(new THREE.CylinderGeometry(0.235, 0.185, 0.5, 20), jerseyMat, 0, 1.31, 0);
+    torso.rotation.y = Math.PI;
+    // Shoulders and sleeves are plain shirt cloth (the numbered texture is only for the torso).
+    const sleeve = cloth(shirt);
+    for (const x of [-0.235, 0.235])
+      part(new THREE.SphereGeometry(0.105, 14, 10), sleeve, x, 1.49, 0);
+    part(new THREE.CylinderGeometry(0.178, 0.178, 0.05, 20), cloth("#24262a"), 0, 1.07, 0);
+    const hips = part(new THREE.CylinderGeometry(0.18, 0.165, 0.2, 20), pants, 0, 0.96, 0);
+    hips.scale.z = 0.85;
+    part(new THREE.CylinderGeometry(0.055, 0.065, 0.1, 12), skin, 0, 1.6, 0);
+    const head = part(new THREE.SphereGeometry(0.115, 20, 16), skin, 0, 1.73, 0);
+    head.scale.set(0.92, 1.12, 1);
+    // Ears and a hint of a nose so the head reads as a face from the side and front.
+    for (const x of [-0.105, 0.105])
+      part(new THREE.SphereGeometry(0.025, 8, 6), skin, x, 1.72, 0.005);
+    part(new THREE.SphereGeometry(0.022, 8, 6), skin, 0, 1.71, -0.112);
+    if (withBat) {
+      // Batting helmet: glossy shell with an ear flap and a short bill.
+      const helmet = new THREE.MeshStandardMaterial({
+        color: cap,
+        roughness: 0.28,
+        metalness: 0.15,
+      });
+      part(
+        new THREE.SphereGeometry(0.135, 20, 12, 0, Math.PI * 2, 0, Math.PI / 1.85),
+        helmet,
         0,
-        -length / 2,
-        0,
-        g,
+        1.745,
+        0.005,
       );
-      m.castShadow = true;
+      const flap = part(new THREE.CylinderGeometry(0.06, 0.06, 0.03, 14), helmet, -0.12, 1.69, 0);
+      flap.rotation.z = Math.PI / 2;
+      part(new THREE.BoxGeometry(0.2, 0.014, 0.08), helmet, 0, 1.765, -0.15);
+    } else {
+      const capMat = cloth(cap);
+      part(
+        new THREE.SphereGeometry(0.124, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2),
+        capMat,
+        0,
+        1.765,
+        0,
+      );
+      const bill = part(
+        new THREE.CylinderGeometry(0.1, 0.1, 0.012, 20, 1, false, 0, Math.PI),
+        capMat,
+        0,
+        1.77,
+        -0.07,
+      );
+      bill.rotation.y = Math.PI / 2;
+      bill.scale.z = 1.25;
+    }
+    // Arms hang from the shoulder joint: sleeve, forearm, hand.
+    const arm = (x: number) => {
+      const g = new THREE.Group();
+      g.position.set(x, 1.47, 0);
       root.add(g);
+      part(new THREE.CapsuleGeometry(0.058, 0.14, 4, 10), sleeve, 0, -0.11, 0, g);
+      part(new THREE.CapsuleGeometry(0.045, 0.2, 4, 10), skin, 0, -0.35, 0, g);
+      part(new THREE.SphereGeometry(0.048, 10, 8), skin, 0, -0.52, 0, g);
       return g;
     };
-    const left = limb(-0.29, 1.38, 0.57, shirt),
-      right = limb(0.29, 1.38, 0.57, shirt),
-      legL = limb(-0.11, 0.84, 0.77, "#e2ded1"),
-      legR = limb(0.11, 0.84, 0.77, "#e2ded1");
-    this.box(0, -0.75, -0.07, 0.16, 0.13, 0.3, cap, legL);
-    this.box(0, -0.75, -0.07, 0.16, 0.13, 0.3, cap, legR);
-    this.mesh(new THREE.SphereGeometry(0.13, 8, 6), "#8a562f", 0, -0.57, 0, left);
+    const left = arm(-0.27),
+      right = arm(0.27);
+    // Glove on the left hand: a deep brown leather pocket.
+    const glove = part(
+      new THREE.SphereGeometry(0.1, 14, 10),
+      new THREE.MeshStandardMaterial({ color: "#7a4a26", roughness: 0.6 }),
+      0,
+      -0.56,
+      -0.02,
+      left,
+    );
+    glove.scale.set(0.75, 1.15, 0.55);
+    // Legs swing from the hip: pants to below the knee, stirrup socks, cleats pointing forward.
+    const leg = (x: number) => {
+      const g = new THREE.Group();
+      g.position.set(x, 0.93, 0);
+      root.add(g);
+      part(new THREE.CapsuleGeometry(0.085, 0.36, 4, 10), pants, 0, -0.25, 0, g);
+      part(new THREE.CapsuleGeometry(0.062, 0.3, 4, 10), socks, 0, -0.64, 0, g);
+      part(new THREE.BoxGeometry(0.11, 0.08, 0.27), shoes, 0, -0.88, -0.05, g);
+      return g;
+    };
+    const legL = leg(-0.105),
+      legR = leg(0.105);
     let bat: THREE.Mesh | undefined;
     if (withBat) {
-      bat = this.mesh(
-        new THREE.CylinderGeometry(0.043, 0.025, 1.05, 8),
-        "#dcb785",
+      // Ash bat: thin handle widening to the barrel, with a knob.
+      const wood = new THREE.MeshStandardMaterial({ color: "#d8b07a", roughness: 0.45 });
+      bat = part(
+        new THREE.CylinderGeometry(0.034, 0.014, 0.86, 14),
+        wood,
         0.16,
         -0.25,
         -0.25,
         right,
       );
       bat.rotation.z = -0.65;
+      part(new THREE.CylinderGeometry(0.022, 0.022, 0.02, 12), wood, 0, -0.43, 0, bat);
     }
-    return { root, left, right, legL, legR, bat };
+    return { root, left, right, legL, legR, bat, jersey: jerseyMat.map! };
   }
   private pointerMove = (e: PointerEvent) => {
     this.aimFromPointer(e);
@@ -695,6 +783,7 @@ export class BaseballField {
     this.batter.root.rotation.y = (hand * Math.PI) / 2;
     // Left-handed batters are the mirror image: bat and hands on the other side.
     this.batter.root.scale.x = hand;
+    this.batter.jersey.repeat.x = hand;
     this.batter.left.rotation.x = -0.9;
     this.batter.right.rotation.x = -1.8;
     this.batter.right.rotation.z = -0.5;
