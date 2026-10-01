@@ -17,6 +17,14 @@ type Patch = { version: string; date: string; title: string; items: string[] };
 
 export const PATCHES: Patch[] = [
   {
+    version: "v11.1",
+    date: "10/02",
+    title: "명예의 전당 연결",
+    items: [
+      "명예의 전당이 랭킹 서버와 연결되지 않던 문제를 API 연결로 해결했습니다. 이제 친구들의 기록이 함께 보입니다.",
+    ],
+  },
+  {
     version: "v11",
     date: "10/02",
     title: "명예의 전당",
@@ -37,12 +45,6 @@ export const PATCHES: Patch[] = [
       "우리 타자들의 타구 질이 단계별로 조금씩 좋아졌습니다(2군에서 가장 많이).",
       "점수가 더 나서 무승부가 줄었습니다.",
     ],
-  },
-  {
-    version: "v10.4",
-    date: "10/02",
-    title: "패치노트",
-    items: ["로고 옆 버튼으로 지금까지의 업데이트 내역을 버전별로 볼 수 있습니다."],
   },
   {
     version: "v10.3",
