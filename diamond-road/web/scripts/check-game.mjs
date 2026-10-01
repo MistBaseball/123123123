@@ -384,7 +384,8 @@ check("Pitch movement ranges match the whole actual trajectory at every tested r
           y = ball.y - (f.start.y + f.velocity.y * t - 4.905 * t * t);
         assert(x >= m.minX - 1e-8 && x <= m.maxX + 1e-8);
         assert(y >= m.minY - 1e-8 && y <= m.maxY + 1e-8);
-        if (i === 50) {
+        // Wobbling pitches (palmball) sit anywhere inside the box mid-flight.
+        if (i === 50 && !pitchData(p.id).flutter) {
           assert(Math.abs(x - m.x) < 1e-8);
           assert(Math.abs(y - m.y) < 1e-8);
         }
@@ -1196,10 +1197,18 @@ check("L Pro mode is harder on every axis, still plays complete games", () => {
   }
 });
 check(
-  "M Ten data-driven pitches: all selectable, each with its own speed, break, control, stamina",
+  "M Data-driven pitches: all selectable, each with its own speed, break, control, stamina",
   () => {
-    assert.equal(PITCHES.length, 10);
-    assert.equal(new Set(PITCHES.map((p) => p.key)).size, 10, "unique number keys 1–0");
+    assert.equal(PITCHES.length, 13);
+    assert.equal(new Set(PITCHES.map((p) => p.key)).size, 13, "unique keys 1–0, =, [, ]");
+    // The three newer pitches keep their character.
+    assert(
+      pitchMovement("screwball", 75).x < 0 && pitchMovement("slider", 75).x > 0,
+      "screwball breaks the other way",
+    );
+    assert(pitchData("screwball").stamina > 1.2, "screwball is hard on the arm");
+    assert(pitchData("palmball").soft > 0 && pitchData("palmball").flutter > 0);
+    assert(pitchData("eephus").delta <= -55 && pitchData("eephus").stamina < 1);
     for (const id of ["twoseam", "sinker", "forkball", "sweeper"]) assert(pitchData(id).cost > 0);
     for (const p of PITCHES) {
       const g = new BaseballEngine(allPitches(), () => 0.5);
@@ -1209,7 +1218,8 @@ check(
       // rng 0.5 gives a fixed speed noise; the gap to the fastball is the data's delta.
       const fast = new BaseballEngine(allPitches(), () => 0.5);
       fast.throwAt(0, 0.95);
-      assert(Math.abs(g.state.flight.speed - fast.state.flight.speed - p.delta) < 1e-9);
+      if (p.maxSpeed) assert(g.state.flight.speed <= p.maxSpeed, `${p.name} stays slow`);
+      else assert(Math.abs(g.state.flight.speed - fast.state.flight.speed - p.delta) < 1e-9);
     }
     // Control: harder pitches miss the target by more (same random draws).
     const miss = (id) => {
@@ -1421,6 +1431,8 @@ check("Stat caps: 100 in high school, 200 in the pros, where the fastball reache
   hs.state.career.energy = 100;
   hs.state.actions = 5;
   assert(!hs.train("bullpen", 1).ok, "high-school cap is 100");
+  hs.devGauge99();
+  assert.equal(hs.state.career.scout, 99, "dev: scout gauge to 99");
   hs.devSetStats(100);
   assert(Object.values(hs.state.career.stats).every((v) => v === 100));
   assert.equal(statCapOf(hs.state.career), 100, "the 100 button keeps the high-school cap");
@@ -1601,7 +1613,7 @@ check(
   },
 );
 check("Hidden knuckleball: secret unlock at minimum velocity and movement 75+", () => {
-  assert.equal(PITCHES.length, 10, "the shop list stays at ten");
+  assert.equal(PITCHES.length, 13, "the shop list (knuckleball stays out of it)");
   assert(!PITCHES.some((p) => p.id === "knuckle") && HIDDEN_PITCHES[0].id === "knuckle");
   assert.equal(new Set(ALL_PITCHES.map((p) => p.key)).size, ALL_PITCHES.length, "unique keys");
   const at = (velocity, movement) => {

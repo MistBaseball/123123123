@@ -104,6 +104,9 @@ const keyOf = (e: KeyboardEvent) => {
   if (digit) return digit[1];
   if (e.code === "Space") return " ";
   if (e.code === "Minus" || e.code === "NumpadSubtract") return "-";
+  if (e.code === "Equal") return "=";
+  if (e.code === "BracketLeft") return "[";
+  if (e.code === "BracketRight") return "]";
   return e.key.toLowerCase();
 };
 const cameras: { id: Camera; label: string }[] = [
@@ -1921,7 +1924,7 @@ function BlessingDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
           </DialogTitle>
           <DialogDescription>
             고교 마지막 시즌의 첫날. 마운드에 선 당신에게 신이 구종 하나를 선물합니다. 포심·슬라이더
-            말고 여덟 구종 가운데 무엇이 손끝에 깃들지는 하늘만이 압니다.
+            말고 {BLESSINGS.length}개 구종 가운데 무엇이 손끝에 깃들지는 하늘만이 압니다.
           </DialogDescription>
         </DialogHeader>
         <div className={`blessing-reel ${phase}`}>
@@ -2072,7 +2075,7 @@ const TOURS: Record<TourTrack, TourStep[]> = {
     },
     {
       title: "① 구종 고르기",
-      body: "숫자키나 버튼으로 구종을 고르세요. 버튼의 km/h는 지금 강도로 던졌을 때의 구속이에요. 다른 구종을 하나 골라 보세요.",
+      body: "숫자키(새 구종은 = [ ] 키)나 버튼으로 구종을 고르세요. 버튼의 km/h는 지금 강도로 던졌을 때의 구속이에요. 다른 구종을 하나 골라 보세요.",
       target: ".pp-pitches",
       wait: "pitch",
     },
@@ -2314,6 +2317,13 @@ function TutorialCoach({
     document.body,
   );
 }
+/** "10/01 19:30" style label of this build, shown in the settings. */
+const BUILD_LABEL = (() => {
+  const d = new Date(__BUILD__);
+  return Number.isNaN(d.getTime())
+    ? "개발용"
+    : `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+})();
 /** Developer-mode password (a simple lock for testers, not real security). */
 const DEV_CODE = "1324";
 export default function DiamondGame() {
@@ -2427,6 +2437,36 @@ export default function DiamondGame() {
       void audio.current?.close();
     };
   }, [engine]);
+  // A tab left open keeps running the old version. Every 2 minutes, compare this page's script
+  // with the one now on the site and offer a reload when a new build is out.
+  useEffect(() => {
+    if (import.meta.env.DEV) return;
+    const mine = document
+      .querySelector<HTMLScriptElement>('script[src*="assets/index-"]')
+      ?.src.split("/")
+      .pop();
+    if (!mine) return;
+    let told = false;
+    const check = async () => {
+      try {
+        const html = await (
+          await fetch(`index.html?v=${Date.now()}`, { cache: "no-store" })
+        ).text();
+        const live = /assets\/(index-[^"']+\.js)/.exec(html)?.[1];
+        if (live && live !== mine && !told) {
+          told = true;
+          toast("새 버전이 올라왔어요", {
+            description: "새로고침하면 최신 버전으로 플레이합니다 (선수 기록은 그대로).",
+            duration: Infinity,
+            action: { label: "새로고침", onClick: () => location.reload() },
+          });
+        }
+      } catch {}
+    };
+    const id = window.setInterval(check, 120000);
+    void check();
+    return () => window.clearInterval(id);
+  }, []);
   // Start each tour the first time its moment comes: the daily screen once the player exists,
   // the mound and the batter's box in the first inning of a season match.
   useEffect(() => {
@@ -3057,7 +3097,7 @@ export default function DiamondGame() {
                   <h3>
                     <i>1</i> 구종
                     <small>
-                      숫자키로 선택 · 보유 {regularOwned}/{PITCHES.length}
+                      키로 선택 · 보유 {regularOwned}/{PITCHES.length}
                       {hiddenOwned > 0 && <em className="hidden-count"> · 히든 {hiddenOwned}</em>}
                     </small>
                   </h3>
@@ -3080,9 +3120,12 @@ export default function DiamondGame() {
                         </span>
                         <small>
                           {Math.round(
-                            fastballSpeed(s.career.stats.velocity) +
-                              p.delta -
-                              (100 - s.effort) * 0.09,
+                            Math.min(
+                              p.maxSpeed ?? 999,
+                              fastballSpeed(s.career.stats.velocity) +
+                                p.delta -
+                                (100 - s.effort) * 0.09,
+                            ),
                           )}{" "}
                           km/h
                         </small>
@@ -3238,7 +3281,8 @@ export default function DiamondGame() {
             <b>조준 + 클릭</b> 투구 / 스윙
           </span>
           <span>
-            <kbd>1–0</kbd> 구종 · <kbd>1–4</kbd> 송구 · <kbd>F</kbd> 견제 · <kbd>E</kbd> 도루
+            <kbd>1–0</kbd> <kbd>=</kbd> <kbd>[</kbd> <kbd>]</kbd> 구종 · <kbd>1–4</kbd> 송구 ·{" "}
+            <kbd>F</kbd> 견제 · <kbd>E</kbd> 도루
           </span>
           <span>
             <kbd>WASD</kbd> 수동 수비
@@ -3448,6 +3492,17 @@ export default function DiamondGame() {
                 <button
                   className="subtle-button"
                   onClick={() => {
+                    engine.devGauge99();
+                    toast.success(
+                      `${s.career.stage === "pro" ? "1군 신뢰도" : "스카우트 평가"}를 99로 올렸습니다 · 다음 경기에서 목표 달성`,
+                    );
+                  }}
+                >
+                  {s.career.stage === "pro" ? "1군 신뢰도 99" : "스카우트 평가 99"}
+                </button>
+                <button
+                  className="subtle-button"
+                  onClick={() => {
                     engine.devUnlockPitches();
                     toast.success("모든 구종을 열었습니다 (히든 구종 포함)");
                   }}
@@ -3544,6 +3599,7 @@ export default function DiamondGame() {
           >
             선수 처음부터 다시 시작
           </button>
+          <p className="build-stamp">게임 버전 {BUILD_LABEL}</p>
         </DialogContent>
       </Dialog>
       <Dialog

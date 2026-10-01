@@ -5,6 +5,8 @@ import { fileURLToPath, URL } from "node:url";
 export default defineConfig({
   plugins: [react()],
   base: "./",
+  // Build time, shown in the settings so a player can tell which version is running.
+  define: { __BUILD__: JSON.stringify(new Date().toISOString()) },
   resolve: {
     alias: { "@": fileURLToPath(new URL(".", import.meta.url)) },
   },

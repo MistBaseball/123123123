@@ -13,6 +13,9 @@ export type PitchId =
   | "sinker"
   | "forkball"
   | "sweeper"
+  | "screwball"
+  | "palmball"
+  | "eephus"
   | "knuckle";
 /**
  * Pitch data table. Everything that makes one pitch different from another lives here:
@@ -47,6 +50,8 @@ export type PitchData = {
    * around its path, in a direction chosen at release. 0/absent for ordinary pitches.
    */
   flutter?: number;
+  /** Top speed (km/h) whatever the pitcher's velocity (the eephus is always a slow lob). */
+  maxSpeed?: number;
 };
 export const PITCHES: PitchData[] = [
   {
@@ -228,6 +233,65 @@ export const PITCHES: PitchData[] = [
     whiff: 0.12,
     soft: 0,
     wild: 1.1,
+  },
+  {
+    // Breaks the "wrong" way: toward the pitcher's arm side and down (a reverse curve).
+    id: "screwball",
+    name: "스크류볼",
+    en: "SCREWBALL",
+    key: "=",
+    delta: -19,
+    breakX: -0.42,
+    breakY: 0.36,
+    color: "#f08fb0",
+    desc: "슬라이더·커브와 반대로 휘며 떨어지는 역회전 공 · 팔에 부담이 커 체력 소모가 큼",
+    cost: 260,
+    control: 1.2,
+    stamina: 1.25,
+    chase: 0.13,
+    whiff: 0.13,
+    soft: 0.02,
+    wild: 1.3,
+  },
+  {
+    // Held deep in the palm: slow, little spin, a soft drop and a slight wobble.
+    id: "palmball",
+    name: "팜볼",
+    en: "PALMBALL",
+    key: "[",
+    delta: -26,
+    breakX: -0.08,
+    breakY: 0.3,
+    color: "#b9d98f",
+    desc: "손바닥으로 감싸 던지는 느린 공 · 회전이 적어 살짝 흔들리며 떨어지고 약한 타구를 유도",
+    cost: 150,
+    control: 1.1,
+    stamina: 0.95,
+    chase: 0.1,
+    whiff: 0.08,
+    soft: 0.08,
+    wild: 1.2,
+    flutter: 0.04,
+  },
+  {
+    // A high, slow lob that drops into the zone: the batter's timing falls apart.
+    id: "eephus",
+    name: "이퓨스볼",
+    en: "EEPHUS",
+    key: "]",
+    delta: -60,
+    breakX: 0,
+    breakY: 0.12,
+    color: "#9ad7f5",
+    desc: "하늘 높이 떠서 천천히 떨어지는 초슬로볼 · 타이밍을 무너뜨리지만 읽히면 위험",
+    cost: 120,
+    control: 0.9,
+    stamina: 0.5,
+    chase: 0.08,
+    whiff: 0.22,
+    soft: 0.12,
+    wild: 0.7,
+    maxSpeed: 72,
   },
 ];
 /**
@@ -697,14 +761,17 @@ export const STAT_POINTS = 100;
 export const STAT_CAP = 80;
 /** Starting-pitch roulette: rarer pitches have smaller weights. */
 export const BLESSINGS: { id: PitchId; weight: number; tier: string }[] = [
-  { id: "changeup", weight: 22, tier: "축복" },
-  { id: "twoseam", weight: 20, tier: "축복" },
-  { id: "curve", weight: 15, tier: "은총" },
-  { id: "cutter", weight: 13, tier: "은총" },
-  { id: "sinker", weight: 11, tier: "은총" },
-  { id: "splitter", weight: 8, tier: "신탁" },
-  { id: "sweeper", weight: 6, tier: "신탁" },
-  { id: "forkball", weight: 5, tier: "신탁" },
+  { id: "changeup", weight: 20, tier: "축복" },
+  { id: "twoseam", weight: 18, tier: "축복" },
+  { id: "curve", weight: 13, tier: "은총" },
+  { id: "cutter", weight: 11, tier: "은총" },
+  { id: "sinker", weight: 10, tier: "은총" },
+  { id: "palmball", weight: 7, tier: "은총" },
+  { id: "splitter", weight: 6, tier: "신탁" },
+  { id: "sweeper", weight: 5, tier: "신탁" },
+  { id: "forkball", weight: 4, tier: "신탁" },
+  { id: "eephus", weight: 3, tier: "신탁" },
+  { id: "screwball", weight: 3, tier: "신탁" },
 ];
 /** Every new player starts with these; the roulette adds one more. */
 export const STARTING_PITCHES: PitchId[] = ["fastball", "slider"];
@@ -1774,8 +1841,8 @@ export class BaseballEngine {
         (100 - s.effort) * 0.09 -
         formPenalty +
         gaussian(this.rng) * 0.9,
-      85,
-      170,
+      60,
+      pitch.maxSpeed ?? 170,
     );
     const aim = ai
       ? V(gaussian(this.rng) * 0.29, 0.95 + gaussian(this.rng) * 0.34, 0)
@@ -3447,6 +3514,20 @@ export class BaseballEngine {
     if (value === 200) c.legend = true;
     for (const k of Object.keys(c.stats) as StatKey[]) c.stats[k] = value;
     c.history = [`개발자 모드 · 모든 능력치 ${value}`, ...c.history].slice(0, 12);
+    this.persist();
+    this.emit();
+  }
+  /**
+   * Developer mode: the stage's gauge to 99 (scout evaluation in high school, first-team
+   * trust in the pros), so the next good match reaches the goal.
+   */
+  devGauge99() {
+    const c = this.state.career;
+    c.scout = 99;
+    c.history = [
+      `개발자 모드 · ${c.stage === "pro" ? "1군 신뢰도" : "스카우트 평가"} 99`,
+      ...c.history,
+    ].slice(0, 12);
     this.persist();
     this.emit();
   }

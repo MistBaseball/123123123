@@ -4275,10 +4275,11 @@ kbd {
 }
 .dev-mode div {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 .dev-mode button {
-  flex: 1;
+  flex: 1 1 calc(50% - 4px);
   margin: 0 !important;
 }
 
@@ -4719,4 +4720,11 @@ kbd {
   font-size: 0.75rem;
   font-weight: 700;
   color: #9fc9a8;
+}
+
+.build-stamp {
+  margin: 4px 0 0;
+  text-align: center;
+  font-size: 0.75rem;
+  color: #8fa1a7;
 }
