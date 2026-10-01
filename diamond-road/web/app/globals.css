@@ -5321,3 +5321,19 @@ kbd {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
+
+/* During play, clicks and drags never select text or drag images (inputs still work). */
+.game-view {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.game-view img,
+.game-view canvas {
+  -webkit-user-drag: none;
+}
+.game-view input,
+.game-view textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}

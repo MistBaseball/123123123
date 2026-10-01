@@ -3082,7 +3082,7 @@ export default function DiamondGame() {
           </button>
         </div>
       </header>
-      <div className="game-view" hidden={view !== "game"}>
+      <div className="game-view" hidden={view !== "game"} onDragStart={(e) => e.preventDefault()}>
         <div className="mode-row">
           <div className="mode-buttons">
             <button className="back-to-day" onClick={() => setView("life")}>
