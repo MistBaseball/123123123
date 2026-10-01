@@ -7,5 +7,7 @@
  * player's own record. VITE_HOF_URL / VITE_HOF_KEY override them (local testing).
  */
 const env = (import.meta.env ?? {}) as Record<string, string | undefined>;
-export const HOF_URL: string = (env.VITE_HOF_URL || "").replace(/\/$/, "");
-export const HOF_KEY: string = env.VITE_HOF_KEY || "";
+export const HOF_URL: string = (
+  env.VITE_HOF_URL || "https://exnxnghlfozfinmypziz.supabase.co"
+).replace(/\/$/, "");
+export const HOF_KEY: string = env.VITE_HOF_KEY || "sb_publishable_Sc4CHj4PldKetogXwVc83A_1INF1gVX";
