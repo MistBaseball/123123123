@@ -1297,7 +1297,7 @@ export class BaseballField {
     this.target.position.set(aim.x, aim.y, 0.03);
     // When batting, the aim ring shows how far the bat may miss and still connect.
     this.target.scale.setScalar(
-      this.engine.batting ? batReach(s.career.stats.contact, s.swingStyle) / 0.09 : 1,
+      this.engine.batting ? batReach(this.engine.batter.contact, s.swingStyle) / 0.09 : 1,
     );
     const hint = this.engine.batting && s.flight ? s.flight.hint : null;
     this.hint.visible =

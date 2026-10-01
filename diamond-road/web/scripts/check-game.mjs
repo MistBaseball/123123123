@@ -1497,53 +1497,83 @@ check("미산고 vs a new rival school each day; every school's players never ch
     strongDay = SCHOOLS.indexOf(strong) + 1;
   assert(speedOn(strongDay) > speedOn(weakDay), "a stronger school's ace throws harder");
 });
-check("Scout recap lines always add up, including caps; the player bats, teammates run", () => {
-  // A blowout loss: the gain is held at the minimum and the recap says so.
-  for (const [score, hits, ks] of [
-    [[9, 0], 0, 0],
-    [[0, 8], 14, 12],
-  ]) {
-    const g = new BaseballEngine();
-    g.start("match");
-    Object.assign(g.state, { inning: 3, half: "bottom", outs: 3, phase: "result", score });
-    g.state.hits = [0, hits];
-    for (let k = 0; k < ks; k++) {
-      g.state.strikes = 2;
-      g.state.half = "top";
-      g.strike(true, "k");
+check(
+  "Scout recap lines always add up, including caps; player leads off, teammates bat 2–9",
+  () => {
+    // A blowout loss: the gain is held at the minimum and the recap says so.
+    for (const [score, hits, ks] of [
+      [[9, 0], 0, 0],
+      [[0, 8], 14, 12],
+    ]) {
+      const g = new BaseballEngine();
+      g.start("match");
+      Object.assign(g.state, { inning: 3, half: "bottom", outs: 3, phase: "result", score });
+      g.state.hits = [0, hits];
+      for (let k = 0; k < ks; k++) {
+        g.state.strikes = 2;
+        g.state.half = "top";
+        g.strike(true, "k");
+      }
+      Object.assign(g.state, { inning: 3, half: "bottom", outs: 3, phase: "result" });
+      const before = g.state.career.scout;
+      g.next();
+      const parts = g.state.lastScoutParts,
+        sum = parts.reduce((a, p) => a + p.value, 0);
+      assert.equal(sum, g.state.career.scout - before);
+      assert(parts.some((p) => p.label.includes(score[0] > score[1] ? "최소" : "최대")));
     }
-    Object.assign(g.state, { inning: 3, half: "bottom", outs: 3, phase: "result" });
-    const before = g.state.career.scout;
-    g.next();
-    const parts = g.state.lastScoutParts,
-      sum = parts.reduce((a, p) => a + p.value, 0);
-    assert.equal(sum, g.state.career.scout - before);
-    assert(parts.some((p) => p.label.includes(score[0] > score[1] ? "최소" : "최대")));
-  }
-  // Every at-bat is the player's; the slot's teammate runs once on base.
-  const g = new BaseballEngine();
-  g.state.half = "bottom";
-  for (let slot = 0; slot < 9; slot++) {
-    g.state.order[1] = slot;
-    assert.equal(g.batter.name, g.state.career.name, "the player always bats");
-    assert.equal(g.batter.contact, g.state.career.stats.contact);
-    const runner = g.ourRunner(slot);
-    assert.equal(g.batter.speed, runner.speed, "the runner's legs run to first");
-    if (slot) assert.equal(runner.name, HOME_LINEUP[slot].name);
-  }
-  const named = HOME_LINEUP.slice(1);
-  assert.equal(named.length, 8);
-  assert(
-    named.every((p) => p.nick),
-    "all eight teammates have a nickname",
-  );
-  const by = (n) => named.find((p) => p.name === n);
-  assert(["contact", "power", "eye", "speed"].every((k) => by("김영호")[k] === 99));
-  assert(by("송대현").contact >= 90 && by("송대현").power >= 90);
-  assert(by("양서준").contact >= 90 && by("양서준").power >= 90);
-  assert(by("옥동규").speed === Math.max(...named.map((p) => (p.name === "김영호" ? 0 : p.speed))));
-  for (const n of ["이지섭", "유동권"]) assert(by(n).speed <= 35 && by(n).power >= 95);
-});
+    // The player leads off; slots 2–9 bat (and run) with the teammate's own stats.
+    const g = new BaseballEngine();
+    g.state.half = "bottom";
+    for (let slot = 0; slot < 9; slot++) {
+      g.state.order[1] = slot;
+      const runner = g.ourRunner(slot);
+      assert.deepEqual(g.batter, runner, "the hitter is the one who then runs");
+      if (slot === 0) {
+        assert.equal(g.batter.name, g.state.career.name, "the player is the leadoff hitter");
+        assert.equal(g.batter.contact, g.state.career.stats.contact);
+        assert.equal(g.batter.power, g.state.career.stats.power);
+        assert(g.playerUp);
+      } else {
+        const t = HOME_LINEUP[slot];
+        assert.equal(g.batter.name, t.name);
+        assert.deepEqual(
+          [g.batter.contact, g.batter.power, g.batter.eye, g.batter.speed],
+          [t.contact, t.power, t.eye, t.speed],
+        );
+        assert(!g.playerUp);
+      }
+    }
+    // Their contact really changes the at-bat: a wider bat reach for 김영호 (99) than 이지섭 (55).
+    const reachOf = (slot) => {
+      const x = new BaseballEngine(newCareer(), () => 0.5);
+      x.start("match");
+      x.state.half = "bottom";
+      x.state.order[1] = slot;
+      return batReach(x.batter.contact, "contact");
+    };
+    assert(reachOf(3) > reachOf(7));
+    // Batting practice is always the player.
+    const cage = new BaseballEngine();
+    cage.start("batting");
+    cage.state.order[1] = 5;
+    assert.equal(cage.batter.name, cage.state.career.name);
+    const named = HOME_LINEUP.slice(1);
+    assert.equal(named.length, 8);
+    assert(
+      named.every((p) => p.nick),
+      "all eight teammates have a nickname",
+    );
+    const by = (n) => named.find((p) => p.name === n);
+    assert(["contact", "power", "eye", "speed"].every((k) => by("김영호")[k] === 99));
+    assert(by("송대현").contact >= 90 && by("송대현").power >= 90);
+    assert(by("양서준").contact >= 90 && by("양서준").power >= 90);
+    assert(
+      by("옥동규").speed === Math.max(...named.map((p) => (p.name === "김영호" ? 0 : p.speed))),
+    );
+    for (const n of ["이지섭", "유동권"]) assert(by(n).speed <= 35 && by(n).power >= 95);
+  },
+);
 check("Hidden knuckleball: secret unlock at minimum velocity and movement 75+", () => {
   assert.equal(PITCHES.length, 10, "the shop list stays at ten");
   assert(!PITCHES.some((p) => p.id === "knuckle") && HIDDEN_PITCHES[0].id === "knuckle");

@@ -515,8 +515,8 @@ function AimPad({ engine, s }: { engine: BaseballEngine; s: GameState }) {
         <g transform={`translate(${toX(aim.x)} ${toY(aim.y)})`} stroke="#f1c771" strokeWidth="1.6">
           {batting && (
             <ellipse
-              rx={(batReach(s.career.stats.contact, s.swingStyle) / 1.4) * 280}
-              ry={(batReach(s.career.stats.contact, s.swingStyle) / 1.7) * 240}
+              rx={(batReach(engine.batter.contact, s.swingStyle) / 1.4) * 280}
+              ry={(batReach(engine.batter.contact, s.swingStyle) / 1.7) * 240}
               fill="#f1c771"
               fillOpacity=".06"
               strokeOpacity=".5"
@@ -793,7 +793,7 @@ function CareerView({ engine, s }: { engine: BaseballEngine; s: GameState }) {
             <>
               <h3>미산고 라인업</h3>
               <p className="muted small">
-                타석은 언제나 내가 서고, 출루하면 그 타순의 동료가 주자로 뛴다.
+                나는 1번 타자. 2~9번은 동료가 자기 능력치로 타석에 서고, 스윙은 모두 내가 조작한다.
               </p>
               <ol className="team-lineup">
                 {HOME_LINEUP.map((p, i) => (
@@ -810,7 +810,7 @@ function CareerView({ engine, s }: { engine: BaseballEngine; s: GameState }) {
                     </strong>
                     <small>
                       {i === 0
-                        ? `주력 ${c.stats.speed}`
+                        ? `컨 ${c.stats.contact} · 파 ${c.stats.power} · 주 ${c.stats.speed}`
                         : `컨 ${p.contact} · 파 ${p.power} · 주 ${p.speed}`}
                     </small>
                   </li>
@@ -2081,7 +2081,7 @@ const TOURS: Record<TourTrack, TourStep[]> = {
   bat: [
     {
       title: "튜토리얼 이닝 · 공격 차례",
-      body: "1회 말, 이제 우리가 칩니다. 타석에는 미산고 동료와 당신이 차례로 서고, 모든 타석을 당신이 직접 조작해요. 오른쪽에 상대 학교 에이스의 구속·제구·구종 수가 나와요.",
+      body: "1회 말, 이제 우리가 칩니다. 당신은 1번 타자이고, 2~9번은 미산고 동료가 자기 컨택·파워·주력으로 타석에 서요. 스윙은 모든 타석을 당신이 직접 조작해요. 오른쪽에 상대 학교 에이스의 구속·제구·구종 수가 나와요.",
       target: ".pitch-panel",
     },
     {
@@ -2091,7 +2091,7 @@ const TOURS: Record<TourTrack, TourStep[]> = {
     },
     {
       title: "조준: 흐릿한 빛과 노란 원",
-      body: "상대가 던지면 화면에 흐릿한 빛이 생겨요. 공은 반드시 그 안으로 와요. 마우스를 움직이면 노란 원(배트가 닿는 범위)이 따라와요. 공이 지나갈 곳에 원을 겹치세요. 컨택 능력치가 높을수록 빛은 작고 원은 커져요.",
+      body: "상대가 던지면 화면에 흐릿한 빛이 생겨요. 공은 반드시 그 안으로 와요. 마우스를 움직이면 노란 원(배트가 닿는 범위)이 따라와요. 공이 지나갈 곳에 원을 겹치세요. 타석에 선 타자의 컨택이 높을수록 빛은 작고 원은 커져요.",
       target: ".game-stage",
     },
     {
@@ -2813,13 +2813,15 @@ export default function DiamondGame() {
                 <div className="pitcher-badge">
                   <span className="uniform-number">18</span>
                   <div>
-                    <small>{batting ? "타석" : "마운드"}</small>
-                    <strong>{batting ? engine.batter.name : s.career.name}</strong>
+                    <small>
+                      {batting
+                        ? `${(s.order[1] % 9) + 1}번 타자${engine.playerUp ? " · 나" : ""}`
+                        : "마운드"}
+                    </small>
+                    <strong>{batting ? playerLabel(engine.batter) : s.career.name}</strong>
                     <span>
                       {batting
-                        ? s.mode === "match"
-                          ? `출루하면 주자 ${playerLabel(engine.ourRunner(s.order[1]))} · 주력 ${engine.batter.speed}`
-                          : `${engine.batter.hand === "L" ? "좌" : "우"}타 · 컨택 ${engine.batter.contact}`
+                        ? `${engine.batter.hand === "L" ? "좌" : "우"}타 · 컨택 ${engine.batter.contact} · 파워 ${engine.batter.power} · 주력 ${engine.batter.speed}`
                         : `우완 투수 · ${matchTeams(s.career)[1]}`}
                     </span>
                   </div>

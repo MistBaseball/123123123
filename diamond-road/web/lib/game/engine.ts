@@ -1363,8 +1363,8 @@ export class BaseballEngine {
     return makeRoster(school.name, school.strength, school.style);
   }
   /**
-   * Who runs for lineup slot i once on base: the player at slot 0, a teammate elsewhere.
-   * The player takes every at-bat; the teammates only run the bases.
+   * Our hitter in lineup slot i: the player leads off (slot 0, career stats); slots 1–8 are the
+   * teammates with their own contact, power, eye and speed. The user swings for all of them.
    */
   ourRunner(i: number): Player {
     const c = this.state.career,
@@ -1381,21 +1381,20 @@ export class BaseballEngine {
         }
       : p;
   }
-  /** Our at-bat in slot i: the player swings; that slot's runner makes the dash to first. */
+  /** Our at-bat in slot i: the same player who then runs the bases. */
   private ourBatter(i: number): Player {
-    const c = this.state.career;
-    return {
-      name: c.name,
-      hand: "R",
-      contact: c.stats.contact,
-      power: c.stats.power,
-      eye: 66,
-      speed: this.ourRunner(i).speed,
-    };
+    return this.ourRunner(i);
+  }
+  /** True when the player character (leadoff, slot 0) is at the plate. */
+  get playerUp() {
+    return this.batting && (this.state.mode !== "match" || this.state.order[1] % 9 === 0);
   }
   get batter(): Player {
     const s = this.state;
-    return this.batting ? this.ourBatter(s.order[1]) : this.awayRoster.lineup[s.order[0] % 9];
+    // Batting practice is always the player; in a match the lineup slot decides.
+    return this.batting
+      ? this.ourBatter(s.mode === "match" ? s.order[1] : 0)
+      : this.awayRoster.lineup[s.order[0] % 9];
   }
   onSound(fn: (kind: string) => void) {
     this.soundCallback = fn;
@@ -1631,7 +1630,7 @@ export class BaseballEngine {
     // The batter reads a zone around the true crossing point. The true point is always inside.
     let hint: Flight["hint"] = null;
     if (ai) {
-      const r = contactHintRadius(stats.contact) * stage.hintScale,
+      const r = contactHintRadius(this.batter.contact) * stage.hintScale,
         angle = this.rng() * Math.PI * 2,
         off = r * 0.8 * Math.sqrt(this.rng());
       hint = { x: target.x + Math.cos(angle) * off, y: target.y + Math.sin(angle) * off, r };
@@ -1816,7 +1815,7 @@ export class BaseballEngine {
           spatial = Math.hypot(f.batAim.x - f.target.x, f.batAim.y - f.target.y),
           style = SWING_STYLES[s.swingStyle],
           window = swingWindow(s.difficulty, s.career.stage, s.swingStyle),
-          reach = batReach(s.career.stats.contact, s.swingStyle),
+          reach = batReach(this.batter.contact, s.swingStyle),
           contact = Math.abs(timing) < window && spatial < reach,
           // Contact swing: a near miss is fouled off, so the batter survives the pitch.
           cut =
@@ -1837,7 +1836,7 @@ export class BaseballEngine {
             1 -
               (Math.abs(timing) / window) * 0.65 -
               (spatial / reach) * 0.3 +
-              s.career.stats.contact * 0.001,
+              this.batter.contact * 0.001,
             0,
             1,
           );
