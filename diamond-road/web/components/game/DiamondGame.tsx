@@ -86,6 +86,9 @@ import {
   LIMITLESS_CAP,
   LIMIT_BREAK,
   CHEER_DROP,
+  RULES,
+  isDecisive,
+  weatherOf,
   STAT_NAMES,
   STAT_INFO,
   HOME_LINEUP,
@@ -116,6 +119,8 @@ const keyOf = (e: KeyboardEvent) => {
   if (e.code === "Equal") return "=";
   if (e.code === "BracketLeft") return "[";
   if (e.code === "BracketRight") return "]";
+  if (e.code === "Semicolon") return ";";
+  if (e.code === "Quote") return "'";
   return e.key.toLowerCase();
 };
 const cameras: { id: Camera; label: string }[] = [
@@ -155,6 +160,7 @@ const pitchTraits = (p: (typeof PITCHES)[number]) =>
     p.stamina >= 1.1 && { text: "체력 소모 큼", good: false },
     p.stamina < 1 && { text: "체력 소모 적음", good: true },
     !!p.flutter && { text: "예측 불가 흔들림", good: true },
+    isDecisive(p) && { text: `결정구 · AI 타자 컨택 −${RULES.decisiveContactDrop}`, good: true },
     p.wild >= 1.2 && { text: "폭투 위험", good: false },
   ].filter(Boolean) as { text: string; good: boolean }[];
 /** A stat's live effect, e.g. "138 km/h", from the same formula the game uses. */
@@ -819,7 +825,7 @@ function CareerView({ engine, s }: { engine: BaseballEngine; s: GameState }) {
             <div className="panel-heading">
               <h2>
                 {tierOf(c) === "first"
-                  ? "메이저리그 스카우트"
+                  ? "MLB 스카우트"
                   : c.stage === "pro"
                     ? "프로 리포트"
                     : "스카우트 리포트"}
@@ -829,11 +835,11 @@ function CareerView({ engine, s }: { engine: BaseballEngine; s: GameState }) {
             <ScoutMeter s={s} big />
             <p>
               {tierOf(c) === "mlb"
-                ? "메이저리그 하드 모드 · 무한 모드. 목표 없이 최강의 무대에서 끝없이 던지고 치세요."
+                ? "MLB 하드 모드 · 무한 모드. 목표 없이 최강의 무대에서 끝없이 던지고 치세요."
                 : tierOf(c) === "first"
                   ? c.limitless
-                    ? `메이저리그를 모두 거절하고 국내에 남았습니다. 능력치 상한 ${LIMITLESS_CAP}.`
-                    : `1군 무대(상대 ${TIER_RATINGS.first.mean}±${TIER_RATINGS.first.spread}). 메이저리그 ${MLB_TEAMS.length}개 구단 스카우트가 동시에 평가합니다. 100이 된 구단과 계약하거나, 모두 100이 된 뒤 전부 거절하면 능력치 상한이 ${LIMITLESS_CAP}이 됩니다.`
+                    ? `MLB 제안을 모두 거절하고 국내에 남았습니다. 능력치 상한 ${LIMITLESS_CAP}.`
+                    : `1군 무대(상대 ${TIER_RATINGS.first.mean}±${TIER_RATINGS.first.spread}). MLB ${MLB_TEAMS.length}개 구단 스카우트가 동시에 평가합니다. 100이 된 구단과 계약하거나, 모두 100이 된 뒤 전부 거절하면 능력치 상한이 ${LIMITLESS_CAP}이 됩니다.`
                   : c.stage === "pro"
                     ? `2군 생활(상대 ${TIER_RATINGS.farm.mean}±${TIER_RATINGS.farm.spread}). 경기를 마칠 때마다 감독의 신뢰가 오르고, 100점이면 1군으로 올라갑니다.`
                     : c.draft
@@ -1055,7 +1061,11 @@ function LifeView({
         <div className={`life-step ${step === 1 ? "now" : ""}`}>
           <span>오후 · 시즌 경기</span>
           <strong>{live ? "경기 중" : `${matchTeams(c)[1]} vs ${matchTeams(c)[0]}`}</strong>
-          <small>삼진·안타·승리로 XP</small>
+          <small>
+            {weatherOf(c) === "rain"
+              ? "🌧 비 예보 · 제구·구속·주루 저하, 수비 실수, 이닝마다 우천취소 판정"
+              : "☀ 맑음 · 삼진·안타·승리로 XP"}
+          </small>
         </div>
         <ChevronRight className="life-arrow" size={18} />
         <div className="life-step">
@@ -1203,7 +1213,8 @@ function LifeView({
               <p>{p.desc}</p>
               <span className="shop-meta">
                 {p.delta ? `포심보다 ${-p.delta} km/h 느림` : "가장 빠른 공"} · 휨{" "}
-                {Math.round(Math.hypot(m.x, m.y) * 100)} cm
+                {Math.round(Math.hypot(m.x, m.y) * 100)} cm · 제구 난도 ×{p.control} · 체력 ×
+                {p.stamina}
               </span>
               {pitchTraits(p).length > 0 && (
                 <span className="shop-traits">
@@ -1528,7 +1539,7 @@ function ScoutMeter({
             <b>
               {m?.city} {m?.name}
             </b>{" "}
-            메이저리그
+            MLB
           </span>
           <strong>
             하드 모드 <em>· 무한 모드</em>
@@ -1589,7 +1600,7 @@ function MlbScoutBoard({ s, recap, big }: { s: GameState; recap: boolean; big: b
   return (
     <div className={`mlb-board ${big ? "big" : ""}`}>
       <div className="mlb-board-head">
-        <b>메이저리그 스카우트 평가</b>
+        <b>MLB 스카우트 평가</b>
         <small>
           {c.limitless ? "모든 제안 거절 · 국내 잔류" : "100이 된 구단과 언제든 계약 가능"}
         </small>
@@ -1647,11 +1658,11 @@ function MlbOffers({ engine, s }: { engine: BaseballEngine; s: GameState }) {
             onClick={() => {
               if (
                 window.confirm(
-                  `${t.city} ${t.name}와 계약할까요?\n\n메이저리그는 하드 모드 · 무한 모드입니다. 주변 선수 모두 능력치 ${TIER_RATINGS.mlb.mean}±${TIER_RATINGS.mlb.spread}, 내 능력치 상한 ${LIMITLESS_CAP}. 국내로는 돌아올 수 없어요.`,
+                  `${t.city} ${t.name}와 계약할까요?\n\nMLB는 하드 모드 · 무한 모드입니다. 주변 선수 모두 능력치 ${TIER_RATINGS.mlb.mean}±${TIER_RATINGS.mlb.spread}, 내 능력치 상한 ${LIMITLESS_CAP}. 국내로는 돌아올 수 없어요.`,
                 )
               ) {
                 engine.signMlb(t.id);
-                toast.success(`${t.name}와 계약! 메이저리그 하드 모드 시작`);
+                toast.success(`${t.name}와 계약! MLB 하드 모드 시작`);
               }
             }}
           >
@@ -1662,11 +1673,11 @@ function MlbOffers({ engine, s }: { engine: BaseballEngine; s: GameState }) {
       <button
         className="subtle-button"
         disabled={!all}
-        title={all ? "" : "모든 메이저리그 스카우트가 100이 되어야 거절할 수 있어요"}
+        title={all ? "" : "모든 MLB 스카우트가 100이 되어야 거절할 수 있어요"}
         onClick={() => {
           if (
             window.confirm(
-              `메이저리그의 모든 제안을 거절할까요?\n\n국내 리그에 남는 대신 내 능력치 상한이 ${LIMITLESS_CAP}으로 올라갑니다.`,
+              `MLB의 모든 제안을 거절할까요?\n\n국내 리그에 남는 대신 내 능력치 상한이 ${LIMITLESS_CAP}으로 올라갑니다.`,
             )
           ) {
             engine.refuseMlb();
@@ -2479,14 +2490,22 @@ const triggerCheer = (engine: BaseballEngine) => {
   else if (s.career.stage !== "pro") toast.error("응원 스킬은 프로 무대부터 열려요");
   else if (s.cheerUsed) toast.error("응원은 경기당 한 번만 쓸 수 있어요");
 };
-/** G: limit break (every stat 250 first; once per inning). */
+/** G: limit break for the next pitch (every stat 250 first; 3 free a match, then stamina). */
 const triggerLimit = (engine: BaseballEngine) => {
-  const s = engine.state;
-  if (engine.limitBreak()) toast.success(`⚡ 한계 돌파! 이번 이닝 모든 능력치 ${LIMIT_BREAK}`);
+  const s = engine.state,
+    cost = engine.limitCost;
+  if (engine.limitBreak())
+    toast.success(
+      `⚡ 한계 돌파! 다음 1구 모든 능력치 ${LIMIT_BREAK}${cost ? ` · 체력 −${cost}` : ` · 무료 ${s.limitUsed}/${RULES.limitBreakFree}`}`,
+    );
   else if (!engine.canLimitBreak)
     toast.error(`한계 돌파는 모든 능력치가 ${LIMITLESS_CAP}이 되면 열려요`);
   else if (s.mode !== "match") toast.error("한계 돌파는 시즌 경기에서만 쓸 수 있어요");
-  else if (engine.limitActive) toast.error("이번 이닝에는 이미 한계 돌파 중이에요");
+  else if (engine.limitActive) toast.error("이미 한계 돌파가 준비되어 있어요 · 다음 1구에 적용");
+  else if (s.phase !== "ready" && s.phase !== "between")
+    toast.error("투구가 끝난 뒤, 다음 공을 기다릴 때 쓸 수 있어요");
+  else if (s.energy < cost)
+    toast.error(`무료 ${RULES.limitBreakFree}회를 다 썼어요 · 체력 ${cost}이 필요해요`);
 };
 /** Skill buttons (T cheer, G limit break) with their current state. */
 function SkillBar({ engine, s }: { engine: BaseballEngine; s: GameState }) {
@@ -2513,10 +2532,16 @@ function SkillBar({ engine, s }: { engine: BaseballEngine; s: GameState }) {
           className={`skill limit ${engine.limitActive ? "on" : ""}`}
           disabled={engine.limitActive}
           onClick={() => triggerLimit(engine)}
-          title={`한 이닝 동안 모든 능력치 ${LIMIT_BREAK} (이닝마다 1회)`}
+          title={`다음 투구 1회(던지기 또는 타격) 동안 모든 능력치 ${LIMIT_BREAK}. 경기당 ${RULES.limitBreakFree}회 무료, 이후 1회마다 체력 −${RULES.limitBreakEnergy}`}
         >
           <kbd>G</kbd> ⚡ 한계 돌파
-          <small>{engine.limitActive ? "효과 중" : `전 능력치 ${LIMIT_BREAK} · 이닝당 1회`}</small>
+          <small>
+            {engine.limitActive
+              ? "다음 1구 적용"
+              : engine.limitCost
+                ? `체력 −${engine.limitCost} · 다음 1구`
+                : `무료 ${RULES.limitBreakFree - s.limitUsed}/${RULES.limitBreakFree} · 다음 1구`}
+          </small>
         </button>
       )}
     </div>
@@ -2525,12 +2550,59 @@ function SkillBar({ engine, s }: { engine: BaseballEngine; s: GameState }) {
 /** 1st team (after its promotion match) and the majors: the trust gauge no longer moves. */
 const trustMaxed = (s: GameState) =>
   tierOf(s.career) === "mlb" || (tierOf(s.career) === "first" && s.lastMlb.length > 0);
+/** Big centre-screen callout ("폭투", "풀카운트") for about 1.4 s; clicks pass through. */
+function Callout({ s }: { s: GameState }) {
+  const [shown, setShown] = useState<GameState["flash"]>(null);
+  useEffect(() => {
+    if (!s.flash) return;
+    setShown(s.flash);
+    const t = window.setTimeout(() => setShown(null), 1400);
+    return () => window.clearTimeout(t);
+  }, [s.flash?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!shown) return null;
+  return (
+    <div key={shown.id} className={`callout ${shown.tone}`} role="status">
+      {shown.text}
+    </div>
+  );
+}
+/**
+ * Rain: before each new inning a coin decides whether play goes on (75%) or the match is
+ * called (25%). The coin spins for a moment, then shows its face and the verdict.
+ */
+function CoinToss({ coin, onDone }: { coin: NonNullable<GameState["coin"]>; onDone: () => void }) {
+  const [revealed, setRevealed] = useState(false);
+  useEffect(() => {
+    setRevealed(false);
+    const t = window.setTimeout(() => {
+      setRevealed(true);
+      onDone();
+    }, 1700);
+    return () => window.clearTimeout(t);
+  }, [coin]); // eslint-disable-line react-hooks/exhaustive-deps
+  const go = coin.result === "go";
+  return (
+    <div className="coin-toss">
+      <div className={`coin ${revealed ? (go ? "face-go" : "face-cancel") : "spinning"}`}>
+        <span className="coin-front">진행</span>
+        <span className="coin-back">취소</span>
+      </div>
+      <strong className={revealed ? (go ? "go" : "cancel") : ""}>
+        {revealed ? (go ? "경기 진행" : "우천취소") : "동전을 던집니다…"}
+      </strong>
+      <small>
+        앞면(진행) {Math.round(RULES.rainContinue * 100)}% · 뒷면(취소){" "}
+        {Math.round((1 - RULES.rainContinue) * 100)}%
+      </small>
+    </div>
+  );
+}
 /** "한강 트리플스 2군", "뉴욕 하버 나이츠", or the school. */
 const clubLine = (c: Career) => {
   const tier = tierOf(c);
   if (tier === "mlb") {
     const m = mlbTeamOf(c.mlbClub);
-    return m ? `${m.city} ${m.name}` : "메이저리그";
+    return m ? `${m.city} ${m.name}` : "MLB";
   }
   const t = teamOf(c.club);
   if (tier === "high" || !t) return "미산고등학교 야구부";
@@ -2555,6 +2627,7 @@ export default function DiamondGame() {
     } | null>(null),
     [help, setHelp] = useState(false),
     [settings, setSettings] = useState(false),
+    [coinSeen, setCoinSeen] = useState<GameState["coin"]>(null),
     [devUnlocked, setDevUnlocked] = useState(false),
     [devCode, setDevCode] = useState(""),
     [manualPause, setManualPause] = useState(false),
@@ -3007,7 +3080,13 @@ export default function DiamondGame() {
           </div>
           <span className="park-label">
             <Flag size={14} />
-            미산 야구장 <span>15:00 · 맑음</span>
+            {s.career.stage === "pro" ? "프로 구장" : "미산 야구장"}{" "}
+            <span>
+              15:00 ·{" "}
+              {(view === "game" && s.mode === "match" ? s.weather : weatherOf(s.career)) === "rain"
+                ? "🌧 비"
+                : "☀ 맑음"}
+            </span>
           </span>
         </div>
         <div className="game-layout">
@@ -3051,7 +3130,7 @@ export default function DiamondGame() {
                         }
                       >
                         {tierOf(s.career) === "mlb"
-                          ? `🌎 메이저리그 · 하드 모드 · 무한 모드`
+                          ? `🌎 MLB · 하드 모드 · 무한 모드`
                           : tierOf(s.career) === "first"
                             ? `🌎 MLB 스카우트 ${MLB_TEAMS.length}명 관전 · 최고 ${Math.round(Math.max(...MLB_TEAMS.map((t) => s.career.mlbScouts?.[t.id] ?? 0)))}`
                             : `🏟 ${teamOf(s.career.club)!.name} 2군 · 1군 신뢰도 ${Math.round(s.career.scout)}`}
@@ -3068,6 +3147,11 @@ export default function DiamondGame() {
                       {Math.round(s.career.scout)}
                     </span>
                   )}
+                  {engine.raining && (
+                    <span className="xp-chip skill-chip rain">
+                      🌧 비 · 제구·구속·주루 저하 · 수비 실수 증가
+                    </span>
+                  )}
                   {engine.cheerActive && (
                     <span className="xp-chip skill-chip cheer">
                       📣 응원 효과 · 상대 능력치 −{CHEER_DROP} ({s.cheerInning}회)
@@ -3075,7 +3159,7 @@ export default function DiamondGame() {
                   )}
                   {engine.limitActive && (
                     <span className="xp-chip skill-chip limit">
-                      ⚡ 한계 돌파 · 모든 능력치 {LIMIT_BREAK} ({s.limitInning}회)
+                      ⚡ 한계 돌파 · 이번 1구 모든 능력치 {LIMIT_BREAK}
                     </span>
                   )}
                 </div>
@@ -3157,11 +3241,15 @@ export default function DiamondGame() {
                   </span>
                 </div>
               </div>
+              <Callout s={s} />
               {(manualPause || s.phase === "between" || s.phase === "finished") && (
                 <div className="game-overlay">
                   <span className="eyebrow">DIAMOND ROAD</span>
                   <h2>{manualPause ? "잠시, 숨 고르기." : s.message}</h2>
                   <p>{manualPause ? "준비되면 경기를 이어가세요." : s.detail}</p>
+                  {!manualPause && s.phase === "between" && s.coin && (
+                    <CoinToss coin={s.coin} onDone={() => setCoinSeen(s.coin)} />
+                  )}
                   {!manualPause && s.phase === "finished" && (
                     <>
                       {s.lastScout && (
@@ -3184,6 +3272,10 @@ export default function DiamondGame() {
                   )}
                   <button
                     className="primary-button"
+                    // Wait for the coin to land before going on.
+                    disabled={
+                      !manualPause && s.phase === "between" && !!s.coin && coinSeen !== s.coin
+                    }
                     onClick={() => {
                       if (manualPause) setManualPause(false);
                       else if (s.phase === "between") engine.continueInning();
@@ -3208,11 +3300,15 @@ export default function DiamondGame() {
                     <Play size={17} />
                     {manualPause
                       ? "경기 재개"
-                      : s.phase === "between"
-                        ? s.half === "top"
-                          ? "타격 시작"
-                          : "다음 이닝 투구"
-                        : "하루 마무리하기"}
+                      : s.phase === "between" && s.coin?.result === "cancel"
+                        ? coinSeen === s.coin
+                          ? "우천취소 · 경기 종료"
+                          : "동전 결과 기다리는 중"
+                        : s.phase === "between"
+                          ? s.half === "top"
+                            ? "타격 시작"
+                            : "다음 이닝 투구"
+                          : "하루 마무리하기"}
                   </button>
                 </div>
               )}
@@ -3730,7 +3826,7 @@ export default function DiamondGame() {
                     if (!engine.devGauge100()) return;
                     toast.success(
                       was === "first"
-                        ? "메이저리그 4개 구단 평가 100 · 계약하거나 모두 거절할 수 있어요"
+                        ? "MLB 4개 구단 평가 100 · 계약하거나 모두 거절할 수 있어요"
                         : was === "farm"
                           ? "1군 신뢰도 100 · 1군으로 승격했습니다"
                           : "스카우트 평가 100 · 입단 제의를 받았습니다",
@@ -3763,7 +3859,7 @@ export default function DiamondGame() {
                     engine.devGauge99();
                     toast.success(
                       tierOf(s.career) === "first"
-                        ? "메이저리그 스카우트 4명을 모두 99로 올렸습니다 · 다음 경기에서 100"
+                        ? "MLB 스카우트 4명을 모두 99로 올렸습니다 · 다음 경기에서 100"
                         : `${gaugeName(s.career)}를 99로 올렸습니다 · 다음 경기에서 목표 달성`,
                     );
                   }}

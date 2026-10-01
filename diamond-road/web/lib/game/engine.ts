@@ -16,6 +16,8 @@ export type PitchId =
   | "screwball"
   | "palmball"
   | "eephus"
+  | "knucklecurve"
+  | "slurve"
   | "knuckle";
 /**
  * Pitch data table. Everything that makes one pitch different from another lives here:
@@ -66,7 +68,7 @@ export const PITCHES: PitchData[] = [
     desc: "빠른 직구로 스트라이크 존을 공략",
     cost: 0,
     control: 1,
-    stamina: 1,
+    stamina: 1.1,
     chase: 0,
     whiff: 0,
     soft: 0,
@@ -138,7 +140,7 @@ export const PITCHES: PitchData[] = [
     desc: "직구처럼 오다 끝에서 짧게 꺾이는 공",
     cost: 160,
     control: 1,
-    stamina: 1,
+    stamina: 1.05,
     chase: 0.1,
     whiff: 0.09,
     soft: 0,
@@ -156,7 +158,7 @@ export const PITCHES: PitchData[] = [
     desc: "직구 궤적에서 뚝 떨어지는 결정구",
     cost: 200,
     control: 1,
-    stamina: 1,
+    stamina: 1.3,
     chase: 0.1,
     whiff: 0.09,
     soft: 0,
@@ -174,7 +176,7 @@ export const PITCHES: PitchData[] = [
     desc: "직구 구속으로 몸쪽으로 파고드는 공 · 약한 타구 유도",
     cost: 80,
     control: 1.05,
-    stamina: 1,
+    stamina: 1.05,
     chase: 0.04,
     whiff: 0.03,
     soft: 0.04,
@@ -210,7 +212,7 @@ export const PITCHES: PitchData[] = [
     desc: "가장 크게 떨어지는 결정구 · 제구가 어렵고 체력 소모가 큼",
     cost: 240,
     control: 1.3,
-    stamina: 1.25,
+    stamina: 1.4,
     chase: 0.15,
     whiff: 0.14,
     soft: 0.03,
@@ -225,10 +227,10 @@ export const PITCHES: PitchData[] = [
     breakX: 0.62,
     breakY: -0.04,
     color: "#7fd3e0",
-    desc: "옆으로 크게 쓸고 나가는 공 · 헛스윙 유도, 제구 난이도 높음",
+    desc: "옆으로 크게 쓸고 나가는 결정구 · 헛스윙 유도, 제구 난이도 높음",
     cost: 220,
     control: 1.18,
-    stamina: 1.1,
+    stamina: 1.3,
     chase: 0.12,
     whiff: 0.12,
     soft: 0,
@@ -293,6 +295,44 @@ export const PITCHES: PitchData[] = [
     wild: 0.7,
     maxSpeed: 72,
   },
+  {
+    // Index finger dug into the ball: a harder, later-breaking curve.
+    id: "knucklecurve",
+    name: "너클 커브",
+    en: "KNUCKLE CURVE",
+    key: ";",
+    delta: -17,
+    breakX: 0.08,
+    breakY: 0.6,
+    color: "#b7a0ff",
+    desc: "검지를 세워 강하게 채는 커브 · 빠르고 날카롭게 떨어지는 결정구",
+    cost: 230,
+    control: 1.2,
+    stamina: 1.35,
+    chase: 0.13,
+    whiff: 0.15,
+    soft: 0.03,
+    wild: 1.4,
+  },
+  {
+    // Between a slider and a curve: sideways and down at once.
+    id: "slurve",
+    name: "슬러브",
+    en: "SLURVE",
+    key: "'",
+    delta: -14,
+    breakX: 0.38,
+    breakY: 0.38,
+    color: "#ff9fd0",
+    desc: "슬라이더처럼 옆으로, 커브처럼 아래로 휘는 대각선 결정구 · 헛스윙 유도",
+    cost: 210,
+    control: 1.15,
+    stamina: 1.3,
+    chase: 0.12,
+    whiff: 0.14,
+    soft: 0.02,
+    wild: 1.2,
+  },
 ];
 /**
  * Hidden pitches: never sold in the shop or thrown by the AI. Each one unlocks by itself
@@ -327,6 +367,17 @@ export const HIDDEN_UNLOCKS: { id: PitchId; test: (stats: Career["stats"]) => bo
   // Knuckleball: velocity never trained above the creation minimum, movement 75 or more.
   { id: "knuckle", test: (st) => st.velocity <= STAT_BASE && st.movement >= 75 },
 ];
+export type Weather = "clear" | "rain";
+/**
+ * The day's weather (fixed per day, so the daily screen can forecast it). Day 1 — the tutorial
+ * match — is always clear; after that rain comes about RULES.rainChance of the days.
+ */
+export const weatherOf = (c: Pick<Career, "day" | "name" | "team">): Weather =>
+  c.day > 1 && (hashName(`${c.day}|${c.name}|${c.team}|sky`) % 1000) / 1000 < RULES.rainChance
+    ? "rain"
+    : "clear";
+/** Decisive pitch: any pitch whose description says "결정구" (data decides, no code list). */
+export const isDecisive = (p: Pick<PitchData, "desc">) => p.desc.includes("결정구");
 export const pitchData = (id: PitchId) => ALL_PITCHES.find((p) => p.id === id) ?? PITCHES[0];
 // AI pitchers only use the four original pitch types.
 const AI_PITCHES = 4;
@@ -343,6 +394,30 @@ export const RULES = {
   wildPitchFatigue: 0.075,
   wildPitchMin: 0.002,
   wildPitchMax: 0.09,
+  /** Every pitch's stamina cost × this (1.3 = 30% more than the original tuning). */
+  staminaScale: 1.3,
+  /** Decisive pitch ("결정구" in the description): the AI batter's contact −this. */
+  decisiveContactDrop: 20,
+  /** Limit break: free uses per match, then each extra one costs this much stamina. */
+  limitBreakFree: 3,
+  limitBreakEnergy: 25,
+  /** Rain: chance per match, and the chance the game goes on at each new inning (coin toss). */
+  rainChance: 0.1,
+  rainContinue: 0.75,
+  /** Rain: pitch control spread ×, km/h lost, stamina cost ×, base-running pace ×. */
+  rainControl: 1.6,
+  rainVelocity: 6,
+  rainStamina: 1.25,
+  rainRunPace: 0.9,
+  /** Rain: fielders' first step (s) and arm ×; chance a fielder bobbles the pickup, and how long. */
+  rainReaction: 0.08,
+  rainArm: 0.9,
+  rainBobble: 0.22,
+  rainBobbleTime: 0.7,
+  /** Rain: catcher — wild-pitch chance ×, catch-to-release (s) added, arm × on a steal. */
+  rainWildPitch: 2.2,
+  rainCatcherTransfer: 0.18,
+  rainCatcherArm: 0.85,
   /** Hit by pitch: the ball at the plate is inside the batter's body box (m from plate center). */
   hbpInnerEdge: 0.7,
   hbpLow: 0.25,
@@ -556,7 +631,7 @@ export const fastballSpeed = (velocity: number) =>
   velocity <= 100 ? 110 + velocity * 0.43 : 153 + (velocity - 100) * 0.17;
 /** Energy one pitch costs at this effort (%) and stamina rating (before the pitch's own cost). */
 export const pitchEnergyCost = (effort: number, stamina: number) =>
-  (0.38 + (effort - 70) * 0.012) * (1.3 - over(stamina) / 180);
+  (0.38 + (effort - 70) * 0.012) * (1.3 - over(stamina) / 180) * RULES.staminaScale;
 /** Batted-ball carry multiplier from the batter's power rating. */
 export const carryScale = (power: number) => 0.78 + over(power) / 240;
 /** Base-running speed (m/s) for a speed rating. */
@@ -624,7 +699,8 @@ export const STAT_INFO: Record<
     unit: "",
     digits: 0,
     lowerIsBetter: true,
-    metric: (v) => pitchEnergyCost(90, v) * 100,
+    // A four-seam fastball at the default effort (the pitch's own cost factor included).
+    metric: (v) => pitchEnergyCost(90, v) * pitchData("fastball").stamina * 100,
     training: "러닝",
   },
   contact: {
@@ -763,37 +839,37 @@ export const MLB_TEAMS: {
 }[] = [
   {
     id: "harbor",
-    city: "뉴욕",
-    name: "하버 나이츠",
+    city: "New York",
+    name: "Harbor Knights",
     color: "#2f5aa8",
-    scout: "마이크 존슨",
+    scout: "Mike Johnson",
     focus: "strikeouts",
     likes: "탈삼진",
   },
   {
     id: "sunset",
-    city: "LA",
-    name: "선셋 블레이즈",
+    city: "Los Angeles",
+    name: "Sunset Blaze",
     color: "#e0663a",
-    scout: "카를로스 리베라",
+    scout: "Carlos Rivera",
     focus: "wins",
     likes: "승리",
   },
   {
     id: "bay",
-    city: "보스턴",
-    name: "베이 해머스",
+    city: "Boston",
+    name: "Bay Hammers",
     color: "#b23a48",
-    scout: "케빈 오코너",
+    scout: "Kevin O'Connor",
     focus: "hits",
     likes: "팀 타격",
   },
   {
     id: "lake",
-    city: "시카고",
-    name: "레이크 울브스",
+    city: "Chicago",
+    name: "Lake Wolves",
     color: "#3d8f6a",
-    scout: "데릭 스미스",
+    scout: "Derek Smith",
     focus: "runs",
     likes: "최소 실점",
   },
@@ -816,7 +892,7 @@ export const TIER_NAMES: Record<Tier, string> = {
   high: "고교",
   farm: "프로 2군",
   first: "프로 1군",
-  mlb: "메이저리그",
+  mlb: "MLB",
 };
 /** [visiting team, our team]: high-school rivals, pro clubs (2군 teams first), or MLB clubs. */
 export const matchTeams = (
@@ -1126,6 +1202,15 @@ export const STYLE_NAMES = {
 } as const;
 const SURNAMES = "김이박최정강조윤장임한오서신권황안송류홍전고문양손배백허남심노".split("");
 const GIVEN = "민서준도윤시우하지현예건우진태영성재호수빈현석동훈승찬유원규한결".split("");
+/** English names for major-league rosters (fictional players). */
+const EN_FIRST =
+  "Jake Ryan Tyler Cody Mason Logan Austin Blake Evan Nolan Caleb Owen Luke Dylan Grant Shane Trevor Wyatt Cole Brady Miguel Diego Luis Rafael Marco Hiroshi Kenji Daniel Victor Andre".split(
+    " ",
+  );
+const EN_LAST =
+  "Miller Carter Brooks Hayes Turner Parker Collins Reed Morgan Foster Bennett Sullivan Hughes Price Ramirez Torres Castillo Ortega Mendez Navarro Walker Fisher Coleman Barnes Tanaka Sato Kim Park Wright Lawson".split(
+    " ",
+  );
 const hashName = (text: string) => {
   let h = 2166136261;
   for (const ch of text) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
@@ -1212,10 +1297,16 @@ export function makeProRoster(name: string, mean = PRO_MEAN, spread = PRO_SPREAD
   const rnd = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296,
     pick = <T>(a: T[]) => a[Math.floor(rnd() * a.length)],
     used = new Set<string>(),
+    // Major-league clubs have English names; Korean clubs Korean ones.
+    english = MLB_TEAMS.some((t) => t.name === name),
     person = () => {
       let n = "";
-      do n = pick(SURNAMES) + pick(GIVEN) + pick(GIVEN);
-      while (used.has(n) || n[1] === n[2]);
+      if (english)
+        do n = `${pick(EN_FIRST)} ${pick(EN_LAST)}`;
+        while (used.has(n));
+      else
+        do n = pick(SURNAMES) + pick(GIVEN) + pick(GIVEN);
+        while (used.has(n) || n[1] === n[2]);
       used.add(n);
       return n;
     },
@@ -1413,6 +1504,8 @@ export type Flight = {
   wild: boolean;
   /** Knuckle wobble phase, rolled at release. */
   seed?: number;
+  /** Limit break was armed for this pitch: every player stat counts as 300 for it and its play. */
+  limit?: boolean;
   /** The AI batter swung at this pitch (for the swing animation; set when the pitch arrives). */
   aiSwing?: boolean;
 };
@@ -1535,11 +1628,19 @@ export type GameState = {
   pickoffs: number;
   /** First team: each MLB scout's evaluation before/after the last match. */
   lastMlb: { id: string; before: number; after: number }[];
+  /** Today's weather (rain changes the whole match) and the rain coin toss between innings. */
+  weather: Weather;
+  coin: { result: "go" | "cancel" } | null;
+  /** Big centre-screen callout ("폭투", "풀카운트"); `id` changes each time one fires. */
+  flash: { text: string; tone: string; id: number } | null;
+  /** The match was called off by rain. */
+  rainedOut: boolean;
+  /** Limit break: uses this match, and armed for the very next pitch. */
+  limitUsed: number;
+  limitArmed: boolean;
   /** Cheer (T) used in this match, and the inning it is active in (0 = none). */
   cheerUsed: boolean;
   cheerInning: number;
-  /** Limit break (G): the inning it is active in (0 = none); once per inning. */
-  limitInning: number;
   /** A hidden condition just met: a hidden pitch, or the "legend" start (UI shows a reveal). */
   hiddenUnlock: PitchId | "legend" | null;
 };
@@ -1604,7 +1705,12 @@ const initial = (career: Career, mode: Mode = "match", maxInnings = 3): GameStat
   lastMlb: [],
   cheerUsed: false,
   cheerInning: 0,
-  limitInning: 0,
+  weather: mode === "match" ? weatherOf(career) : "clear",
+  coin: null,
+  rainedOut: false,
+  flash: null,
+  limitUsed: 0,
+  limitArmed: false,
 });
 export class BaseballEngine {
   private matchStrikeouts = 0;
@@ -1747,8 +1853,11 @@ export class BaseballEngine {
       st = this.stageRules;
     return {
       speed: st.fielderSpeed * k.run,
-      reaction: st.fielderReaction * k.react + (l?.reactionExtra ?? 0),
-      arm: (l?.throwSpeed ?? st.throwSpeed) * k.arm,
+      reaction:
+        st.fielderReaction * k.react +
+        (l?.reactionExtra ?? 0) +
+        (this.raining ? RULES.rainReaction : 0),
+      arm: (l?.throwSpeed ?? st.throwSpeed) * k.arm * (this.raining ? RULES.rainArm : 1),
     };
   }
   get batter(): Player {
@@ -1885,6 +1994,8 @@ export class BaseballEngine {
             : 0;
         this.state.career = clean;
         this.state.energy = clean.energy;
+        // The match being prepared belongs to the loaded day: its weather too.
+        if (this.state.mode === "match" && !this.matchActive) this.state.weather = weatherOf(clean);
         if (this.checkHiddenPitches()) this.persist();
       }
     } catch {
@@ -1984,7 +2095,8 @@ export class BaseballEngine {
         pitch.delta -
         fatigue * 0.065 -
         (100 - s.effort) * 0.09 -
-        formPenalty +
+        formPenalty -
+        (this.raining ? RULES.rainVelocity : 0) +
         gaussian(this.rng) * 0.9,
       60,
       pitch.maxSpeed ?? 190,
@@ -1995,7 +2107,9 @@ export class BaseballEngine {
     const sigma =
       (ai
         ? 0.04 * this.awayRoster.ace.control * (this.cheerActive ? 1.08 : 1)
-        : controlSpread(stats.control, s.energy, s.effort, s.career.form)) * pitch.control;
+        : controlSpread(stats.control, s.energy, s.effort, s.career.form)) *
+      pitch.control *
+      (this.raining ? RULES.rainControl : 1);
     const target = V(
         clamp(aim.x + gaussian(this.rng) * sigma, -1.05, 1.05),
         clamp(aim.y + gaussian(this.rng) * sigma, 0.09, 2.1),
@@ -2007,7 +2121,9 @@ export class BaseballEngine {
     const wild =
       s.mode === "match" &&
       s.bases.some(Boolean) &&
-      this.rng() < wildPitchChance(ai ? 100 - fatigue : s.energy, pitch.wild);
+      this.rng() <
+        wildPitchChance(ai ? 100 - fatigue : s.energy, pitch.wild) *
+          (this.raining ? RULES.rainWildPitch : 1);
     if (wild) {
       target.y = 0.09 + this.rng() * 0.12;
       target.x = clamp(target.x * 1.6, -0.6, 0.6);
@@ -2038,7 +2154,10 @@ export class BaseballEngine {
       hint,
       wild,
       seed: this.rng() * Math.PI * 2,
+      // An armed limit break is spent on this pitch (ours or the rival's, i.e. our swing).
+      limit: s.limitArmed,
     };
+    s.limitArmed = false;
     // STEAL_READY → the runner on first breaks with the pitcher's first move.
     s.stealTrack = null;
     if (s.stealCall && s.mode === "match" && this.batting && s.bases[0] && !s.bases[1]) {
@@ -2103,7 +2222,8 @@ export class BaseballEngine {
           s.energy = clamp(
             s.energy -
               pitchEnergyCost(s.effort, this.playerStats.stamina) *
-                pitchData(s.flight?.pitch ?? "fastball").stamina,
+                pitchData(s.flight?.pitch ?? "fastball").stamina *
+                (this.raining ? RULES.rainStamina : 1),
             0,
             100,
           );
@@ -2133,7 +2253,7 @@ export class BaseballEngine {
   }
   /** Base-running pace (bases per second) for a runner with this speed rating. */
   runnerPace(speed: number) {
-    return runSpeed(speed) / BASE_PATH_LENGTH;
+    return (runSpeed(speed) / BASE_PATH_LENGTH) * (this.raining ? RULES.rainRunPace : 1);
   }
   /** Our runner on first is taken to be the previous batter in the order. */
   get runnerOnFirst(): Player {
@@ -2252,7 +2372,9 @@ export class BaseballEngine {
         else this.ball();
       }
     } else {
-      const b = formOf(this.batter),
+      // A decisive pitch takes 20 off the AI batter's contact (never off the player's).
+      const b0 = formOf(this.batter),
+        b = isDecisive(data) ? { ...b0, contact: b0.contact - RULES.decisiveContactDrop } : b0,
         eye = b.eye + stage.batterEye,
         // The pitcher's movement rating sharpens each pitch's bite (1 = rating 65).
         bite = movementBite(f.movement),
@@ -2939,6 +3061,12 @@ export class BaseballEngine {
           l.kind === "wild"
             ? "포수가 빠진 공을 잡았습니다 · 송구 판단"
             : "공을 잡았습니다 · 곧바로 송구";
+        // Wet ball: sometimes the fielder bobbles it and loses time before the throw.
+        if (this.raining && this.rng() < RULES.rainBobble) {
+          l.hold += RULES.rainBobbleTime;
+          s.detail = "빗물에 미끄러져 공을 더듬었습니다!";
+          this.log("빗속 수비 실수 · 공을 더듬음");
+        }
       }
     }
     if (l.fieldedAt !== null) {
@@ -3127,7 +3255,7 @@ export class BaseballEngine {
       good = !out === this.batting;
     } else {
       s.lastOutcome = "WildPitch";
-      message = "WILD PITCH";
+      message = "폭투";
       detail =
         "폭투 · 포수가 공을 놓쳤습니다 · " +
         (scored ? `${scored}점 득점 · ` : "") +
@@ -3260,8 +3388,9 @@ export class BaseballEngine {
     }
     s.live = l;
     s.phase = "inplay";
-    s.message = "WILD PITCH!";
+    s.message = "폭투";
     s.detail = "공이 포수 뒤로 빠졌습니다 · 주자 진루 시도";
+    this.callout("폭투", this.batting ? "gold" : "red");
     s.resultTone = this.batting ? "gold" : "red";
     this.sound("call");
     this.emit();
@@ -3283,8 +3412,11 @@ export class BaseballEngine {
     s.stealTrack = null;
     const l = this.basePlay("steal", 1, [{ ...runner }, ...others], {
       call,
-      hold: stage.catcherTransfer + this.rng() * RULES.catcherTransferGamble,
-      throwSpeed: stage.catcherArm,
+      hold:
+        stage.catcherTransfer +
+        this.rng() * RULES.catcherTransferGamble +
+        (this.raining ? RULES.rainCatcherTransfer : 0),
+      throwSpeed: stage.catcherArm * (this.raining ? RULES.rainCatcherArm : 1),
       requestedBase: 2,
     });
     // The middle infielder broke for the bag when the runner went (about one delivery ago).
@@ -3322,7 +3454,10 @@ export class BaseballEngine {
       runners = this.baseRunners(RULES.runnerLead, RULES.runnerReaction);
     s.pickoffs++;
     s.energy = clamp(
-      s.energy - pitchEnergyCost(s.effort, this.playerStats.stamina) * RULES.pickoffEnergy,
+      s.energy -
+        pitchEnergyCost(s.effort, this.playerStats.stamina) *
+          RULES.pickoffEnergy *
+          (this.raining ? RULES.rainStamina : 1),
       0,
       100,
     );
@@ -3406,13 +3541,32 @@ export class BaseballEngine {
       s.phase = "between";
       s.message = s.half === "top" ? "공수 교대 · 우리의 공격" : "공수 교대 · 마운드로";
       s.detail = "준비되면 다음 이닝을 시작하세요";
+      // Rain: before every new inning (never before the first) a coin decides if play goes on.
+      if (this.raining && s.half === "bottom") {
+        s.coin = { result: this.rng() < RULES.rainContinue ? "go" : "cancel" };
+        s.message = "빗줄기가 거세다";
+        s.detail = "동전 던지기로 경기 진행 여부를 정합니다";
+      }
       this.emit();
       return;
     }
     this.ready();
   }
+  /** Shows a big centre-screen callout. */
+  callout(text: string, tone = "gold") {
+    this.flashId++;
+    this.state.flash = { text, tone, id: this.flashId };
+  }
+  private flashId = 0;
+  private fullCountKey = "";
   private ready() {
     const s = this.state;
+    // 3 balls, 2 strikes: once per plate appearance, announce the full count.
+    const key = `${s.inning}|${s.half}|${s.order[0]}|${s.order[1]}`;
+    if (s.mode === "match" && s.balls === 3 && s.strikes === 2 && this.fullCountKey !== key) {
+      this.fullCountKey = key;
+      this.callout("풀카운트", "gold");
+    }
     s.phase = "ready";
     s.flight = null;
     s.live = null;
@@ -3429,6 +3583,11 @@ export class BaseballEngine {
   continueInning() {
     const s = this.state;
     if (s.phase !== "between") return;
+    if (s.coin?.result === "cancel") {
+      this.rainout();
+      return;
+    }
+    s.coin = null;
     s.bases = [false, false, false];
     s.pickoffs = 0;
     s.outs = 0;
@@ -3443,13 +3602,26 @@ export class BaseballEngine {
     if (s.autoCamera) s.camera = this.batting ? "catcher" : "pitcher";
     this.ready();
   }
+  /** Rain called the match: it ends here and counts with the current score. */
+  rainout() {
+    const s = this.state;
+    if (s.mode !== "match" || s.phase === "finished") return;
+    s.rainedOut = true;
+    s.coin = null;
+    this.finish();
+  }
   private finish() {
     const s = this.state;
     s.phase = "finished";
-    s.message =
-      s.score[1] > s.score[0] ? "VICTORY" : s.score[1] === s.score[0] ? "DRAW" : "GAME OVER";
+    s.message = s.rainedOut
+      ? "우천취소"
+      : s.score[1] > s.score[0]
+        ? "VICTORY"
+        : s.score[1] === s.score[0]
+          ? "DRAW"
+          : "GAME OVER";
     const [away, home] = this.teams;
-    s.detail = `${away} ${s.score[0]} : ${s.score[1]} ${home}`;
+    s.detail = `${s.rainedOut ? `${s.inning - (s.half === "bottom" ? 0 : 1)}회까지 · 현재 점수로 결과 처리 · ` : ""}${away} ${s.score[0]} : ${s.score[1]} ${home}`;
     if (!this.recorded) {
       this.recorded = true;
       const c = s.career;
@@ -3764,6 +3936,10 @@ export class BaseballEngine {
     this.persist();
     this.emit();
   }
+  /** Rain is falling on this season match. */
+  get raining() {
+    return this.state.mode === "match" && this.state.weather === "rain";
+  }
   /** Cheer is lowering the rivals this inning. */
   get cheerActive() {
     const s = this.state;
@@ -3772,7 +3948,17 @@ export class BaseballEngine {
   /** Limit break is on this inning. */
   get limitActive() {
     const s = this.state;
-    return s.mode === "match" && s.limitInning > 0 && s.limitInning === s.inning;
+    if (s.mode !== "match") return false;
+    // Armed: waiting for the next pitch. Then it lasts for that one pitch (and the play it
+    // makes) only; the next pitch is back to normal.
+    return (
+      s.limitArmed ||
+      (!!s.flight?.limit && s.phase !== "ready" && s.phase !== "between" && s.phase !== "finished")
+    );
+  }
+  /** Stamina the next limit break costs (0 while free uses remain). */
+  get limitCost() {
+    return this.state.limitUsed >= RULES.limitBreakFree ? RULES.limitBreakEnergy : 0;
   }
   /** Limit break is unlocked: every stat at 250. */
   get canLimitBreak() {
@@ -3808,13 +3994,27 @@ export class BaseballEngine {
     this.emit();
     return true;
   }
-  /** G: limit break, every stat 300 for this inning. Needs every stat at 250; once per inning. */
+  /**
+   * G: limit break for the very next pitch (pitching or batting): every stat 300 for that one
+   * pitch and its play. Needs every stat at 250. Three free uses a match, then stamina −25 each.
+   */
   limitBreak() {
     const s = this.state;
-    if (s.mode !== "match" || !this.canLimitBreak || this.limitActive || s.phase === "finished")
+    if (
+      s.mode !== "match" ||
+      !this.canLimitBreak ||
+      this.limitActive ||
+      (s.phase !== "ready" && s.phase !== "between")
+    )
       return false;
-    s.limitInning = s.inning;
-    this.log(`${s.inning}회 · 한계 돌파! 모든 능력치 ${LIMIT_BREAK}`);
+    const cost = this.limitCost;
+    if (s.energy < cost) return false;
+    s.energy -= cost;
+    s.limitUsed++;
+    s.limitArmed = true;
+    this.log(
+      `한계 돌파 ${s.limitUsed}회째${cost ? ` · 체력 −${cost}` : " · 무료"} · 다음 1구 모든 능력치 ${LIMIT_BREAK}`,
+    );
     this.sound("hit");
     this.emit();
     return true;
@@ -3835,10 +4035,7 @@ export class BaseballEngine {
     c.mlbClub = t.id;
     // New club, new teammates: the team growth starts again.
     c.teamBoost = 0;
-    c.history = [`${t.city} ${t.name}와 계약! 메이저리그 하드 모드가 시작된다`, ...c.history].slice(
-      0,
-      12,
-    );
+    c.history = [`${t.city} ${t.name}와 계약! MLB 하드 모드가 시작된다`, ...c.history].slice(0, 12);
     this.persist();
     this.start("match");
     return true;
@@ -3850,7 +4047,7 @@ export class BaseballEngine {
       return false;
     c.limitless = true;
     c.history = [
-      `메이저리그의 모든 제안을 거절했다 · 한계가 사라진다 (능력치 상한 ${LIMITLESS_CAP})`,
+      `MLB의 모든 제안을 거절했다 · 한계가 사라진다 (능력치 상한 ${LIMITLESS_CAP})`,
       ...c.history,
     ].slice(0, 12);
     this.persist();

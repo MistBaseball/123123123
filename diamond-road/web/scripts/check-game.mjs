@@ -36,6 +36,8 @@ import {
   visualFlightTime,
   fieldSkill,
   teamRatings,
+  isDecisive,
+  weatherOf,
   makeProRoster,
   formOf,
   TEAM_GROWTH,
@@ -940,8 +942,9 @@ check(
     assert.equal(l.fieldedAt, null, "the catcher did not hold the pitch");
     assert(l.land.z < -5, "the ball got behind the plate");
     assert.equal(l.runners.find((r) => r.from === 1).target, 2);
+    assert.equal(g.state.flash?.text, "폭투", "a big 폭투 callout the moment it happens");
     settle(g);
-    assert.equal(g.state.message, "WILD PITCH");
+    assert.equal(g.state.message, "폭투");
     assert.equal(g.state.lastOutcome, "WildPitch");
     assert.deepEqual(g.state.bases, [false, true, false]);
     assert.equal(g.state.balls, 1, "the pitch itself still counts as a ball");
@@ -1205,8 +1208,8 @@ check("L Pro mode is harder on every axis, still plays complete games", () => {
 check(
   "M Data-driven pitches: all selectable, each with its own speed, break, control, stamina",
   () => {
-    assert.equal(PITCHES.length, 13);
-    assert.equal(new Set(PITCHES.map((p) => p.key)).size, 13, "unique keys 1–0, =, [, ]");
+    assert.equal(PITCHES.length, 15);
+    assert.equal(new Set(PITCHES.map((p) => p.key)).size, 15, "unique keys 1–0, =, [, ], ;, '");
     // The three newer pitches keep their character.
     assert(
       pitchMovement("screwball", 75).x < 0 && pitchMovement("slider", 75).x > 0,
@@ -1248,7 +1251,12 @@ check(
       while (g.state.phase === "windup") g.tick(1 / 60);
       return 100 - g.state.energy;
     };
-    assert(Math.abs(cost("forkball") / cost("fastball") - pitchData("forkball").stamina) < 1e-9);
+    assert(
+      Math.abs(
+        cost("forkball") / cost("fastball") -
+          pitchData("forkball").stamina / pitchData("fastball").stamina,
+      ) < 1e-9,
+    );
     // Movement: each new pitch bends its own way.
     const bends = ["twoseam", "sinker", "forkball", "sweeper"].map((id) => {
       const m = pitchMovement(id, 75);
@@ -1298,7 +1306,13 @@ check("Stat guide numbers come from the game's own formulas; movement changes AI
   const e = new BaseballEngine(newCareer(), () => 0.5);
   e.throwAt(0, 0.95);
   while (e.state.phase === "windup") e.tick(1 / 60);
-  assert(Math.abs(100 - e.state.energy - pitchEnergyCost(90, e.state.career.stats.stamina)) < 1e-9);
+  assert(
+    Math.abs(
+      100 -
+        e.state.energy -
+        pitchEnergyCost(90, e.state.career.stats.stamina) * pitchData("fastball").stamina,
+    ) < 1e-9,
+  );
   // Movement: same pitches and seeds, better movement → fewer balls put in play by AI batters.
   const inPlay = (movement) => {
     let n = 0;
@@ -1619,7 +1633,7 @@ check(
   },
 );
 check("Hidden knuckleball: secret unlock at minimum velocity and movement 75+", () => {
-  assert.equal(PITCHES.length, 13, "the shop list (knuckleball stays out of it)");
+  assert.equal(PITCHES.length, 15, "the shop list (knuckleball stays out of it)");
   assert(!PITCHES.some((p) => p.id === "knuckle") && HIDDEN_PITCHES[0].id === "knuckle");
   assert.equal(new Set(ALL_PITCHES.map((p) => p.key)).size, ALL_PITCHES.length, "unique keys");
   const at = (velocity, movement) => {
@@ -2030,18 +2044,61 @@ check(
     L.start("match");
     assert(!L.limitBreak());
     for (const k of Object.keys(L.state.career.stats)) L.state.career.stats[k] = LIMITLESS_CAP;
+    // One pitch only: armed → the next pitch is thrown at 300 → back to 250 after it.
+    const pitchOnce = () => {
+      L.state.effort = 100;
+      L.state.energy = Math.max(L.state.energy, 0);
+      L.throwAt(0, 0.95);
+      const f = L.state.flight;
+      let n = 0;
+      while (L.state.phase !== "ready" && L.state.phase !== "between" && n++ < 4000) {
+        if (L.state.phase === "result") L.next();
+        else L.tick(1 / 60);
+      }
+      return f;
+    };
     assert(L.limitBreak());
-    assert(Object.values(L.playerStats).every((v) => v === LIMIT_BREAK));
-    assert(!L.limitBreak(), "once per inning");
-    L.state.effort = 100;
-    L.state.energy = 100;
+    assert(
+      Object.values(L.playerStats).every((v) => v === LIMIT_BREAK),
+      "armed",
+    );
+    assert(!L.limitBreak(), "not twice for the same pitch");
     L.state.career.form = 100;
     L.throwAt(0, 0.95);
+    assert(L.state.flight.limit && !L.state.limitArmed, "spent on this pitch");
     assert(L.state.flight.speed > 180, `${L.state.flight.speed} km/h at 300`);
     assert(Math.abs(fastballSpeed(LIMIT_BREAK) - 187) < 1);
-    L.state.inning = 2;
-    assert.equal(L.playerStats.velocity, LIMITLESS_CAP, "back to 250 next inning");
-    assert(L.limitBreak(), "and available again");
+    L.state.phase = "ready";
+    L.state.flight = null;
+    assert.equal(L.playerStats.velocity, LIMITLESS_CAP, "the next pitch is back to 250");
+    const next = pitchOnce();
+    assert(!next.limit && next.speed < 181);
+    // Three free uses a match, then 25 stamina each; below 25 it cannot be used.
+    assert.equal(L.state.limitUsed, 1);
+    for (const n of [2, 3]) {
+      const before = L.state.energy;
+      assert(L.limitBreak());
+      assert.equal(L.state.energy, before, `use ${n} is free`);
+      pitchOnce();
+    }
+    L.state.energy = 60;
+    assert(L.limitBreak(), "a 4th use");
+    assert.equal(L.state.energy, 60 - RULES.limitBreakEnergy, "costs 25 stamina");
+    pitchOnce();
+    L.state.energy = 20;
+    assert(!L.limitBreak(), "not with less than 25 stamina");
+    L.start("match");
+    assert.equal(L.state.limitUsed, 0, "a new match resets the count");
+    // Batting: the very next pitch faced (our swing) gets it, and only that one.
+    L.state.half = "bottom";
+    L.state.order[1] = 0;
+    assert(L.limitBreak());
+    L.launch(true);
+    assert(L.state.flight.limit);
+    assert.equal(L.batter.contact, LIMIT_BREAK, "our leadoff hitter swings at 300");
+    L.state.phase = "ready";
+    L.state.flight = null;
+    assert.equal(L.batter.contact, LIMITLESS_CAP);
   },
 );
 check(
@@ -2104,4 +2161,160 @@ check(
     assert(w.state.lastXpGain > 0);
   },
 );
+check(
+  "Decisive pitches: '결정구' in the text decides; AI batters lose 20 contact, the player never",
+  () => {
+    const decisive = PITCHES.filter(isDecisive).map((p) => p.id);
+    assert(decisive.length >= 5, decisive.join());
+    for (const id of ["sweeper", "splitter", "forkball", "knucklecurve", "slurve"]) {
+      assert(decisive.includes(id), id);
+      assert(pitchData(id).stamina >= 1.3, `${id} is expensive on the arm`);
+      assert(pitchData(id).stamina > pitchData("fastball").stamina);
+    }
+    assert(pitchMovement("knucklecurve", 75).y > pitchMovement("curve", 75).y * 0.9);
+    assert(pitchMovement("slurve", 75).x > 0.3 && pitchMovement("slurve", 75).y > 0.3);
+    // Same pitch, same dice: calling it a decisive pitch makes the AI batter miss more.
+    const contacts = (decisiveText) => {
+      const p = pitchData("slider"),
+        desc = p.desc;
+      if (decisiveText) p.desc = desc + " · 결정구";
+      let n = 0;
+      try {
+        for (let i = 1; i <= 400; i++) {
+          const g = new BaseballEngine(allPitches(), seed(i));
+          g.selectPitch("slider");
+          g.throwAt(0, 0.95);
+          while (g.state.phase === "windup" || g.state.phase === "flight") g.tick(1 / 60);
+          if (g.state.phase === "inplay" || g.state.lastOutcome === "Foul") n++;
+        }
+      } finally {
+        p.desc = desc;
+      }
+      return n;
+    };
+    assert(contacts(true) < contacts(false), "fewer balls put in play");
+    // Batting: the AI throws a decisive pitch, the player's contact is untouched.
+    const b = new BaseballEngine(newCareer(), () => 0.5);
+    b.start("batting");
+    const before = b.batter.contact;
+    b.launch(true);
+    assert.equal(b.batter.contact, before);
+    // Stamina: every pitch costs 30% more than the original tuning.
+    assert(
+      Math.abs(pitchEnergyCost(70, 65) / (0.38 * (1.3 - 65 / 180) * RULES.staminaScale) - 1) < 1e-9,
+    );
+    assert.equal(RULES.staminaScale, 1.3);
+  },
+);
+check(
+  "Rain: about 1 match in 10 (never the first), harder for everyone, coin toss every new inning",
+  () => {
+    let rain = 0;
+    for (let day = 2; day <= 2001; day++)
+      if (weatherOf({ day, name: "테스트", team: "triples" }) === "rain") rain++;
+    assert(rain > 150 && rain < 250, `${rain} rainy days in 2000 (about 10%)`);
+    for (const name of ["a", "b", "c", "d"])
+      assert.equal(weatherOf({ day: 1, name, team: "" }), "clear");
+    const rainyDay = Array.from({ length: 400 }, (_, i) => i + 2).find(
+      (day) => weatherOf({ ...newCareer(), day }) === "rain",
+    );
+    const make = (day) => {
+      const g = new BaseballEngine(Object.assign(allPitches(), { day }), () => 0.5);
+      g.start("match");
+      return g;
+    };
+    const wet = make(rainyDay),
+      dry = make(rainyDay + 1 === rainyDay ? 2 : 1);
+    assert(wet.raining && !dry.raining);
+    // Pitcher: slower and wilder.
+    wet.throwAt(0.1, 0.9);
+    dry.throwAt(0.1, 0.9);
+    assert(Math.abs(dry.state.flight.speed - wet.state.flight.speed - RULES.rainVelocity) < 1e-9);
+    const miss = (g) => Math.hypot(g.state.flight.target.x - 0.1, g.state.flight.target.y - 0.9);
+    assert(miss(wet) > miss(dry));
+    // Runners slower, fielders slower to react with weaker arms, catcher slower on a steal.
+    assert(Math.abs(wet.runnerPace(70) / dry.runnerPace(70) - RULES.rainRunPace) < 1e-9);
+    assert(wet.fielderStats(4).reaction > dry.fielderStats(4).reaction);
+    assert(wet.fielderStats(4).arm < dry.fielderStats(4).arm);
+    // Stamina drains faster.
+    const cost = (g) => {
+      g.state.phase = "ready";
+      g.state.flight = null;
+      g.state.energy = 100;
+      g.throwAt(0, 0.95);
+      while (g.state.phase === "windup") g.tick(1 / 60);
+      return 100 - g.state.energy;
+    };
+    assert(Math.abs(cost(wet) / cost(dry) - RULES.rainStamina) < 1e-9);
+    // Coin toss before each new inning (not before the first): 75% go on, 25% called.
+    const toss = (roll) => {
+      const g = make(rainyDay);
+      g.rng = () => roll;
+      Object.assign(g.state, {
+        inning: 1,
+        half: "bottom",
+        outs: 3,
+        score: [1, 2],
+        phase: "result",
+      });
+      g.next();
+      return g;
+    };
+    const go = toss(0.5),
+      stop = toss(0.9);
+    assert.equal(go.state.coin.result, "go");
+    assert.equal(stop.state.coin.result, "cancel");
+    go.continueInning();
+    assert.equal(go.state.inning, 2, "play goes on");
+    assert.equal(go.state.coin, null);
+    const games = stop.state.career.games;
+    stop.continueInning();
+    assert.equal(stop.state.phase, "finished");
+    assert.equal(stop.state.message, "우천취소");
+    assert(stop.state.rainedOut);
+    assert.equal(stop.state.career.games, games + 1, "the called game still counts");
+    assert.equal(stop.state.career.wins, 1, "leading when called = a win");
+    // No coin between the halves of an inning, and none on a dry day.
+    const half = make(rainyDay);
+    Object.assign(half.state, { inning: 1, half: "top", outs: 3, phase: "result" });
+    half.next();
+    assert.equal(half.state.coin, null);
+    const sunny = make(1);
+    Object.assign(sunny.state, {
+      inning: 1,
+      half: "bottom",
+      outs: 3,
+      score: [1, 2],
+      phase: "result",
+    });
+    sunny.next();
+    assert.equal(sunny.state.coin, null);
+  },
+);
+check("Full count: a big '풀카운트' once per plate appearance at 3 balls, 2 strikes", () => {
+  const g = new BaseballEngine(newCareer(), () => 0.5);
+  g.start("match");
+  Object.assign(g.state, { balls: 3, strikes: 2, phase: "result" });
+  g.next();
+  assert.equal(g.state.flash?.text, "풀카운트");
+  const id = g.state.flash.id;
+  g.state.phase = "result";
+  g.next();
+  assert.equal(g.state.flash.id, id, "not again for the same batter");
+  g.state.order[0]++;
+  Object.assign(g.state, { balls: 2, strikes: 2, phase: "result" });
+  g.next();
+  assert.equal(g.state.flash.id, id, "2-2 is not a full count");
+});
+check("MLB rosters use English names; Korean clubs keep Korean ones", () => {
+  const m = makeProRoster(MLB_TEAMS[0].name, 225, 25),
+    k = makeProRoster(TEAMS[0].name, 170, 30);
+  assert(
+    m.lineup.every((p) => /^[A-Z][a-z]+ [A-Z][A-Za-z']+$/.test(p.name)),
+    m.lineup[0].name,
+  );
+  assert(/^[A-Z]/.test(m.ace.name));
+  assert(k.lineup.every((p) => /^[가-힣]{3}$/.test(p.name)));
+  assert(MLB_TEAMS.every((t) => /^[A-Za-z' ]+$/.test(t.name + t.city + t.scout)));
+});
 console.log(`\n${passed} gameplay checks passed.`);

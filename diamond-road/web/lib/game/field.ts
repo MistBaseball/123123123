@@ -109,6 +109,13 @@ export class BaseballField {
   private trailPositions: THREE.Vector3[] = [];
   private landing: THREE.Mesh;
   private time = 0;
+  /** Weather: lights and sky to dim, rain streaks, and wet-ground material settings. */
+  private skyDome!: THREE.Mesh;
+  private hemi!: THREE.HemisphereLight;
+  private sun!: THREE.DirectionalLight;
+  private weatherShown: "clear" | "rain" = "clear";
+  private rain: THREE.LineSegments | null = null;
+  private dry = new Map<THREE.MeshStandardMaterial, { roughness: number; color: THREE.Color }>();
   /** Swing animation clock (render time), so a missed swing still plays to the end. */
   private swingFlight: object | null = null;
   private swingStart = -10;
@@ -158,8 +165,11 @@ export class BaseballField {
     );
     sky.position.set(0, -40, 40);
     this.scene.add(sky);
-    this.scene.add(new THREE.HemisphereLight(0xcfe3ff, 0x4f6b3a, 1.15));
+    this.skyDome = sky;
+    this.hemi = new THREE.HemisphereLight(0xcfe3ff, 0x4f6b3a, 1.15);
+    this.scene.add(this.hemi);
     const sun = new THREE.DirectionalLight(0xffe2bf, 3.4);
+    this.sun = sun;
     sun.position.set(-48, 46, -30);
     sun.target.position.set(0, 0, 30);
     sun.castShadow = true;
@@ -893,6 +903,78 @@ export class BaseballField {
     elbow.rotation.set(bend, 0, 0);
   }
   /** Both hands to these points, elbows pointing down and slightly out. */
+  /** Number of rain streaks (kept modest for low-end laptops). */
+  private static RAIN_DROPS = 1100;
+  private updateWeather(dt: number) {
+    const want = this.engine.raining ? "rain" : "clear";
+    if (want !== this.weatherShown) this.setWeather(want);
+    if (want !== "rain" || !this.rain) return;
+    // Streaks fall in a box that follows the camera, so it always looks like rain in view.
+    const pos = this.rain.geometry.getAttribute("position") as THREE.BufferAttribute,
+      a = pos.array as Float32Array,
+      cam = this.camera.position,
+      fall = 30 * dt;
+    for (let i = 0; i < a.length; i += 6) {
+      let x = a[i],
+        y = a[i + 1] - fall,
+        z = a[i + 2];
+      const out =
+        y < Math.max(0, cam.y - 14) || Math.abs(x - cam.x) > 45 || Math.abs(z - cam.z) > 45;
+      if (out) {
+        x = cam.x + (Math.random() - 0.5) * 90;
+        z = cam.z + (Math.random() - 0.5) * 90;
+        y = cam.y + 6 + Math.random() * 28;
+      }
+      a[i] = x;
+      a[i + 1] = y;
+      a[i + 2] = z;
+      // A short streak, slanted a little by the wind.
+      a[i + 3] = x + 0.08;
+      a[i + 4] = y + 0.9;
+      a[i + 5] = z + 0.05;
+    }
+    pos.needsUpdate = true;
+  }
+  /** Rain: darker sky and lights, grey fog, wet (glossier, darker) ground, rain streaks. */
+  private setWeather(w: "clear" | "rain") {
+    this.weatherShown = w;
+    const rain = w === "rain";
+    this.renderer.toneMappingExposure = rain ? 0.92 : 1.05;
+    this.hemi.intensity = rain ? 0.8 : 1.15;
+    this.sun.intensity = rain ? 1.2 : 3.4;
+    (this.scene.background as THREE.Color).set(rain ? "#8e989f" : "#c9d6dc");
+    const fog = this.scene.fog as THREE.Fog;
+    fog.color.set(rain ? "#8f979c" : "#d4d9d4");
+    fog.near = rain ? 70 : 170;
+    fog.far = rain ? 330 : 520;
+    (this.skyDome.material as THREE.MeshBasicMaterial).color.set(rain ? "#7d868d" : "#ffffff");
+    // Wet ground: every rough surface (grass, clay, chalk, concrete) gets darker and glossier.
+    if (!this.dry.size)
+      this.scene.traverse((o) => {
+        const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
+        if (m && (m as THREE.MeshStandardMaterial).isMeshStandardMaterial && m.roughness >= 0.85)
+          this.dry.set(m, { roughness: m.roughness, color: m.color.clone() });
+      });
+    this.dry.forEach((d, m) => {
+      m.roughness = rain ? d.roughness * 0.55 : d.roughness;
+      m.color.copy(d.color);
+      if (rain) m.color.multiplyScalar(0.82);
+    });
+    if (rain && !this.rain) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute(
+        "position",
+        new THREE.BufferAttribute(new Float32Array(BaseballField.RAIN_DROPS * 6), 3),
+      );
+      this.rain = new THREE.LineSegments(
+        g,
+        new THREE.LineBasicMaterial({ color: "#c9d8e4", transparent: true, opacity: 0.5 }),
+      );
+      this.rain.frustumCulled = false;
+      this.scene.add(this.rain);
+    }
+    if (this.rain) this.rain.visible = rain;
+  }
   private smoothPose(f: Figure, rate: number, restore: [THREE.Object3D, THREE.Euler][]) {
     const joints: THREE.Object3D[] = [
       f.root,
@@ -1534,6 +1616,7 @@ export class BaseballField {
     material.opacity = 0.4 + heat * 0.6;
     // Ease the pitcher's and batter's joints toward this frame's pose, so phase changes
     // (set → wind-up → release → back to the set, swing → stance) never snap.
+    this.updateWeather(dt);
     // Only the drawn image is smoothed: the computed pose is put back after rendering, so the
     // next frame's pose code never reads a blended (re-decomposed) rotation.
     const rate = 1 - Math.exp(-dt * 26),
