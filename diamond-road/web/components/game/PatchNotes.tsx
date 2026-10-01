@@ -17,6 +17,17 @@ type Patch = { version: string; date: string; title: string; items: string[] };
 
 export const PATCHES: Patch[] = [
   {
+    version: "v10.5",
+    date: "10/02",
+    title: "승률 밸런스 패치",
+    items: [
+      "보통 실력으로 플레이하면 약 45% 정도 이기도록 맞췄습니다(전에는 약 25%).",
+      "상대 타자의 홈런이 줄었습니다(공 3~4개 중 1개꼴로 담장을 넘기던 강한 타구 감소).",
+      "우리 타자들의 타구 질이 단계별로 조금씩 좋아졌습니다(2군에서 가장 많이).",
+      "점수가 더 나서 무승부가 줄었습니다.",
+    ],
+  },
+  {
     version: "v10.4",
     date: "10/02",
     title: "패치노트",

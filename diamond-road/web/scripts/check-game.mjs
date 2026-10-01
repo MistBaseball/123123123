@@ -56,6 +56,9 @@ import {
   SWING_SWEET,
   SWING_STYLES,
   pitchEnergyCost,
+  TIER_BALANCE,
+  carryScale,
+  HOME_RUN_DISTANCE,
 } from "../lib/game/engine.ts";
 
 let passed = 0;
@@ -2406,7 +2409,10 @@ check(
           );
           assert.equal(l.catchStyle, l.plan.style);
         }
-        assert(!g.state.flash || !/캐치|호수비/.test(g.state.flash.text), "highlights are replays, not callouts");
+        assert(
+          !g.state.flash || !/캐치|호수비/.test(g.state.flash.text),
+          "highlights are replays, not callouts",
+        );
         if (l.diveTried && !l.ground) {
           o.dives++;
           if (l.downUntil === undefined) {
@@ -2509,5 +2515,27 @@ check("A grounder through the infield is taken by an outfielder; runners read th
   }
   assert(through > 10 && backups > 0, `through ${through}, backups ${backups}`);
   if (process.env.SHOW) console.log({ through, backups, extra });
+});
+check("Tier balance applies in season matches only; AI homers stay realistic", () => {
+  const c = newCareer();
+  const g = new BaseballEngine(c, seed(4));
+  g.start("match");
+  assert.deepEqual(g.balance, TIER_BALANCE.high);
+  g.start("bullpen");
+  assert.deepEqual(g.balance, { aiPower: 1, batBoost: 0 }, "practice is neutral");
+  // AI contact quality: the curve makes homers rarer than the flat roll (power 65 batter).
+  const homerShare = (curve) => {
+    const r = seed(9);
+    let hr = 0;
+    for (let i = 0; i < 20000; i++) {
+      const q = Math.min(1, 0.15 + r() ** curve * 0.75 + 0.065);
+      if ((8 + q * q * 115) * carryScale(65) > HOME_RUN_DISTANCE) hr++;
+    }
+    return hr / 20000;
+  };
+  assert(homerShare(1) > 0.08 && homerShare(TIER_BALANCE.high.aiPower) < homerShare(1) * 0.85);
+  for (const t of Object.values(TIER_BALANCE)) {
+    assert(t.aiPower >= 1 && t.aiPower <= 2 && t.batBoost >= 0 && t.batBoost <= 0.2);
+  }
 });
 console.log(`\n${passed} gameplay checks passed.`);

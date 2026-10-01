@@ -916,6 +916,22 @@ export const TIER_RATINGS: Record<Exclude<Tier, "high">, { mean: number; spread:
   first: { mean: 170, spread: 30 },
   mlb: { mean: 225, spread: 25 },
 };
+/**
+ * Win-rate balance per tier (tuned with scripts/balance.mjs so an ordinary player wins about
+ * 45% of matches):
+ * - aiPower: AI batter's contact quality is 0.15 + random^aiPower × 0.75 + power. 1 = flat
+ *   (about one ball in eight in play left the park); higher makes hard-hit balls rarer.
+ * - batBoost: added to the quality of the player's own swings (all our batters).
+ * The timing window (shown on screen) stays in STAGES.swingWindow.
+ */
+export const TIER_BALANCE: Record<Tier, { aiPower: number; batBoost: number }> = {
+  // Measured (normal-player bot, 36 careers, 3 innings): win 47 / 45 / 44 / 43%.
+  high: { aiPower: 1.25, batBoost: 0.015 },
+  farm: { aiPower: 1.35, batBoost: 0.095 },
+  first: { aiPower: 1.25, batBoost: 0.05 },
+  mlb: { aiPower: 1.2, batBoost: 0.045 },
+};
+const NEUTRAL_BALANCE = { aiPower: 1, batBoost: 0 };
 /** What the career gauge measures in this tier. */
 export const gaugeName = (c: Pick<Career, "stage" | "proGoal" | "league">) =>
   ({ high: "스카우트 평가", farm: "1군 신뢰도", first: "1군 신뢰도", mlb: "무한 모드" })[tierOf(c)];
@@ -1956,6 +1972,10 @@ export class BaseballEngine {
   get stageRules() {
     return STAGES[this.state.career.stage] ?? STAGES.high;
   }
+  /** This tier's win-rate balance (match mode only; practice uses the neutral values). */
+  get balance() {
+    return this.state.mode === "match" ? TIER_BALANCE[tierOf(this.state.career)] : NEUTRAL_BALANCE;
+  }
   /** [visiting team, our team] for the scoreboard and the log. */
   get teams(): [string, string] {
     return matchTeams(this.state.career);
@@ -2490,7 +2510,7 @@ export class BaseballEngine {
         if (this.rng() < prob) {
           const q = clamp(
             0.15 +
-              this.rng() * 0.75 +
+              this.rng() ** this.balance.aiPower * 0.75 +
               b.power * 0.001 -
               Math.max(0, edge - 0.65) * 0.25 -
               data.soft * bite,
@@ -2630,7 +2650,7 @@ export class BaseballEngine {
         clamp(q - (100 - s.career.form) * 0.001, 0, 1) *
           (style.spread[0] + this.rng() * style.spread[1]) +
         style.boost;
-      q = clamp(q, 0, 1.15);
+      q = clamp(q + this.balance.batBoost, 0, 1.15);
     }
     // A bunt is deadened in front of the plate: a slow roller toward one foul line (early
     // timing → third-base side). A clean bunt hugs the line and dies around RULES.buntSweet m,
