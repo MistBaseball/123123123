@@ -34,6 +34,7 @@ import {
   Footprints,
 } from "lucide-react";
 import { TrainingMinigame, TRAINING_GAMES } from "@/components/game/Minigames";
+import { PatchNotesButton } from "@/components/game/PatchNotes";
 import {
   Dialog,
   DialogContent,
@@ -3022,21 +3023,26 @@ export default function DiamondGame() {
         onPro={() => setView("life")}
       />
       <header className="app-header">
-        <a
-          className="brand"
-          href="#"
-          aria-label="다이아몬드 로드"
-          onClick={(e) => {
-            e.preventDefault();
-            setView("life");
-          }}
-        >
-          <span className="brand-mark">D</span>
-          <span>
-            DIAMOND <b>ROAD</b>
-            <small>{s.career.stage === "pro" ? TIER_NAMES[tierOf(s.career)] : "고교 에이스"}</small>
-          </span>
-        </a>
+        <div className="brand-row">
+          <a
+            className="brand"
+            href="#"
+            aria-label="다이아몬드 로드"
+            onClick={(e) => {
+              e.preventDefault();
+              setView("life");
+            }}
+          >
+            <span className="brand-mark">D</span>
+            <span>
+              DIAMOND <b>ROAD</b>
+              <small>
+                {s.career.stage === "pro" ? TIER_NAMES[tierOf(s.career)] : "고교 에이스"}
+              </small>
+            </span>
+          </a>
+          <PatchNotesButton />
+        </div>
         <button
           className="life-status"
           onClick={() => setView("life")}
