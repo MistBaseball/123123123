@@ -16,10 +16,16 @@ import * as tex from "./textures";
 
 type Figure = {
   root: THREE.Group;
+  /** Shoulder joints (upper arm hangs along local −Y) and elbow joints (bend about local X). */
   left: THREE.Group;
   right: THREE.Group;
+  elbowL: THREE.Group;
+  elbowR: THREE.Group;
   legL: THREE.Group;
   legR: THREE.Group;
+  /** Knee joints: negative rotation.x folds the shin back. */
+  kneeL: THREE.Group;
+  kneeR: THREE.Group;
   bat?: THREE.Mesh;
   /** Jersey texture, flipped back when the model is mirrored so the number still reads. */
   jersey: THREE.Texture;
@@ -113,7 +119,7 @@ export class BaseballField {
     this.batter = this.figure("#c06645", "#26353e", true);
     this.scene.add(this.batter.root);
     for (let i = 0; i < 4; i++) {
-      const runner = this.figure("#c06645", "#26353e");
+      const runner = this.figure("#c06645", "#26353e", false, false);
       this.scene.add(runner.root);
       this.runners.push(runner);
     }
@@ -765,12 +771,61 @@ export class BaseballField {
         }
     }
   }
+  private static readonly SHOULDER_X = 0.215;
+  private static readonly SHOULDER_Y = 1.45;
+  private static readonly UPPER_ARM = 0.28;
+  private static readonly FOREARM = 0.27;
+  private ikBasis = new THREE.Matrix4();
+  /**
+   * Two-bone IK: bend the shoulder and elbow so the hand reaches `target` (figure-local metres).
+   * `pole` is the direction the elbow should point (e.g. down and out).
+   */
+  private reach(f: Figure, side: "L" | "R", target: Vec, pole: Vec) {
+    const F = BaseballField,
+      shoulder = side === "L" ? f.left : f.right,
+      elbow = side === "L" ? f.elbowL : f.elbowR,
+      sx = side === "L" ? -F.SHOULDER_X : F.SHOULDER_X,
+      a = F.UPPER_ARM,
+      b = F.FOREARM,
+      d = new THREE.Vector3(target.x - sx, target.y - F.SHOULDER_Y, target.z),
+      dist = clamp(d.length(), 0.08, a + b - 0.002);
+    d.normalize();
+    const p = new THREE.Vector3(pole.x, pole.y, pole.z);
+    p.sub(d.clone().multiplyScalar(p.dot(d)));
+    if (p.lengthSq() < 1e-6) p.set(0, -1, 0).sub(d.clone().multiplyScalar(-d.y));
+    p.normalize();
+    const alpha = Math.acos(clamp((a * a + dist * dist - b * b) / (2 * a * dist), -1, 1)),
+      upper = d
+        .clone()
+        .multiplyScalar(Math.cos(alpha))
+        .add(p.clone().multiplyScalar(Math.sin(alpha))),
+      handFromElbow = d
+        .clone()
+        .multiplyScalar(dist)
+        .sub(upper.clone().multiplyScalar(a))
+        .normalize(),
+      bend = Math.acos(clamp(upper.dot(handFromElbow), -1, 1)),
+      bendDir = handFromElbow.clone().sub(upper.clone().multiplyScalar(upper.dot(handFromElbow)));
+    if (bendDir.lengthSq() < 1e-8) bendDir.copy(p).multiplyScalar(-1);
+    bendDir.normalize();
+    // Local −Y along the upper arm, local −Z toward the bend, local X completes the frame.
+    const y = upper.clone().negate(),
+      z = bendDir.clone().negate(),
+      x = new THREE.Vector3().crossVectors(y, z);
+    shoulder.quaternion.setFromRotationMatrix(this.ikBasis.makeBasis(x, y, z));
+    elbow.rotation.set(bend, 0, 0);
+  }
+  /** Both hands to these points, elbows pointing down and slightly out. */
+  private hands(f: Figure, right: Vec, left: Vec) {
+    this.reach(f, "R", right, V(0.6, -0.8, 0.25));
+    this.reach(f, "L", left, V(-0.6, -0.8, 0.25));
+  }
   private figureCount = 0;
   /**
    * A 1.85 m ballplayer facing local −Z. Joints (shoulders, hips) are groups so the animation
    * code can swing arms and legs; everything else hangs off the root.
    */
-  private figure(shirt: string, cap: string, withBat = false): Figure {
+  private figure(shirt: string, cap: string, withBat = false, glove = !withBat): Figure {
     const root = new THREE.Group(),
       n = this.figureCount++,
       skins = ["#e0b28c", "#c99872", "#a8754f", "#e8c09c"],
@@ -799,12 +854,25 @@ export class BaseballField {
       map: tex.jersey(shirt, cap, String([18, 7, 24, 3, 11, 52, 9, 31, 5, 27][n % 10])),
       roughness: 0.82,
     });
-    const torso = part(new THREE.CylinderGeometry(0.235, 0.185, 0.5, 20), jerseyMat, 0, 1.31, 0);
+    // Torso turned on a lathe: waist, chest, rounded shoulders into the neck; flattened front to
+    // back like a real chest. The jersey number sits on the back.
+    const torsoProfile = [
+      [0.165, 1.04],
+      [0.178, 1.14],
+      [0.205, 1.3],
+      [0.215, 1.4],
+      [0.2, 1.48],
+      [0.15, 1.54],
+      [0.07, 1.575],
+      [0.05, 1.58],
+    ].map(([r, y]) => new THREE.Vector2(r, y));
+    const torso = part(new THREE.LatheGeometry(torsoProfile, 24), jerseyMat, 0, 0, 0);
     torso.rotation.y = Math.PI;
+    torso.scale.z = 0.72;
     // Shoulders and sleeves are plain shirt cloth (the numbered texture is only for the torso).
     const sleeve = cloth(shirt);
-    for (const x of [-0.235, 0.235])
-      part(new THREE.SphereGeometry(0.105, 14, 10), sleeve, x, 1.49, 0);
+    for (const x of [-0.2, 0.2])
+      part(new THREE.SphereGeometry(0.082, 14, 10), sleeve, x, 1.45, 0).scale.set(1, 1, 0.9);
     part(new THREE.CylinderGeometry(0.178, 0.178, 0.05, 20), cloth("#24262a"), 0, 1.07, 0);
     const hips = part(new THREE.CylinderGeometry(0.18, 0.165, 0.2, 20), pants, 0, 0.96, 0);
     hips.scale.z = 0.85;
@@ -852,55 +920,81 @@ export class BaseballField {
       bill.scale.z = 1.25;
     }
     // Arms hang from the shoulder joint: sleeve, forearm, hand.
+    // Arms: shoulder joint → upper arm (sleeve) → elbow joint → forearm and hand. Poses are set
+    // by reach() (two-bone IK), so hands go exactly where the motion needs them.
     const arm = (x: number) => {
       const g = new THREE.Group();
-      g.position.set(x, 1.47, 0);
+      g.position.set(x, BaseballField.SHOULDER_Y, 0);
       root.add(g);
-      part(new THREE.CapsuleGeometry(0.058, 0.14, 4, 10), sleeve, 0, -0.11, 0, g);
-      part(new THREE.CapsuleGeometry(0.045, 0.2, 4, 10), skin, 0, -0.35, 0, g);
-      part(new THREE.SphereGeometry(0.048, 10, 8), skin, 0, -0.52, 0, g);
-      return g;
+      part(new THREE.CapsuleGeometry(0.06, 0.18, 4, 10), sleeve, 0, -0.13, 0, g);
+      const e = new THREE.Group();
+      e.position.y = -BaseballField.UPPER_ARM;
+      g.add(e);
+      part(new THREE.SphereGeometry(0.052, 10, 8), skin, 0, 0, 0, e);
+      part(new THREE.CapsuleGeometry(0.044, 0.17, 4, 10), skin, 0, -0.13, 0, e);
+      part(new THREE.SphereGeometry(0.046, 10, 8), skin, 0, -BaseballField.FOREARM, 0, e);
+      return { g, e };
     };
-    const left = arm(-0.27),
-      right = arm(0.27);
+    const L = arm(-BaseballField.SHOULDER_X),
+      R = arm(BaseballField.SHOULDER_X),
+      left = L.g,
+      right = R.g;
     // Glove on the left hand: a deep brown leather pocket.
-    const glove = part(
-      new THREE.SphereGeometry(0.1, 14, 10),
-      new THREE.MeshStandardMaterial({ color: "#7a4a26", roughness: 0.6 }),
-      0,
-      -0.56,
-      -0.02,
-      left,
-    );
-    glove.scale.set(0.75, 1.15, 0.55);
+    if (glove) {
+      const mitt = part(
+        new THREE.SphereGeometry(0.1, 14, 10),
+        new THREE.MeshStandardMaterial({ color: "#7a4a26", roughness: 0.6 }),
+        0,
+        -BaseballField.FOREARM - 0.03,
+        -0.02,
+        L.e,
+      );
+      mitt.scale.set(0.75, 1.15, 0.55);
+    }
     // Legs swing from the hip: pants to below the knee, stirrup socks, cleats pointing forward.
     const leg = (x: number) => {
       const g = new THREE.Group();
       g.position.set(x, 0.93, 0);
       root.add(g);
-      part(new THREE.CapsuleGeometry(0.085, 0.36, 4, 10), pants, 0, -0.25, 0, g);
-      part(new THREE.CapsuleGeometry(0.062, 0.3, 4, 10), socks, 0, -0.64, 0, g);
-      part(new THREE.BoxGeometry(0.11, 0.08, 0.27), shoes, 0, -0.88, -0.05, g);
-      return g;
+      // Thigh, then the knee joint carrying the shin, stirrup sock and cleat.
+      part(new THREE.CapsuleGeometry(0.088, 0.3, 4, 10), pants, 0, -0.21, 0, g);
+      const k = new THREE.Group();
+      k.position.y = -0.44;
+      g.add(k);
+      part(new THREE.CapsuleGeometry(0.068, 0.1, 4, 10), pants, 0, -0.04, 0, k);
+      part(new THREE.CapsuleGeometry(0.058, 0.24, 4, 10), socks, 0, -0.22, 0, k);
+      part(new THREE.BoxGeometry(0.11, 0.08, 0.27), shoes, 0, -0.44, -0.05, k);
+      return { g, k };
     };
-    const legL = leg(-0.105),
-      legR = leg(0.105);
+    const LL = leg(-0.105),
+      LR = leg(0.105),
+      legL = LL.g,
+      legR = LR.g;
     let bat: THREE.Mesh | undefined;
     if (withBat) {
-      // Ash bat: thin handle widening to the barrel, with a knob.
+      // Ash bat held at the knob end: the mesh's origin is the hands, the barrel runs along +Y.
       const wood = new THREE.MeshStandardMaterial({ color: "#d8b07a", roughness: 0.45 });
-      bat = part(
-        new THREE.CylinderGeometry(0.034, 0.014, 0.86, 14),
-        wood,
-        0.16,
-        -0.25,
-        -0.25,
-        right,
-      );
-      bat.rotation.z = -0.65;
-      part(new THREE.CylinderGeometry(0.022, 0.022, 0.02, 12), wood, 0, -0.43, 0, bat);
+      bat = new THREE.Mesh(new THREE.CylinderGeometry(0.034, 0.013, 0.86, 14), wood);
+      bat.geometry.translate(0, 0.36, 0);
+      bat.castShadow = true;
+      const knob = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.02, 12), wood);
+      knob.position.y = -0.07;
+      bat.add(knob);
+      root.add(bat);
     }
-    return { root, left, right, legL, legR, bat, jersey: jerseyMat.map! };
+    return {
+      root,
+      left,
+      right,
+      elbowL: L.e,
+      elbowR: R.e,
+      legL,
+      legR,
+      kneeL: LL.k,
+      kneeR: LR.k,
+      bat,
+      jersey: jerseyMat.map!,
+    };
   }
   private pointerMove = (e: PointerEvent) => {
     this.aimFromPointer(e);
@@ -932,7 +1026,8 @@ export class BaseballField {
   update(dt: number) {
     if (this.disposed || !this.host.clientWidth || !this.host.clientHeight) return;
     this.time += dt;
-    const s = this.engine.state;
+    const s = this.engine.state,
+      f0 = s.flight;
     let cam = s.camera;
     if (s.phase === "inplay" && s.autoCamera) cam = "ball";
     const key = cam + this.host.clientWidth / this.host.clientHeight;
@@ -963,7 +1058,17 @@ export class BaseballField {
       look.set(b.x * 0.7, Math.max(1, b.y * 0.4), b.z * 0.7 + 8);
       fov = 56;
     }
-    const k = this.cameraKey !== key ? 1 : Math.min(1, dt * 5);
+    // Development only: browser tests can park the camera anywhere for close-ups.
+    const devCam = import.meta.env.DEV
+      ? (window as unknown as { __cam?: [number, number, number, number, number, number, number] })
+          .__cam
+      : undefined;
+    if (devCam) {
+      pos.set(devCam[0], devCam[1], devCam[2]);
+      look.set(devCam[3], devCam[4], devCam[5]);
+      fov = devCam[6];
+    }
+    const k = this.cameraKey !== key || devCam ? 1 : Math.min(1, dt * 5);
     this.camera.position.lerp(pos, k);
     this.camera.lookAt(look);
     if (this.camera.fov !== fov) {
@@ -971,87 +1076,200 @@ export class BaseballField {
       this.camera.updateProjectionMatrix();
     }
     this.cameraKey = key;
+    const swing = Math.sin(this.time * 18);
+    // Arms pump opposite to the legs while running, elbows near 90°.
+    const runArms = (p: Figure) =>
+      this.hands(
+        p,
+        V(0.26, 1.12 + 0.1 * Math.max(0, swing), -0.08 - 0.24 * swing),
+        V(-0.26, 1.12 + 0.1 * Math.max(0, -swing), -0.08 + 0.24 * swing),
+      );
+    const runLegs = (p: Figure, phase = swing) => {
+      p.legL.rotation.x = phase * 0.7;
+      p.legR.rotation.x = -phase * 0.7;
+      // The trailing leg's shin kicks up behind; the leading one is nearly straight.
+      p.kneeL.rotation.x = -(0.2 + 0.55 * (1 - phase));
+      p.kneeR.rotation.x = -(0.2 + 0.55 * (1 + phase));
+    };
+    const stand = (p: Figure) => {
+      p.legL.rotation.set(0, 0, 0);
+      p.legR.rotation.set(0, 0, 0);
+      p.kneeL.rotation.x = 0;
+      p.kneeR.rotation.x = 0;
+      p.root.position.y = 0;
+    };
     this.players.forEach((p, i) => {
       const pos = s.phase === "inplay" && s.live ? s.live.defenders[i] : DEFENSE[i];
       p.root.position.set(pos.x, 0, pos.z);
       p.root.visible = true;
-      p.root.rotation.y = i === 1 ? Math.PI : 0;
-      p.left.rotation.set(0.12, 0, -0.15);
-      p.right.rotation.set(0.1, 0, 0.15);
-      p.legL.rotation.x = 0;
-      p.legR.rotation.x = 0;
+      p.root.rotation.set(0, i === 1 ? Math.PI : 0, 0);
+      stand(p);
+      // Ready position: glove out in front, throwing hand relaxed.
+      this.hands(p, V(0.3, 1.0, -0.12), V(-0.27, 1.08, -0.24));
     });
-    const pitcher = this.players[0];
-    if (s.phase === "windup") {
-      const u = 1 - s.timer / 0.62;
-      pitcher.right.rotation.x = -Math.PI * u;
-      pitcher.left.rotation.x = -0.9;
-      pitcher.legL.rotation.x = -Math.sin(u * Math.PI) * 1.3;
-    } else if (s.phase === "flight") {
-      pitcher.right.rotation.x = 0.9;
-      pitcher.root.rotation.x = 0.15;
-    } else pitcher.root.rotation.x = 0;
+    const pitcher = this.players[0],
+      ease = (t: number) => t * t * (3 - 2 * t),
+      path = (keys: [number, Vec][], t: number) => {
+        let k = 0;
+        while (k < keys.length - 2 && t > keys[k + 1][0]) k++;
+        const [t0, a] = keys[k],
+          [t1, b] = keys[k + 1],
+          v = ease(clamp((t - t0) / (t1 - t0 || 1), 0, 1));
+        return V(lerp(a.x, b.x, v), lerp(a.y, b.y, v), lerp(a.z, b.z, v));
+      };
+    const cocked = V(0.42, 1.74, 0.24);
+    if (s.mode !== "batting" && s.phase === "ready" && !this.engine.batting) {
+      // Set position: ball hidden in the glove at the chest.
+      this.hands(pitcher, V(0.02, 1.28, -0.25), V(-0.05, 1.3, -0.27));
+    } else if (s.phase === "windup" && !this.engine.batting) {
+      const u = clamp(1 - s.timer / 0.62, 0, 1);
+      // Leg kick, then hands break: glove reaches for the plate, the ball goes down, back, up.
+      const kick = Math.sin(clamp(u / 0.8, 0, 1) * Math.PI);
+      pitcher.legL.rotation.x = kick * 1.35;
+      pitcher.kneeL.rotation.x = -kick * 1.7;
+      pitcher.kneeR.rotation.x = -kick * 0.15;
+      pitcher.root.rotation.x = -0.08 * Math.sin(u * Math.PI);
+      this.hands(
+        pitcher,
+        path(
+          [
+            [0, V(0.02, 1.28, -0.25)],
+            [0.4, V(0.0, 1.4, -0.22)],
+            [0.7, V(0.36, 0.98, 0.16)],
+            [1, cocked],
+          ],
+          u,
+        ),
+        path(
+          [
+            [0, V(-0.05, 1.3, -0.27)],
+            [0.4, V(-0.04, 1.42, -0.24)],
+            [1, V(-0.16, 1.5, -0.55)],
+          ],
+          u,
+        ),
+      );
+    } else if (s.phase === "flight" && f0 && !this.engine.batting) {
+      // Release out in front, then follow through across the body; front leg planted.
+      const k = clamp(f0.elapsed / 0.3, 0, 1);
+      pitcher.root.rotation.x = 0.28 * ease(k);
+      pitcher.legL.rotation.x = 0.6;
+      pitcher.kneeL.rotation.x = -0.35;
+      pitcher.legR.rotation.x = -0.5 * ease(k);
+      pitcher.kneeR.rotation.x = -0.9 * ease(k);
+      this.hands(
+        pitcher,
+        path(
+          [
+            [0, cocked],
+            [0.35, V(0.3, 1.86, -0.38)],
+            [1, V(-0.22, 0.86, -0.38)],
+          ],
+          k,
+        ),
+        V(-0.2, 1.2, -0.06),
+      );
+    }
     const catcher = this.players[1];
-    catcher.root.scale.y = 0.68;
-    catcher.root.position.y = 0.02;
+    // Full crouch: thighs forward and spread, shins folded under.
+    if (s.phase !== "inplay" || s.live?.fielder !== 1) {
+      catcher.root.position.y = -0.5;
+      catcher.legL.rotation.set(1.35, 0, -0.35);
+      catcher.legR.rotation.set(1.35, 0, 0.35);
+      catcher.kneeL.rotation.x = -2.35;
+      catcher.kneeR.rotation.x = -2.35;
+      catcher.root.rotation.x = -0.12;
+    }
+    // Catcher presents the glove as a target.
+    this.hands(catcher, V(0.22, 0.95, -0.12), V(-0.12, 1.25, -0.42));
     // From the catcher camera the catcher model would hide the zone and the incoming ball.
     catcher.root.visible = cam !== "catcher" || s.phase === "inplay";
     const hand = this.engine.batter.hand === "L" ? -1 : 1;
-    this.batter.root.position.set(hand * 0.82, 0, 0);
-    this.batter.root.rotation.y = (hand * Math.PI) / 2;
+    this.batter.root.position.set(hand * 0.82, -0.04, 0);
+    // Athletic stance: feet wider than the shoulders, knees soft.
+    this.batter.legL.rotation.set(0.12, 0, -0.16);
+    this.batter.legR.rotation.set(0.12, 0, 0.16);
+    this.batter.kneeL.rotation.x = -0.3;
+    this.batter.kneeR.rotation.x = -0.3;
     // Left-handed batters are the mirror image: bat and hands on the other side.
     this.batter.root.scale.x = hand;
     this.batter.jersey.repeat.x = hand;
-    this.batter.left.rotation.x = -0.9;
-    this.batter.right.rotation.x = -1.8;
-    this.batter.right.rotation.z = -0.5;
     const f = s.flight;
     // The batter leaves the box only on a batted ball (not on a steal, pickoff or wild pitch).
     this.batter.root.visible =
       s.mode !== "bullpen" && !(s.phase === "inplay" && s.live?.kind === "batted");
-    if (f?.swung) {
-      const u = clamp((f.elapsed - f.swingTime) / 0.22, 0, 1);
-      this.batter.root.rotation.y = (hand * Math.PI) / 2 + hand * Math.sin(u * Math.PI) * 1.6;
-      this.batter.right.rotation.x = -1.5 + u * 2.4;
-    }
+    // Batting: both hands on the handle (left hand lower). The bat starts up over the back
+    // shoulder, comes through level over the plate and wraps over the front shoulder.
+    const su = f?.swung ? clamp((f.elapsed - f.swingTime) / 0.22, 0, 1) : 0;
+    this.batter.root.rotation.y = (hand * Math.PI) / 2 + hand * 0.85 * ease(su);
+    const grip = path(
+        [
+          [0, V(0.17, 1.4, -0.14)],
+          [0.5, V(-0.02, 1.1, -0.42)],
+          [1, V(-0.28, 1.42, -0.1)],
+        ],
+        su,
+      ),
+      dirs: [number, THREE.Vector3][] = [
+        [0, new THREE.Vector3(0.4, 0.82, 0.4)],
+        [0.5, new THREE.Vector3(-0.3, 0.06, -0.95)],
+        [1, new THREE.Vector3(-0.35, 0.55, 0.76)],
+      ];
+    let di = su < 0.5 ? 0 : 1;
+    const a = dirs[di][1].clone().normalize(),
+      b = dirs[di + 1][1].clone().normalize(),
+      v = ease(clamp((su - dirs[di][0]) / 0.5, 0, 1)),
+      up = new THREE.Vector3(0, 1, 0),
+      qa = new THREE.Quaternion().setFromUnitVectors(up, a),
+      qb = new THREE.Quaternion().setFromUnitVectors(up, b);
+    const bat = this.batter.bat!;
+    bat.position.set(grip.x, grip.y, grip.z);
+    bat.quaternion.slerpQuaternions(qa, qb, v);
+    const along = new THREE.Vector3(0, 1, 0).applyQuaternion(bat.quaternion);
+    this.hands(
+      this.batter,
+      V(grip.x + along.x * 0.09, grip.y + along.y * 0.09, grip.z + along.z * 0.09),
+      grip,
+    );
     if (s.live && s.phase === "inplay") {
       const l = s.live,
         p = this.players[l.fielder],
         target = l.throw ? BASES[l.throw.base - 1] : l.bounced ? l.land : l.catchPoint;
-      p.root.rotation.y = playerYaw(V(target.x - l.fielderPos.x, 0, target.z - l.fielderPos.z));
+      p.root.rotation.set(
+        0,
+        playerYaw(V(target.x - l.fielderPos.x, 0, target.z - l.fielderPos.z)),
+        0,
+      );
       if (l.fieldedAt === null) {
-        p.legL.rotation.x = Math.sin(this.time * 17) * 0.6;
-        p.legR.rotation.x = -p.legL.rotation.x;
-      }
-      if (l.state === "송구") p.right.rotation.x = -1.5;
-      if (l.caughtFly) p.left.rotation.x = -2;
+        runLegs(p);
+        runArms(p);
+      } else if (l.state === "송구") this.hands(p, cocked, V(-0.2, 1.4, -0.48));
+      else this.hands(p, V(0.05, 1.3, -0.3), V(-0.06, 1.32, -0.32));
+      if (l.caughtFly) this.hands(p, V(0.28, 1.05, -0.12), V(-0.18, 2.0, -0.36));
       this.landing.visible = l.fieldedAt === null;
       this.landing.position.set(l.land.x, 0.1, l.land.z);
     } else this.landing.visible = false;
     this.runners.forEach((r, i) => {
       r.root.visible = false;
-      r.legL.rotation.x = 0;
-      r.legR.rotation.x = 0;
+      stand(r);
+      // Lead-off stance by default: knees soft, hands out in front.
+      this.hands(r, V(0.3, 0.98, -0.2), V(-0.3, 0.98, -0.2));
       const l = s.live;
-      if (l && s.phase === "inplay") {
-        const track = l.runners.find((r) => r.id === i);
-        if (!track) return;
-        const pose = runnerPose(track);
+      const show = (pose: ReturnType<typeof runnerPose>) => {
         r.root.visible = pose.visible;
         r.root.position.set(pose.position.x, 0, pose.position.z);
         r.root.rotation.y = playerYaw(pose.facing);
         if (pose.moving) {
-          r.legL.rotation.x = Math.sin(this.time * 18) * 0.65;
-          r.legR.rotation.x = -r.legL.rotation.x;
+          runLegs(r, Math.sin(this.time * 18 + i));
+          runArms(r);
         }
+      };
+      if (l && s.phase === "inplay") {
+        const track = l.runners.find((r) => r.id === i);
+        if (track) show(runnerPose(track));
       } else if (i === 0 && s.stealTrack) {
         // The E-steal runner breaks during the delivery.
-        const pose = runnerPose(s.stealTrack);
-        r.root.visible = true;
-        r.root.position.set(pose.position.x, 0, pose.position.z);
-        r.root.rotation.y = playerYaw(pose.facing);
-        r.legL.rotation.x = Math.sin(this.time * 18) * 0.65;
-        r.legR.rotation.x = -r.legL.rotation.x;
+        show({ ...runnerPose(s.stealTrack), visible: true, moving: true });
       } else if (i < 3 && s.bases[i]) {
         r.root.visible = true;
         r.root.position.set(BASES[i].x + 0.65, 0, BASES[i].z);
