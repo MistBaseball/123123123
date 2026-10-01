@@ -3855,3 +3855,32 @@ kbd {
   font-size: 0.72rem;
   color: #8fa4ae;
 }
+/* Pickoff throws (pitching) and the E steal call (batting). */
+.pp-actions .pickoff-buttons {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 6px;
+}
+.pp-actions .pickoff-buttons button {
+  flex: 1;
+  margin: 0 !important;
+  padding: 8px 6px;
+  white-space: nowrap;
+}
+.steal-button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 8px 0 0 !important;
+  padding: 9px 10px;
+}
+.steal-button kbd {
+  font-size: 0.625rem;
+}
+.steal-button.selected {
+  border-color: #e8b65a;
+  color: #f4d48e;
+  background: rgba(232, 182, 90, 0.14);
+}

@@ -2,8 +2,28 @@ export type Vec = { x: number; y: number; z: number };
 export type Mode = "match" | "bullpen" | "batting";
 export type Camera = "pitcher" | "catcher" | "broadcast" | "ball" | "top";
 export type Phase = "ready" | "windup" | "flight" | "inplay" | "result" | "between" | "finished";
-export type PitchId = "fastball" | "slider" | "curve" | "changeup" | "cutter" | "splitter";
-export const PITCHES: {
+export type PitchId =
+  | "fastball"
+  | "slider"
+  | "curve"
+  | "changeup"
+  | "cutter"
+  | "splitter"
+  | "twoseam"
+  | "sinker"
+  | "forkball"
+  | "sweeper";
+/**
+ * Pitch data table. Everything that makes one pitch different from another lives here:
+ * - delta: speed change (km/h) from the pitcher's fastball
+ * - breakX/breakY: mid-flight bend used by pitchMovement() (display and trajectory share it)
+ * - control: multiplier on the control error (1 = fastball, higher = harder to locate)
+ * - stamina: multiplier on the energy each pitch costs
+ * - chase/whiff: how much more the AI batter chases it / swings through it
+ * - soft: how much weaker the AI batter's contact is (more ground balls)
+ * - wild: multiplier on the wild-pitch chance (pitches that dive into the dirt)
+ */
+export type PitchData = {
   id: PitchId;
   name: string;
   en: string;
@@ -15,7 +35,14 @@ export const PITCHES: {
   desc: string;
   /** XP needed to learn this pitch. The four-seam fastball is known from day one. */
   cost: number;
-}[] = [
+  control: number;
+  stamina: number;
+  chase: number;
+  whiff: number;
+  soft: number;
+  wild: number;
+};
+export const PITCHES: PitchData[] = [
   {
     id: "fastball",
     name: "포심",
@@ -27,6 +54,12 @@ export const PITCHES: {
     color: "#e8b65a",
     desc: "빠른 직구로 스트라이크 존을 공략",
     cost: 0,
+    control: 1,
+    stamina: 1,
+    chase: 0,
+    whiff: 0,
+    soft: 0,
+    wild: 1,
   },
   {
     id: "slider",
@@ -39,6 +72,12 @@ export const PITCHES: {
     color: "#85bde4",
     desc: "타자 바깥쪽으로 날카롭게 휘는 공",
     cost: 60,
+    control: 1,
+    stamina: 1,
+    chase: 0.1,
+    whiff: 0.09,
+    soft: 0,
+    wild: 1,
   },
   {
     id: "curve",
@@ -51,6 +90,12 @@ export const PITCHES: {
     color: "#c2a4eb",
     desc: "큰 낙차로 타자의 타이밍을 빼앗기",
     cost: 120,
+    control: 1,
+    stamina: 1,
+    chase: 0.1,
+    whiff: 0.09,
+    soft: 0,
+    wild: 1.2,
   },
   {
     id: "changeup",
@@ -63,6 +108,12 @@ export const PITCHES: {
     color: "#8bceb6",
     desc: "직구와 같은 폼, 느린 도착 시간",
     cost: 90,
+    control: 1,
+    stamina: 1,
+    chase: 0.1,
+    whiff: 0.09,
+    soft: 0,
+    wild: 1,
   },
   {
     id: "cutter",
@@ -75,6 +126,12 @@ export const PITCHES: {
     color: "#e58f7a",
     desc: "직구처럼 오다 끝에서 짧게 꺾이는 공",
     cost: 160,
+    control: 1,
+    stamina: 1,
+    chase: 0.1,
+    whiff: 0.09,
+    soft: 0,
+    wild: 1,
   },
   {
     id: "splitter",
@@ -87,15 +144,223 @@ export const PITCHES: {
     color: "#d9d27a",
     desc: "직구 궤적에서 뚝 떨어지는 결정구",
     cost: 200,
+    control: 1,
+    stamina: 1,
+    chase: 0.1,
+    whiff: 0.09,
+    soft: 0,
+    wild: 1.3,
+  },
+  {
+    id: "twoseam",
+    name: "투심",
+    en: "2-SEAM",
+    key: "7",
+    delta: -3,
+    breakX: -0.18,
+    breakY: 0.06,
+    color: "#f0c987",
+    desc: "직구 구속으로 몸쪽으로 파고드는 공 · 약한 타구 유도",
+    cost: 80,
+    control: 1.05,
+    stamina: 1,
+    chase: 0.04,
+    whiff: 0.03,
+    soft: 0.04,
+    wild: 1,
+  },
+  {
+    id: "sinker",
+    name: "싱커",
+    en: "SINKER",
+    key: "8",
+    delta: -6,
+    breakX: -0.24,
+    breakY: 0.22,
+    color: "#a8c48a",
+    desc: "가라앉으며 휘는 공 · 땅볼 유도에 강함",
+    cost: 110,
+    control: 1.1,
+    stamina: 1.05,
+    chase: 0.06,
+    whiff: 0.05,
+    soft: 0.09,
+    wild: 1.15,
+  },
+  {
+    id: "forkball",
+    name: "포크볼",
+    en: "FORKBALL",
+    key: "9",
+    delta: -15,
+    breakX: 0,
+    breakY: 0.62,
+    color: "#e4a2c0",
+    desc: "가장 크게 떨어지는 결정구 · 제구가 어렵고 체력 소모가 큼",
+    cost: 240,
+    control: 1.3,
+    stamina: 1.25,
+    chase: 0.15,
+    whiff: 0.14,
+    soft: 0.03,
+    wild: 1.7,
+  },
+  {
+    id: "sweeper",
+    name: "스위퍼",
+    en: "SWEEPER",
+    key: "0",
+    delta: -16,
+    breakX: 0.62,
+    breakY: -0.04,
+    color: "#7fd3e0",
+    desc: "옆으로 크게 쓸고 나가는 공 · 헛스윙 유도, 제구 난이도 높음",
+    cost: 220,
+    control: 1.18,
+    stamina: 1.1,
+    chase: 0.12,
+    whiff: 0.12,
+    soft: 0,
+    wild: 1.1,
   },
 ];
+export const pitchData = (id: PitchId) => PITCHES.find((p) => p.id === id) ?? PITCHES[0];
 // AI pitchers only use the four original pitch types.
 const AI_PITCHES = 4;
 /** Contact swing timing: the ideal moment as a share of the visible flight. */
 export const SWING_SWEET = 0.92;
 export const SWING_GOOD = 0.045;
-export const swingWindow = (difficulty: "easy" | "normal" | "hard") =>
-  difficulty === "easy" ? 0.26 : difficulty === "normal" ? 0.18 : 0.12;
+/**
+ * Tunable game-rule values in one place (the web counterpart of Unity Inspector fields).
+ * Change numbers here; the rules read them, nothing else hard-codes them.
+ */
+export const RULES = {
+  /** Wild pitch chance per pitch with runners on: base + fatigue * ((100 - energy) / 100)^2. */
+  wildPitchBase: 0.004,
+  wildPitchFatigue: 0.075,
+  wildPitchMin: 0.002,
+  wildPitchMax: 0.09,
+  /** Hit by pitch: the ball at the plate is inside the batter's body box (m from plate center). */
+  hbpInnerEdge: 0.7,
+  hbpLow: 0.25,
+  hbpHigh: 1.8,
+  /** Runners' lead off the bag when a pitch or pickoff starts (m). */
+  runnerLead: 3.2,
+  /** Extra random lead an AI runner gambles with (m, 0..this). */
+  runnerLeadGamble: 1.8,
+  /** Runner reaction before going back on a pickoff / breaking on a wild pitch (s). */
+  runnerReaction: 0.22,
+  /** Extra random pickoff reaction when the runner is leaning the wrong way (s, 0..this). */
+  runnerReactionGamble: 0.2,
+  /** Stealing runner: lead and first-step delay after the pitcher's first move (s). */
+  stealLead: 3.6,
+  stealJump: 0.12,
+  /** How much later (s, 0..this) a runner may read the pitcher's first move. */
+  stealJumpGamble: 0.2,
+  /** How much slower (s, 0..this) the catcher's exchange may be on a given throw. */
+  catcherTransferGamble: 0.22,
+  /** Pitcher's pickoff move before the ball leaves the hand (s) and its throw speed (m/s). */
+  pickoffMove: 0.28,
+  pickoffThrowSpeed: 30,
+  /** How far before the bag a tag reaches a sliding runner (m). */
+  tagReach: 0.4,
+  /** A runner takes an extra base on a wild pitch only with this much time to spare (s). */
+  advanceMargin: 0.25,
+  /** Runners on a fly ball with fewer than two outs run at this share of full speed until it lands. */
+  flyReadPace: 0.55,
+  /** ...scaled down for shallow flies: full share at flyReadFar (m), 20% at flyReadNear or less. */
+  flyReadNear: 30,
+  flyReadFar: 90,
+};
+export type Stage = "high" | "pro";
+/**
+ * Difficulty profile per career stage. The pro stage is tuned to feel clearly harder than high
+ * school without doubling everything.
+ */
+export const STAGES: Record<
+  Stage,
+  {
+    name: string;
+    /** Name of the post-season goal shown on the gauge. */
+    goal: string;
+    goalReward: string;
+    /** AI pitcher base velocity (km/h) and how many of the PITCHES table it mixes in. */
+    aiVelocity: number;
+    aiPitchKinds: number;
+    /** AI batter: added contact probability and plate-discipline (eye) points. */
+    batterContact: number;
+    batterEye: number;
+    /** Player batting: timing window scale and range-hint scale. */
+    swingWindow: number;
+    hintScale: number;
+    /** Fielders: chase speed (m/s), first-step reaction (s), throw speed (m/s). */
+    fielderSpeed: number;
+    fielderReaction: number;
+    throwSpeed: number;
+    /** Catcher on a steal: catch-to-release time (s) and arm speed (m/s). */
+    catcherTransfer: number;
+    catcherArm: number;
+    /** AI runners' lead gamble scale (smaller = harder to pick off). */
+    leadGamble: number;
+    /** Scale of the gauge gain after each match. */
+    gaugeGain: number;
+  }
+> = {
+  high: {
+    name: "고교",
+    goal: "스카우트 평가",
+    goalReward: "입단 제의",
+    aiVelocity: 135,
+    aiPitchKinds: 4,
+    batterContact: 0,
+    batterEye: 0,
+    swingWindow: 1,
+    hintScale: 1,
+    fielderSpeed: 5.6,
+    fielderReaction: 0.4,
+    throwSpeed: 29,
+    catcherTransfer: 0.78,
+    catcherArm: 30,
+    leadGamble: 1,
+    gaugeGain: 1,
+  },
+  pro: {
+    name: "프로",
+    goal: "1군 신뢰도",
+    goalReward: "1군 선발 로테이션 진입",
+    aiVelocity: 142,
+    aiPitchKinds: 6,
+    batterContact: 0.06,
+    batterEye: 8,
+    swingWindow: 0.85,
+    hintScale: 1.15,
+    fielderSpeed: 6,
+    fielderReaction: 0.34,
+    throwSpeed: 31,
+    catcherTransfer: 0.72,
+    catcherArm: 31,
+    leadGamble: 0.85,
+    gaugeGain: 0.75,
+  },
+};
+export const swingWindow = (difficulty: "easy" | "normal" | "hard", stage: Stage = "high") =>
+  (difficulty === "easy" ? 0.26 : difficulty === "normal" ? 0.18 : 0.12) *
+  STAGES[stage].swingWindow;
+/** Wild-pitch chance for one pitch; rises sharply as the pitcher tires. */
+export const wildPitchChance = (energy: number, pitchWild = 1) =>
+  clamp(
+    (RULES.wildPitchBase + RULES.wildPitchFatigue * ((100 - clamp(energy, 0, 100)) / 100) ** 2) *
+      pitchWild,
+    RULES.wildPitchMin,
+    RULES.wildPitchMax,
+  );
+/** True when a pitch crossing the plate at (x, y) strikes a batter standing on `hand`'s side. */
+export const hitsBatter = (p: { x: number; y: number }, hand: "R" | "L") =>
+  (hand === "L" ? -p.x : p.x) >= RULES.hbpInnerEdge && p.y >= RULES.hbpLow && p.y <= RULES.hbpHigh;
+/** Clear result type of a single pitch. */
+export type PitchOutcome = "Strike" | "Ball" | "HitByPitch" | "Foul" | "InPlay" | "WildPitch";
+/** Readable runner state, derived from the RunnerTrack fields (no second copy of the state). */
+export type RunnerState = "Idle" | "Running" | "Stealing" | "Returning" | "Safe" | "Out";
 /** Radius (m) of the batter's read of where the pitch will cross the plate. */
 export const contactHintRadius = (contact: number) => clamp(0.5 - contact * 0.0035, 0.15, 0.5);
 /** How far (m) the bat aim may miss the ball and still make contact. */
@@ -203,6 +468,13 @@ export const TEAMS: {
   },
 ];
 export const teamOf = (id: string) => TEAMS.find((t) => t.id === id) ?? null;
+/** [visiting team, our team]: high-school rivals, or our club against a rotating pro rival. */
+export const matchTeams = (c: Pick<Career, "stage" | "club" | "day">): [string, string] => {
+  const club = c.stage === "pro" ? teamOf(c.club) : null;
+  if (!club) return ["한빛고", "하늘고"];
+  const rivals = TEAMS.filter((t) => t.id !== club.id);
+  return [rivals[c.day % rivals.length].name, club.name];
+};
 /** Player creation: every stat starts at STAT_BASE and STAT_POINTS are spread freely. */
 export const STAT_BASE = 45;
 export const STAT_POINTS = 100;
@@ -256,8 +528,8 @@ export const DEFENSE = [
 export const BASE_PATH_LENGTH = Math.hypot(19.4, 19.4);
 /** Fielder chase speed (m/s), first-step reaction (s) and glove reach (m) for batted balls. */
 // Tuned so roughly a third of balls in play fall for hits (see scripts/check-game.mjs).
-export const FIELDER_SPEED = 5.6;
-export const FIELDER_REACTION = 0.4;
+export const FIELDER_SPEED = STAGES.high.fielderSpeed;
+export const FIELDER_REACTION = STAGES.high.fielderReaction;
 export const CATCH_REACH = 1.2;
 const HANG_BASE = 1.4;
 const HANG_DIV = 38;
@@ -292,10 +564,20 @@ export type RunnerTrack = {
   scoredAt: number | null;
   /** After a caught fly: retouch the original base, then run for home. */
   tagUp?: boolean;
+  /** Broke for the next base with the pitch (E steal call). */
+  stealing?: boolean;
+  /** Full sprint pace; `pace` may be lower while a fly ball is still in the air. */
+  fullPace?: number;
 };
 /** A runner is at rest when standing on the base it is heading to (or out). */
 export const runnerSettled = (r: RunnerTrack) =>
   r.out || (Math.abs(r.progress - r.target) < 1e-6 && !r.tagUp);
+export function runnerState(r: RunnerTrack): RunnerState {
+  if (r.out) return "Out";
+  if (r.progress > r.target + 1e-6 || r.tagUp) return "Returning";
+  if (r.progress < r.target - 1e-6) return r.stealing ? "Stealing" : "Running";
+  return Math.abs(r.progress - r.from) < 1e-6 ? "Idle" : "Safe";
+}
 export function runnerPose(r: RunnerTrack) {
   const step = Math.min(3, Math.floor(r.progress)),
     t = clamp(r.progress - step, 0, 1),
@@ -380,6 +662,14 @@ export type Career = {
   created: boolean;
   /** Dream club (TEAMS id). Its scout watches every season match. */
   team: string;
+  /** Current career stage. "pro" after the signing ending. */
+  stage: Stage;
+  /** Club the player signed with (TEAMS id, "" = not signed yet). */
+  club: string;
+  /** The signing ending was watched and pro play is open. */
+  proUnlocked: boolean;
+  /** The pro goal (STAGES.pro.goalReward) has been reached. */
+  proGoal: boolean;
 };
 export const newCareer = (): Career => ({
   version: 1,
@@ -403,6 +693,10 @@ export const newCareer = (): Career => ({
   blessing: "",
   created: false,
   team: "",
+  stage: "high",
+  club: "",
+  proUnlocked: false,
+  proGoal: false,
 });
 export type Flight = {
   start: Vec;
@@ -420,6 +714,8 @@ export type Flight = {
   batAim: Vec;
   /** Batting only: faint area around the true crossing point; smaller with higher contact. */
   hint: { x: number; y: number; r: number } | null;
+  /** Decided at release from the pitcher's stamina: the catcher cannot hold this pitch. */
+  wild: boolean;
 };
 export type BatFeedback = {
   timing: "early" | "good" | "late" | "take";
@@ -430,6 +726,19 @@ export type BatFeedback = {
   batAim: Vec | null;
 };
 export type LivePlay = {
+  /**
+   * batted: ball put in play (runners[0] is the batter).
+   * wild: wild pitch, the catcher chases the ball to the backstop.
+   * steal: the catcher throws to second on an E steal call.
+   * pickoff: the pitcher throws to a base instead of home.
+   */
+  kind: "batted" | "wild" | "steal" | "pickoff";
+  /** Time from fielding the ball to releasing the throw (s). */
+  hold: number;
+  /** Throw speed of the current fielder (m/s). */
+  throwSpeed: number;
+  /** Ball/strike call of the pitch that started a wild/steal play, shown with the verdict. */
+  call: string;
   start: Vec;
   land: Vec;
   duration: number;
@@ -508,6 +817,12 @@ export type GameState = {
   lastXpGain: number;
   /** Dream-club scout evaluation before/after the last finished match. */
   lastScout: { before: number; after: number } | null;
+  /** Result type of the last pitch. */
+  lastOutcome: PitchOutcome | null;
+  /** E pressed: the runner on first goes with the next pitch (STEAL_READY). */
+  stealCall: boolean;
+  /** The stealing runner while the pitch is being delivered (null otherwise). */
+  stealTrack: RunnerTrack | null;
 };
 const initial = (career: Career, mode: Mode = "match", maxInnings = 3): GameState => ({
   mode,
@@ -559,6 +874,9 @@ const initial = (career: Career, mode: Mode = "match", maxInnings = 3): GameStat
   matchXp: 0,
   lastXpGain: 0,
   lastScout: null,
+  lastOutcome: null,
+  stealCall: false,
+  stealTrack: null,
 });
 export class BaseballEngine {
   private matchStrikeouts = 0;
@@ -606,6 +924,14 @@ export class BaseballEngine {
   }
   onSound(fn: (kind: string) => void) {
     this.soundCallback = fn;
+  }
+  /** Difficulty profile of the current career stage (high school or pro). */
+  get stageRules() {
+    return STAGES[this.state.career.stage] ?? STAGES.high;
+  }
+  /** [visiting team, our team] for the scoreboard and the log. */
+  get teams(): [string, string] {
+    return matchTeams(this.state.career);
   }
   sound(kind: string) {
     if (this.state.sound) this.soundCallback(kind);
@@ -677,6 +1003,17 @@ export class BaseballEngine {
         // Players saved before the creation screen existed keep their name and stats.
         clean.created = typeof c.created === "boolean" ? c.created : true;
         clean.team = typeof c.team === "string" && teamOf(c.team) ? c.team : "";
+        // Pro-stage fields (added later): older saves are high-school careers. A save that
+        // already holds the dream-club contract keeps it and will see the signing ending.
+        clean.club =
+          typeof c.club === "string" && teamOf(c.club)
+            ? c.club
+            : clean.team && clean.draft.endsWith("입단")
+              ? clean.team
+              : "";
+        clean.proUnlocked = c.proUnlocked === true && !!clean.club;
+        clean.stage = c.stage === "pro" && clean.proUnlocked ? "pro" : "high";
+        clean.proGoal = c.proGoal === true && clean.stage === "pro";
         this.state.career = clean;
         this.state.energy = clean.energy;
       }
@@ -715,10 +1052,15 @@ export class BaseballEngine {
     this.matchHits = 0;
     this.matchRuns = 0;
     this.keys.clear();
-    const team = teamOf(this.state.career.team);
-    if (mode === "match" && team) {
+    const team = teamOf(this.state.career.team),
+      [away, home] = this.teams;
+    if (mode === "match") this.state.log = [`${home} vs ${away} · 경기 준비`];
+    if (mode === "match" && this.state.career.stage === "pro") {
+      const club = teamOf(this.state.career.club)!;
+      this.state.detail = `프로 무대 · ${club.city} ${club.name} 소속으로 ${away}와 맞붙습니다`;
+    } else if (mode === "match" && team) {
       this.state.detail = `${team.city} ${team.name} ${team.scout} 스카우트가 관중석에서 지켜봅니다`;
-      this.state.log = [`${team.name} 스카우트 관전 · 하늘고 vs 한빛고`];
+      this.state.log = [`${team.name} 스카우트 관전 · ${home} vs ${away}`];
     }
     this.emit();
   }
@@ -743,13 +1085,14 @@ export class BaseballEngine {
   private launch(ai: boolean) {
     const s = this.state,
       stats = s.career.stats,
+      stage = this.stageRules,
       pitch = ai
-        ? PITCHES[Math.floor(this.rng() * AI_PITCHES)]
-        : PITCHES.find((p) => p.id === s.selected)!;
+        ? PITCHES[Math.floor(this.rng() * Math.min(PITCHES.length, stage.aiPitchKinds))]
+        : pitchData(s.selected);
     const fatigue = ai ? Math.max(0, s.pitchCount[0] - 25) * 0.18 : 100 - s.energy;
     const formPenalty = ai ? 0 : (100 - s.career.form) * 0.02;
     const speed = clamp(
-      (ai ? 135 : 110 + stats.velocity * 0.43) +
+      (ai ? stage.aiVelocity : 110 + stats.velocity * 0.43) +
         pitch.delta -
         fatigue * 0.065 -
         (100 - s.effort) * 0.09 -
@@ -761,19 +1104,30 @@ export class BaseballEngine {
     const aim = ai
       ? V(gaussian(this.rng) * 0.29, 0.95 + gaussian(this.rng) * 0.34, 0)
       : { ...s.aim };
-    const sigma = ai ? 0.04 : controlSpread(stats.control, s.energy, s.effort, s.career.form);
+    const sigma =
+      (ai ? 0.04 : controlSpread(stats.control, s.energy, s.effort, s.career.form)) * pitch.control;
     const target = V(
         clamp(aim.x + gaussian(this.rng) * sigma, -1.05, 1.05),
         clamp(aim.y + gaussian(this.rng) * sigma, 0.09, 2.1),
         0,
       ),
-      start = V(0.35, 1.85, 18.44),
-      arc = ballistic(start, target, speed / 3.6)!;
+      start = V(0.35, 1.85, 18.44);
+    // Stamina check at release: a tired arm sometimes buries the pitch where the catcher
+    // cannot hold it. It only matters (and is only rolled) with runners on base.
+    const wild =
+      s.mode === "match" &&
+      s.bases.some(Boolean) &&
+      this.rng() < wildPitchChance(ai ? 100 - fatigue : s.energy, pitch.wild);
+    if (wild) {
+      target.y = 0.09 + this.rng() * 0.12;
+      target.x = clamp(target.x * 1.6, -0.6, 0.6);
+    }
+    const arc = ballistic(start, target, speed / 3.6)!;
     const slow = s.difficulty === "easy" ? 2.5 : s.difficulty === "normal" ? 1.8 : 1.2;
     // The batter reads a zone around the true crossing point. The true point is always inside.
     let hint: Flight["hint"] = null;
     if (ai) {
-      const r = contactHintRadius(stats.contact),
+      const r = contactHintRadius(stats.contact) * stage.hintScale,
         angle = this.rng() * Math.PI * 2,
         off = r * 0.8 * Math.sqrt(this.rng());
       hint = { x: target.x + Math.cos(angle) * off, y: target.y + Math.sin(angle) * off, r };
@@ -793,7 +1147,26 @@ export class BaseballEngine {
       swingTime: 0,
       batAim: { ...s.aim },
       hint,
+      wild,
     };
+    // STEAL_READY → the runner on first breaks with the pitcher's first move.
+    s.stealTrack = null;
+    if (s.stealCall && s.mode === "match" && this.batting && s.bases[0] && !s.bases[1]) {
+      const pace = this.runnerPace(this.runnerOnFirst.speed);
+      s.stealTrack = {
+        id: 1,
+        from: 1,
+        progress: 1 + RULES.stealLead / BASE_PATH_LENGTH,
+        target: 2,
+        pace,
+        fullPace: pace,
+        delay: RULES.stealJump + this.rng() * RULES.stealJumpGamble,
+        out: false,
+        scoredAt: null,
+        stealing: true,
+      };
+    }
+    s.stealCall = false;
     s.phase = "windup";
     s.batFeedback = null;
     s.timer = 0.62;
@@ -831,21 +1204,31 @@ export class BaseballEngine {
       if (s.timer <= 0) this.launch(true);
     } else if (s.phase === "windup") {
       s.timer -= dt;
+      this.runSteal(dt);
       if (s.timer <= 0) {
         s.phase = "flight";
         s.pitchCount[this.batting ? 0 : 1]++;
         s.practice.pitches++;
         if (!this.batting && s.mode === "match")
           s.energy = clamp(
-            s.energy - (0.38 + (s.effort - 70) * 0.012) * (1.3 - s.career.stats.stamina / 180),
+            s.energy -
+              (0.38 + (s.effort - 70) * 0.012) *
+                (1.3 - s.career.stats.stamina / 180) *
+                pitchData(s.flight?.pitch ?? "fastball").stamina,
             0,
             100,
           );
       }
     } else if (s.phase === "flight" && s.flight) {
-      const f = s.flight;
+      const f = s.flight,
+        before = f.elapsed;
       f.elapsed += dt;
       const u = clamp(f.elapsed / f.visualDuration, 0, 1);
+      // The pitch is shown slowed down; the stealing runner moves in real (unslowed) time.
+      this.runSteal(
+        (Math.min(f.elapsed, f.visualDuration) - Math.min(before, f.visualDuration)) *
+          (f.duration / f.visualDuration),
+      );
       s.ball = this.pitchPosition(u);
       if (u >= 1) this.resolvePitch();
     } else if (s.phase === "inplay" && s.live) {
@@ -858,6 +1241,22 @@ export class BaseballEngine {
       this.emitClock = 0;
       this.emit();
     }
+  }
+  /** Base-running pace (bases per second) for a runner with this speed rating. */
+  runnerPace(speed: number) {
+    return (6.2 + speed * 0.02) / BASE_PATH_LENGTH;
+  }
+  /** Our runner on first is taken to be the previous batter in the order. */
+  get runnerOnFirst(): Player {
+    return RIVALS[(this.state.order[1] + 8) % 9];
+  }
+  /** Moves the E-steal runner during the delivery (dt in real game seconds). */
+  private runSteal(dt: number) {
+    const r = this.state.stealTrack;
+    if (!r || dt <= 0) return;
+    const usable = Math.max(0, dt - r.delay);
+    r.delay = Math.max(0, r.delay - dt);
+    r.progress = Math.min(r.target, r.progress + r.pace * usable);
   }
   pitchPosition(u: number): Vec {
     const f = this.state.flight;
@@ -901,11 +1300,16 @@ export class BaseballEngine {
       );
       return;
     }
+    const stage = this.stageRules,
+      data = pitchData(f.pitch),
+      // Hit by pitch: decided by where this ball actually crossed the plate (control error,
+      // pitch movement and the batter's side), not by a separate dice roll.
+      hbp = hitsBatter(f.target, this.batter.hand);
     if (this.batting) {
       if (f.swung) {
         const timing = f.swingTime / f.visualDuration - SWING_SWEET,
           spatial = Math.hypot(f.batAim.x - f.target.x, f.batAim.y - f.target.y),
-          window = swingWindow(s.difficulty),
+          window = swingWindow(s.difficulty, s.career.stage),
           reach = batReach(s.career.stats.contact, s.swingStyle),
           contact = Math.abs(timing) < window && spatial < reach;
         s.batFeedback = {
@@ -945,14 +1349,20 @@ export class BaseballEngine {
           ball: { ...f.target },
           batAim: null,
         };
-        if (zone) this.strike(false, "스트라이크 존 통과");
+        if (hbp) this.hitByPitch();
+        else if (zone) this.strike(false, "스트라이크 존 통과");
         else this.ball();
       }
     } else {
       const b = this.batter,
+        eye = b.eye + stage.batterEye,
         edge = Math.max(Math.abs(f.target.x) / 0.25, Math.abs(f.target.y - 0.95) / 0.4),
-        chase = clamp(0.46 - b.eye * 0.004 + (f.pitch !== "fastball" ? 0.1 : 0), 0.06, 0.45),
-        swing = this.rng() < (zone ? 0.69 : chase * Math.max(0.1, 1.6 - edge * 0.5));
+        chase = clamp(0.46 - eye * 0.004 + data.chase, 0.06, 0.45);
+      if (hbp) {
+        this.hitByPitch();
+        return;
+      }
+      const swing = this.rng() < (zone ? 0.69 : chase * Math.max(0.1, 1.6 - edge * 0.5));
       if (swing) {
         const difficulty = s.difficulty === "hard" ? 0.1 : s.difficulty === "easy" ? -0.12 : 0,
           prob = clamp(
@@ -960,14 +1370,19 @@ export class BaseballEngine {
               b.contact * 0.005 -
               (f.speed - 120) * 0.0035 +
               (100 - s.energy) * 0.002 -
-              (f.pitch !== "fastball" ? 0.09 : 0) +
+              data.whiff +
+              stage.batterContact +
               difficulty,
             0.2,
             0.9,
           );
         if (this.rng() < prob) {
           const q = clamp(
-            0.15 + this.rng() * 0.75 + b.power * 0.001 - Math.max(0, edge - 0.65) * 0.25,
+            0.15 +
+              this.rng() * 0.75 +
+              b.power * 0.001 -
+              Math.max(0, edge - 0.65) * 0.25 -
+              data.soft,
             0.05,
             1,
           );
@@ -981,6 +1396,7 @@ export class BaseballEngine {
   private strike(swing: boolean, detail: string) {
     const s = this.state;
     s.strikes++;
+    s.lastOutcome = "Strike";
     if (s.strikes >= 3) {
       s.outs++;
       if (!this.batting && s.mode === "match") {
@@ -988,11 +1404,19 @@ export class BaseballEngine {
         this.earn(3);
       }
       this.advanceBatter();
-      this.result("STRIKEOUT", swing ? "헛스윙 삼진" : "루킹 삼진", this.batting ? "red" : "gold");
-    } else this.result(swing ? "SWING & MISS" : "STRIKE", detail, this.batting ? "red" : "gold");
+      this.settlePitch(
+        "STRIKEOUT",
+        swing ? "헛스윙 삼진" : "루킹 삼진",
+        this.batting ? "red" : "gold",
+      );
+    } else
+      this.settlePitch(swing ? "SWING & MISS" : "STRIKE", detail, this.batting ? "red" : "gold");
   }
   private foul() {
     const s = this.state;
+    s.lastOutcome = "Foul";
+    // A foul is a dead ball: a stealing runner goes back to first.
+    s.stealTrack = null;
     if (this.batting && s.swingStyle === "bunt" && s.strikes === 2) {
       s.outs++;
       this.advanceBatter();
@@ -1005,11 +1429,46 @@ export class BaseballEngine {
   private ball() {
     const s = this.state;
     s.balls++;
+    s.lastOutcome = "Ball";
     if (s.balls >= 4) {
+      // Ball four forces the runner from first anyway, so a steal attempt is moot.
+      s.stealTrack = null;
       this.walk();
       if (this.batting) this.earn(1);
       this.result("BASE ON BALLS", "볼넷 · 타자 1루 진루", this.batting ? "gold" : "red");
-    } else this.result("BALL", "스트라이크 존 바깥", this.batting ? "gold" : "neutral");
+    } else this.settlePitch("BALL", "스트라이크 존 바깥", this.batting ? "gold" : "neutral");
+  }
+  /** Hit by pitch: the batter takes first and forced runners move up one base. */
+  hitByPitch() {
+    const s = this.state;
+    s.lastOutcome = "HitByPitch";
+    s.stealTrack = null;
+    if (s.history[0]) s.history[0].kind = "ball";
+    this.walk();
+    if (this.batting) this.earn(1);
+    this.result(
+      "HIT BY PITCH",
+      "몸에 맞는 공 · 타자 1루, 밀려난 주자 진루",
+      this.batting ? "gold" : "red",
+    );
+  }
+  /**
+   * After a ball/strike call: a wild pitch or a running steal turns into a live base play;
+   * otherwise the call is announced as usual.
+   */
+  private settlePitch(message: string, detail: string, tone: string) {
+    const s = this.state,
+      f = s.flight;
+    if (s.mode === "match" && s.outs < 3 && f?.wild && s.bases.some(Boolean)) {
+      this.startWildPitch(`${message} · ${detail}`);
+      return;
+    }
+    if (s.mode === "match" && s.outs < 3 && s.stealTrack) {
+      this.startStealThrow(`${message} · ${detail}`);
+      return;
+    }
+    s.stealTrack = null;
+    this.result(message, detail, tone);
   }
   advanceBatter() {
     const s = this.state;
@@ -1089,21 +1548,41 @@ export class BaseballEngine {
     const catchU = (lo + hi) / 2,
       catchPoint = V(land.x * catchU, 1.55, land.z * catchU),
       defenders = DEFENSE.map((p) => ({ ...p }));
-    const pace = ((6.2 + this.batter.speed * 0.02) / BASE_PATH_LENGTH) * (hr ? 1.65 : 1);
+    const pace = this.runnerPace(this.batter.speed) * (hr ? 1.65 : 1),
+      // With fewer than two outs, runners read a fly ball: they keep going, but at a
+      // careful pace until it lands, so a catch can still send them back.
+      reading = !hr && !ground && s.outs < 2,
+      steal = s.stealTrack;
     const runners: RunnerTrack[] = [0, 1, 2, 3]
       .filter((i) => i === 0 || s.bases[i - 1])
-      .map((i) => ({
-        id: i,
-        from: i,
-        progress: i,
-        // Everyone runs on contact; a caught fly sends the runners back.
-        target: hr || ground || s.outs === 2 ? Math.min(4, i + bases) : Math.min(4, i + 1),
-        pace,
-        delay: i === 0 ? 0.12 : 0,
-        out: false,
-        scoredAt: null,
-      }));
+      .map((i) => {
+        const jump = i === 1 && steal ? steal : null,
+          share = clamp(
+            (range - RULES.flyReadNear) / (RULES.flyReadFar - RULES.flyReadNear),
+            0.2,
+            1,
+          ),
+          own = i > 0 && reading ? pace * RULES.flyReadPace * share : pace;
+        return {
+          id: i,
+          from: i,
+          progress: jump ? jump.progress : i,
+          // Batter and runners all run while the ball is alive; nobody waits on a base.
+          target: Math.min(4, i + bases),
+          pace: jump ? pace : own,
+          fullPace: pace,
+          delay: i === 0 ? 0.12 : 0,
+          out: false,
+          scoredAt: null,
+        };
+      });
+    s.stealTrack = null;
+    s.lastOutcome = "InPlay";
     s.live = {
+      kind: "batted",
+      hold: 0.3,
+      throwSpeed: this.stageRules.throwSpeed,
+      call: "",
       start: V(0, 0.8, 0),
       land,
       duration: Math.max(5, 4 / pace + 1),
@@ -1156,7 +1635,7 @@ export class BaseballEngine {
         ? "홈런 타구"
         : s.outs === 2
           ? "2아웃 · 주자는 타구와 함께 출발"
-          : "뜬공 · 기존 주자는 포구를 확인합니다";
+          : "뜬공 · 주자는 달리면서 포구를 확인합니다";
     s.resultTone = "gold";
     this.emit();
   }
@@ -1168,6 +1647,7 @@ export class BaseballEngine {
       !l ||
       s.paused ||
       this.batting ||
+      l.kind !== "batted" ||
       l.caughtFly ||
       l.state === "송구" ||
       base < 1 ||
@@ -1181,6 +1661,8 @@ export class BaseballEngine {
     return true;
   }
   private liveBall(l: LivePlay, time: number): Vec {
+    // A wild pitch skips to the backstop and stops there.
+    if (l.kind === "wild" && time >= l.flightTime) return { ...l.land };
     if (time > l.flightTime && l.resultBases < 4) {
       // After landing the ball keeps rolling and slows down on the grass.
       const len = Math.hypot(l.land.x - l.start.x, l.land.z - l.start.z) || 1,
@@ -1204,20 +1686,22 @@ export class BaseballEngine {
     );
   }
   private interceptTime(l: LivePlay, from: Vec) {
+    const { fielderSpeed, fielderReaction } = this.stageRules;
     for (let t = 0.05; t <= 12; t += 0.05) {
       const p = this.liveBall(l, t);
-      if (Math.hypot(p.x - from.x, p.z - from.z) / FIELDER_SPEED + FIELDER_REACTION <= t) return t;
+      if (Math.hypot(p.x - from.x, p.z - from.z) / fielderSpeed + fielderReaction <= t) return t;
     }
     return Infinity;
   }
   /** Earliest point on the ball's ground path the chasing fielder can reach in time. */
   private interceptPoint(l: LivePlay) {
-    const wait = Math.max(0, FIELDER_REACTION - l.elapsed);
+    const { fielderSpeed, fielderReaction } = this.stageRules,
+      wait = Math.max(0, fielderReaction - l.elapsed);
     for (let dt = 0.05; dt <= 12; dt += 0.05) {
       const t = l.elapsed + dt;
       if (t < Math.min(l.flightTime, l.elapsed + 0.05) && !l.ground) continue;
       const p = this.liveBall(l, t);
-      if (Math.hypot(p.x - l.fielderPos.x, p.z - l.fielderPos.z) / FIELDER_SPEED + wait <= dt)
+      if (Math.hypot(p.x - l.fielderPos.x, p.z - l.fielderPos.z) / fielderSpeed + wait <= dt)
         return p;
     }
     return this.liveBall(l, l.elapsed + 12);
@@ -1230,9 +1714,13 @@ export class BaseballEngine {
   }
   private receiver(base: number, fielder: number) {
     const normal = [2, 3, 5, 1][base - 1];
-    return normal === fielder ? (base === 1 ? 0 : 4) : normal;
+    // When the catcher chases a ball (wild pitch), the pitcher covers home.
+    return normal === fielder ? (base === 1 || base === 4 ? 0 : 4) : normal;
   }
   private forcedRunner(l: LivePlay, base: number) {
+    // Forces exist only while the batter is running to first (never after a caught fly,
+    // and never on a steal, pickoff or wild pitch).
+    if (l.kind !== "batted" || l.caughtFly) return null;
     const r = l.runners.find((r) => r.from === base - 1 && !r.out);
     if (!r || r.progress >= base - 1e-8) return null;
     // Retiring any trailing forced runner removes the force on runners ahead.
@@ -1248,6 +1736,13 @@ export class BaseballEngine {
       l.runners.find(
         (r) => !r.out && r.progress > base - 1 && r.progress < base - 1e-8 && r.target >= base,
       ) ??
+      this.returningRunner(l, base)
+    );
+  }
+  /** A runner heading back to `base` (caught fly or pickoff) who has not touched it yet. */
+  private returningRunner(l: LivePlay, base: number) {
+    return (
+      l.runners.find((r) => !r.out && base < 4 && r.target === base && r.progress > base + 1e-8) ??
       null
     );
   }
@@ -1256,20 +1751,25 @@ export class BaseballEngine {
     const bag = BASES[base - 1],
       cover = l.defenders[this.receiver(base, l.fielder)],
       eta = Math.max(0, Math.hypot(cover.x - bag.x, cover.z - bag.z) - 0.9) / 8.2;
-    return Math.max(0.22, distance(l.fielderPos, bag) / 29, eta + 0.02);
+    return Math.max(0.22, distance(l.fielderPos, bag) / l.throwSpeed, eta + 0.02);
   }
-  private chooseThrow(l: LivePlay, forceOnly = false) {
+  /**
+   * Picks the base to throw to. forceOnly: only a force out (relay). sureOnly: only a throw
+   * that beats its runner (after a caught fly, nobody throws just to hold runners).
+   */
+  private chooseThrow(l: LivePlay, forceOnly = false, sureOnly = false) {
     const options: { base: number; priority: number }[] = [];
     for (let base = 1; base <= 4; base++) {
       const forced = this.forcedRunner(l, base),
         r = forced ?? (!forceOnly ? this.candidateRunner(l, base) : null);
       if (!r) continue;
       const travel = this.throwTime(l, base),
-        arrival = (base - r.progress) / r.pace;
+        wait = Math.max(0, r.delay - l.elapsed),
+        arrival = Math.abs(base - r.progress) / r.pace + wait;
       if (travel + 0.08 < arrival) options.push({ base, priority: (forced ? 10 : 0) + base });
     }
     const best = options.sort((a, b) => b.priority - a.priority)[0]?.base;
-    if (best || forceOnly) return best ?? 0;
+    if (best || forceOnly || sureOnly) return best ?? 0;
     // No sure out: still throw ahead of the lead runner who is still running.
     const running = l.runners
       .filter((r) => !r.out && r.progress < r.target - 1e-6)
@@ -1321,11 +1821,13 @@ export class BaseballEngine {
   private advanceLiveRunners(l: LivePlay, dt: number, previousTime: number) {
     for (const r of l.runners) {
       if (r.out) continue;
+      const remainingDelay = Math.max(0, r.delay - previousTime),
+        usable = Math.max(0, dt - remainingDelay);
       if (r.progress > r.target + 1e-9) {
-        // Returning to retouch the base after a caught fly.
-        const back = Math.max(r.target, r.progress - r.pace * dt);
+        // RETURN: going back to retouch the base (caught fly or pickoff).
+        const back = Math.max(r.target, r.progress - r.pace * usable);
         if (back <= r.target + 1e-9 && r.tagUp) {
-          const reached = previousTime + (r.progress - r.target) / r.pace;
+          const reached = previousTime + remainingDelay + (r.progress - r.target) / r.pace;
           r.tagUp = false;
           r.target = 4;
           r.delay = reached + 0.18;
@@ -1334,9 +1836,7 @@ export class BaseballEngine {
         continue;
       }
       if (r.progress >= r.target) continue;
-      const remainingDelay = Math.max(0, r.delay - previousTime),
-        usable = Math.max(0, dt - remainingDelay),
-        before = r.progress;
+      const before = r.progress;
       let next = Math.min(r.target, before + r.pace * usable);
       const t = l.throw;
       // A non-forced runner must actually be tagged BEFORE touching the base.
@@ -1346,7 +1846,7 @@ export class BaseballEngine {
         before < t.base - 1e-8 &&
         !this.forcedRunner(l, t.base)
       ) {
-        const tagLine = t.base - 0.4 / BASE_PATH_LENGTH;
+        const tagLine = t.base - RULES.tagReach / BASE_PATH_LENGTH;
         if (next >= tagLine) {
           r.progress = Math.max(before, tagLine);
           this.retire(
@@ -1370,13 +1870,23 @@ export class BaseballEngine {
     while (remaining > 1e-8 && this.state.phase === "inplay") {
       const l = this.state.live!,
         events = [l.flightTime, l.catchAt];
-      if (l.fieldedAt !== null) events.push(l.fieldedAt + 0.3);
+      if (l.fieldedAt !== null) events.push(l.fieldedAt + l.hold);
       if (l.throw) events.push(l.throw.startedAt + l.throw.duration);
       const next = events.filter((t) => t > l.elapsed + 1e-8).sort((a, b) => a - b)[0];
       const step = next === undefined ? remaining : Math.min(remaining, next - l.elapsed);
       this.stepLivePlay(step);
       remaining -= step;
     }
+  }
+  /** After a caught fly: throw behind a runner only when the ball beats him back to his bag. */
+  private chooseDoubleOff(l: LivePlay) {
+    for (let base = 3; base >= 1; base--) {
+      const r = this.returningRunner(l, base);
+      if (!r) continue;
+      const wait = Math.max(0, r.delay - l.elapsed);
+      if (this.throwTime(l, base) + 0.08 < (r.progress - base) / r.pace + wait) return base;
+    }
+    return 0;
   }
   private stepLivePlay(dt: number) {
     const s = this.state,
@@ -1396,19 +1906,20 @@ export class BaseballEngine {
       return;
     }
     if (l.fieldedAt === null) {
-      const oldPos = { ...l.fielderPos },
+      const { fielderSpeed, fielderReaction } = this.stageRules,
+        oldPos = { ...l.fielderPos },
         // Before landing: run to the catch point. After it lands: cut off the rolling ball.
         target = !l.ground && !l.bounced ? l.catchPoint : this.interceptPoint(l);
       if (!s.autoField && !this.batting) {
         const dx = (this.keys.has("d") ? 1 : 0) - (this.keys.has("a") ? 1 : 0),
           dz = (this.keys.has("w") ? 1 : 0) - (this.keys.has("s") ? 1 : 0),
           n = Math.hypot(dx, dz) || 1;
-        l.fielderPos.x = clamp(l.fielderPos.x + (dx / n) * FIELDER_SPEED * dt, -85, 85);
-        l.fielderPos.z = clamp(l.fielderPos.z + (dz / n) * FIELDER_SPEED * dt, -3, 105);
+        l.fielderPos.x = clamp(l.fielderPos.x + (dx / n) * fielderSpeed * dt, -85, 85);
+        l.fielderPos.z = clamp(l.fielderPos.z + (dz / n) * fielderSpeed * dt, -20, 105);
       } else {
         // The fielder needs a moment to read the ball before the first step.
-        const moving = Math.max(0, l.elapsed - Math.max(previous, FIELDER_REACTION));
-        if (moving > 0) this.moveFielder(l.fielderPos, target, moving, FIELDER_SPEED);
+        const moving = Math.max(0, l.elapsed - Math.max(previous, fielderReaction));
+        if (moving > 0) this.moveFielder(l.fielderPos, target, moving, fielderSpeed);
       }
       s.ball = this.liveBall(l, l.elapsed);
       if (!l.ground && !l.bounced && previous < l.catchAt - 1e-8 && l.elapsed + 1e-8 >= l.catchAt) {
@@ -1425,11 +1936,14 @@ export class BaseballEngine {
           l.throwBase = 0;
           l.fielderPos.x = atCatch.x;
           l.fielderPos.z = atCatch.z;
+          // Caught: the batter is out; he is not a runner who goes back.
           this.retire(l, l.runners[0], 1, "fly", l.catchAt);
-          // Runners who left early head back to their base.
+          // Every other runner turns around at once (RETURN) and sprints back.
           for (const r of l.runners.slice(1)) {
             r.target = r.from;
             r.scoredAt = null;
+            r.stealing = false;
+            r.pace = r.fullPace ?? r.pace;
           }
           if (s.outs < 3 && l.quality > 0.6 && l.land.z > 55) {
             const third = l.runners.find((r) => r.from === 3);
@@ -1450,7 +1964,11 @@ export class BaseballEngine {
         // Extra bases depend on how far the fielder still is from the ball, capped by distance.
         const gap = Math.hypot(l.fielderPos.x - l.land.x, l.fielderPos.z - l.land.z);
         l.resultBases = Math.min(l.resultBases, 1 + (gap > 9 ? 1 : 0) + (gap > 22 ? 1 : 0));
-        for (const r of l.runners) r.target = Math.min(4, r.from + l.resultBases);
+        // The ball is down: everyone sprints on; nobody turns back toward a passed base.
+        for (const r of l.runners) {
+          r.pace = r.fullPace ?? r.pace;
+          r.target = Math.min(4, Math.max(r.from + l.resultBases, Math.ceil(r.progress - 1e-9)));
+        }
         s.message = "FAIR BALL";
         s.detail = "타구가 땅에 닿았습니다 · 주자 진루";
       }
@@ -1461,19 +1979,31 @@ export class BaseballEngine {
       ) {
         l.fieldedAt = l.elapsed;
         l.state = "포구";
-        s.detail = "공을 잡았습니다 · 곧바로 송구";
+        s.detail =
+          l.kind === "wild"
+            ? "포수가 빠진 공을 잡았습니다 · 송구 판단"
+            : "공을 잡았습니다 · 곧바로 송구";
       }
     }
     if (l.fieldedAt !== null) {
-      if (l.caughtFly) {
+      if (l.caughtFly && !l.throw) {
         s.ball = { ...l.fielderPos, y: 1.55 };
-        if (l.elapsed - l.fieldedAt > 0.75 && (s.outs >= 3 || l.runners.every(runnerSettled)))
-          this.resolvePlay();
-        return;
+        if (l.state === "포구") {
+          if (l.elapsed - l.fieldedAt + 1e-8 < l.hold) return;
+          // Doubled off only if the throw beats the returning runner to his base.
+          const base = s.outs < 3 ? this.chooseDoubleOff(l) : 0;
+          if (base) this.beginThrow(l, base);
+          else l.state = "보유";
+        }
+        if (!l.throw) {
+          if (l.elapsed - l.fieldedAt > 0.75 && (s.outs >= 3 || l.runners.every(runnerSettled)))
+            this.resolvePlay();
+          return;
+        }
       }
       if (l.state === "포구") {
-        s.ball = { ...l.fielderPos, y: 1.2 };
-        if (l.elapsed - l.fieldedAt + 1e-8 >= 0.3)
+        s.ball = { ...l.fielderPos, y: l.kind === "batted" ? 1.2 : 1.4 };
+        if (l.elapsed - l.fieldedAt + 1e-8 >= l.hold)
           this.beginThrow(l, l.requestedBase ?? this.chooseThrow(l));
       }
       const t = l.throw;
@@ -1482,7 +2012,7 @@ export class BaseballEngine {
           base = BASES[t.base - 1];
         s.ball = V(
           lerp(t.from.x, base.x, u),
-          lerp(1.2, 1.05, u) + Math.sin(Math.PI * u) * 1.5,
+          lerp(1.2, 1.05, u) + Math.sin(Math.PI * u) * (l.kind === "batted" ? 1.5 : 0.6),
           lerp(t.from.z, base.z, u),
         );
         if (
@@ -1492,8 +2022,12 @@ export class BaseballEngine {
         ) {
           t.receivedAt = l.elapsed;
           l.state = "보유";
-          const forced = this.forcedRunner(l, t.base);
+          const forced = this.forcedRunner(l, t.base),
+            back = this.returningRunner(l, t.base);
           if (forced && t.runnerId === forced.id) this.retire(l, forced, t.base, "force");
+          else if (back && back.progress > t.base + RULES.tagReach / BASE_PATH_LENGTH)
+            // The ball beat the runner back to the bag: tagged before he could touch it.
+            this.retire(l, back, t.base, "tag");
           else
             s.detail =
               (t.base === 4 ? "홈" : t.base + "루") + " 포구 · 베이스에 도착한 주자는 세이프";
@@ -1522,22 +2056,16 @@ export class BaseballEngine {
       s.outs >= 3 ||
       (settled &&
         (l.throw?.receivedAt != null ||
-          l.state === "보유" ||
+          (l.state === "보유" && !l.throw) ||
           // Never announce the result while the ball is still loose (safety timeout only).
           (l.fieldedAt === null && l.elapsed > l.flightTime + 15)))
     )
       this.resolvePlay();
   }
-  private resolvePlay() {
+  /** Runs that count on this play, and the base each surviving runner ends on. */
+  private settleRunners(l: LivePlay, cancelRuns: boolean) {
     const s = this.state,
-      l = s.live;
-    if (!l || s.phase !== "inplay") return;
-    const thirdOut = s.outs >= 3 ? l.outs.at(-1) : null;
-    const cancelRuns =
-      thirdOut &&
-      (thirdOut.force ||
-        thirdOut.kind === "fly" ||
-        (thirdOut.runnerId === 0 && thirdOut.base === 1));
+      thirdOut = s.outs >= 3 ? l.outs.at(-1) : null;
     const scored = l.runners.filter(
       (r) =>
         !r.out && r.scoredAt !== null && !cancelRuns && (!thirdOut || r.scoredAt! < thirdOut.time),
@@ -1547,6 +2075,23 @@ export class BaseballEngine {
       if (!r.out && r.progress >= 1 && r.progress < 4) next[Math.floor(r.progress) - 1] = true;
     s.bases = next;
     this.addRuns(scored);
+    return scored;
+  }
+  private resolvePlay() {
+    const s = this.state,
+      l = s.live;
+    if (!l || s.phase !== "inplay") return;
+    if (l.kind !== "batted") {
+      this.resolveBasePlay(l);
+      return;
+    }
+    const thirdOut = s.outs >= 3 ? l.outs.at(-1) : null;
+    const cancelRuns =
+      !!thirdOut &&
+      (thirdOut.force ||
+        thirdOut.kind === "fly" ||
+        (thirdOut.runnerId === 0 && thirdOut.base === 1));
+    const scored = this.settleRunners(l, cancelRuns);
     const force = l.outs.some((o) => o.force),
       batter = l.runners[0],
       n = Math.min(4, Math.floor(batter.progress));
@@ -1567,9 +2112,15 @@ export class BaseballEngine {
     let message = "",
       detail = "";
     if (l.caughtFly) {
-      message = "FLY OUT";
-      detail =
-        l.sacrifice && scored ? "뜬공 포구 · 태그업으로 1득점" : "땅에 닿기 전 포구 · 타자 아웃";
+      const doubled = l.outs.find((o) => o.kind === "tag");
+      message = doubled ? "DOUBLE PLAY" : "FLY OUT";
+      detail = doubled
+        ? `뜬공 포구 · 귀루하던 주자를 ${doubled.base}루에서 태그 · 병살`
+        : l.sacrifice && scored
+          ? "뜬공 포구 · 태그업으로 1득점"
+          : l.runners.length > 1
+            ? "땅에 닿기 전 포구 · 타자 아웃, 주자 귀루"
+            : "땅에 닿기 전 포구 · 타자 아웃";
     } else if (l.outs.length >= 2) {
       message = "DOUBLE PLAY";
       detail = "연속 포스 아웃 · 병살";
@@ -1594,6 +2145,43 @@ export class BaseballEngine {
       2.3,
     );
   }
+  /** Verdict of a steal, pickoff or wild-pitch play. The batter and the count stay as they are. */
+  private resolveBasePlay(l: LivePlay) {
+    const s = this.state,
+      scored = this.settleRunners(l, false),
+      out = l.outs[0],
+      where = (b: number) => (b === 4 ? "홈" : b + "루"),
+      call = l.call ? ` · ${l.call}` : "";
+    let message = "",
+      detail = "",
+      good: boolean;
+    if (l.kind === "pickoff") {
+      message = out ? "PICKOFF OUT" : "SAFE";
+      detail = out
+        ? `${where(out.base)} 견제사 · 귀루보다 태그가 빨랐습니다`
+        : `${where(l.throwBase)} 견제 · 주자가 먼저 귀루했습니다`;
+      good = !!out !== this.batting;
+    } else if (l.kind === "steal") {
+      message = out ? "CAUGHT STEALING" : "STOLEN BASE";
+      detail =
+        (out ? "2루 도루 저지 · 송구가 먼저 도착" : "2루 도루 성공 · 주자가 먼저 도착") + call;
+      good = !out === this.batting;
+    } else {
+      s.lastOutcome = "WildPitch";
+      message = "WILD PITCH";
+      detail =
+        "폭투 · 포수가 공을 놓쳤습니다 · " +
+        (scored ? `${scored}점 득점 · ` : "") +
+        (out
+          ? `${where(out.base)} 태그 아웃`
+          : l.runners.some((r) => r.progress > r.from + 1e-6)
+            ? "주자 진루"
+            : "주자는 베이스에 머뭅니다") +
+        call;
+      good = this.batting;
+    }
+    this.result(message, detail, good ? "gold" : "red", 2.3);
+  }
   advanceRunners(n: number) {
     const s = this.state;
     let runs = 0;
@@ -1608,20 +2196,211 @@ export class BaseballEngine {
     s.bases = next;
     this.addRuns(runs);
   }
+  /** Base runners still on their bags at the start of a non-batted play, with a lead. */
+  private baseRunners(lead: number, reaction: number): RunnerTrack[] {
+    const s = this.state,
+      pace = this.runnerPace(this.batting ? this.runnerOnFirst.speed : this.batter.speed);
+    return [1, 2, 3]
+      .filter((i) => s.bases[i - 1])
+      .map((i) => ({
+        id: i,
+        from: i,
+        progress: i + lead / BASE_PATH_LENGTH,
+        target: i,
+        pace,
+        fullPace: pace,
+        delay: reaction,
+        out: false,
+        scoredAt: null,
+      }));
+  }
+  /** Shared shape of the steal / pickoff / wild-pitch plays (no batted ball, no batter runner). */
+  private basePlay(
+    kind: LivePlay["kind"],
+    fielder: number,
+    runners: RunnerTrack[],
+    opts: Partial<LivePlay>,
+  ): LivePlay {
+    const defenders = DEFENSE.map((p) => ({ ...p })),
+      at = { ...defenders[fielder] };
+    return {
+      kind,
+      hold: 0.3,
+      throwSpeed: this.stageRules.throwSpeed,
+      call: "",
+      start: at,
+      land: at,
+      duration: 6,
+      elapsed: 0,
+      fielder,
+      fielderPos: defenders[fielder],
+      state: "포구",
+      throwBase: 0,
+      manual: false,
+      quality: 0,
+      resultBases: 1,
+      runnerStart: [...this.state.bases],
+      ground: true,
+      bounced: true,
+      flightTime: 0,
+      height: 0,
+      catchAt: 0,
+      catchPoint: at,
+      caughtFly: false,
+      fieldedAt: 0,
+      defenders,
+      runners,
+      throw: null,
+      requestedBase: null,
+      throws: 0,
+      outs: [],
+      error: false,
+      sacrifice: false,
+      ...opts,
+    };
+  }
+  /**
+   * Wild pitch: the catcher cannot hold the ball, it skips to the backstop and the runners
+   * take what the catcher's chase allows. The ball's path depends on how badly it missed.
+   */
+  private startWildPitch(call: string) {
+    const s = this.state,
+      f = s.flight!,
+      side = f.target.x === 0 ? (this.rng() < 0.5 ? -1 : 1) : Math.sign(f.target.x),
+      reach = clamp(9 + Math.abs(f.target.x) * 9 + (0.25 - f.target.y) * 30, 8, 18),
+      // It has already skipped past the catcher's glove when the play starts.
+      start = V(clamp(f.target.x * 1.5, -1.2, 1.2), 0.12, -3.2),
+      land = V(clamp(f.target.x + side * reach * 0.45, -16, 16), 0.12, -reach),
+      runners = this.baseRunners(RULES.runnerLead, RULES.runnerReaction);
+    s.stealTrack = null;
+    s.lastOutcome = "WildPitch";
+    const l = this.basePlay("wild", 1, runners, {
+      call,
+      start,
+      land,
+      flightTime: Math.max(0.5, distance(start, land) / 14),
+      fieldedAt: null,
+      state: "추적",
+    });
+    // Each runner (lead runner first) reads the catcher's chase: he takes a base when he
+    // beats the pickup-and-throw with time to spare, a second one if the ball got far
+    // enough away. A runner never passes the one ahead of him.
+    const chase = this.interceptTime(l, l.defenders[1]) + l.hold;
+    let limit = 5;
+    for (const r of [...runners].sort((a, b) => b.from - a.from)) {
+      let target = r.from;
+      for (const base of [r.from + 1, r.from + 2]) {
+        if (base > 4 || base >= limit) break;
+        const throwAt = this.throwArrival(l, base, chase),
+          runAt = r.delay + (base - r.progress) / r.pace;
+        if (runAt + RULES.advanceMargin >= throwAt) break;
+        target = base;
+      }
+      r.target = target;
+      limit = target === 4 ? 5 : target;
+    }
+    s.live = l;
+    s.phase = "inplay";
+    s.message = "WILD PITCH!";
+    s.detail = "공이 포수 뒤로 빠졌습니다 · 주자 진루 시도";
+    s.resultTone = this.batting ? "gold" : "red";
+    this.sound("call");
+    this.emit();
+  }
+  /** When a throw from where the ball will be picked up reaches `base` (s from play start). */
+  private throwArrival(l: LivePlay, base: number, pickup: number) {
+    const bag = BASES[base - 1],
+      at = this.liveBall(l, pickup),
+      cover = l.defenders[this.receiver(base, l.fielder)],
+      eta = Math.max(0, Math.hypot(cover.x - bag.x, cover.z - bag.z) - 0.9) / 8.2;
+    return Math.max(pickup + Math.max(0.22, distance(at, bag) / l.throwSpeed), eta + 0.02);
+  }
+  /** E-steal: the pitch reached the catcher, who throws to second. Arrival order decides. */
+  private startStealThrow(call: string) {
+    const s = this.state,
+      stage = this.stageRules,
+      runner = s.stealTrack!,
+      others = this.baseRunners(RULES.runnerLead, RULES.runnerReaction).filter((r) => r.from !== 1);
+    s.stealTrack = null;
+    const l = this.basePlay("steal", 1, [{ ...runner }, ...others], {
+      call,
+      hold: stage.catcherTransfer + this.rng() * RULES.catcherTransferGamble,
+      throwSpeed: stage.catcherArm,
+      requestedBase: 2,
+    });
+    // The middle infielder broke for the bag when the runner went (about one delivery ago).
+    const cover = l.defenders[this.receiver(2, 1)];
+    this.moveFielder(cover, BASES[1], 1);
+    l.start = V(s.flight?.target.x ?? 0, s.flight?.target.y ?? 1, 0);
+    s.ball = { ...l.fielderPos, y: 1 };
+    s.live = l;
+    s.phase = "inplay";
+    s.message = "도루!";
+    s.detail = "포수가 공을 잡자마자 2루로 송구합니다";
+    s.resultTone = "neutral";
+    this.emit();
+  }
+  /**
+   * Pickoff: instead of pitching, the pitcher throws to a base. The runner dives back from his
+   * lead; the fielder tags him if the ball wins the race to the bag.
+   */
+  pickoff(base: number) {
+    const s = this.state;
+    if (
+      s.mode !== "match" ||
+      this.batting ||
+      s.phase !== "ready" ||
+      s.paused ||
+      base < 1 ||
+      base > 3 ||
+      !s.bases[base - 1]
+    )
+      return false;
+    const gamble = RULES.runnerLeadGamble * this.stageRules.leadGamble,
+      runners = this.baseRunners(RULES.runnerLead, RULES.runnerReaction);
+    for (const r of runners) {
+      r.progress = r.from + (RULES.runnerLead + this.rng() * gamble) / BASE_PATH_LENGTH;
+      // Only the runner being thrown at dives back; the others just step back to the bag.
+      r.delay =
+        r.from === base
+          ? RULES.runnerReaction +
+            this.rng() * RULES.runnerReactionGamble * this.stageRules.leadGamble
+          : 0.4;
+    }
+    const l = this.basePlay("pickoff", 0, runners, {
+      hold: RULES.pickoffMove,
+      throwSpeed: RULES.pickoffThrowSpeed,
+      requestedBase: base,
+    });
+    // The first baseman holds the runner on; at second and third the fielder breaks for the
+    // bag on the pitcher's sign, a moment before the throw.
+    if (base === 1) Object.assign(l.defenders[2], V(BASES[0].x - 1.2, 0, BASES[0].z + 0.6));
+    else this.moveFielder(l.defenders[this.receiver(base, 0)], BASES[base - 1], 0.9);
+    s.flight = null;
+    s.ball = { ...l.fielderPos, y: 1.6 };
+    s.live = l;
+    s.phase = "inplay";
+    s.message = "견제!";
+    s.detail = `${base}루 견제구 · 주자 귀루`;
+    s.resultTone = "neutral";
+    this.sound("wind");
+    this.emit();
+    return true;
+  }
+  /**
+   * E: steal call for the runner on first (STEAL_READY). He breaks with the next pitch;
+   * pressing again cancels. Only first → second for now.
+   */
   steal() {
     const s = this.state;
     if (!this.batting || s.mode !== "match" || s.phase !== "ready" || s.paused) return false;
-    const from = s.bases[1] && !s.bases[2] ? 1 : s.bases[0] && !s.bases[1] ? 0 : -1;
-    if (from < 0) return false;
-    const success = this.rng() < 0.62 + this.batter.speed * 0.002;
-    s.bases[from] = false;
-    if (success) s.bases[from + 1] = true;
-    else s.outs++;
-    this.result(
-      success ? "STOLEN BASE" : "CAUGHT STEALING",
-      success ? `${from + 2}루 도루 성공` : `${from + 2}루 도루 저지`,
-      success ? "gold" : "red",
-    );
+    if (!s.bases[0] || s.bases[1]) return false;
+    s.stealCall = !s.stealCall;
+    s.message = s.stealCall ? "도루 사인!" : "도루 취소";
+    s.detail = s.stealCall
+      ? "투수가 투구를 시작하면 1루 주자가 2루로 뜁니다"
+      : "1루 주자는 그대로 대기합니다";
+    this.emit();
     return true;
   }
   next() {
@@ -1661,6 +2440,9 @@ export class BaseballEngine {
     s.phase = "ready";
     s.flight = null;
     s.live = null;
+    s.stealTrack = null;
+    // A steal call only stands while there is still a runner on first and second is open.
+    if (!this.batting || !s.bases[0] || s.bases[1]) s.stealCall = false;
     s.timer = 1.6;
     s.ball = V(0.35, 1.85, 18.44);
     s.message = this.batting ? "다음 공을 기다리세요" : "다음 승부를 준비하세요";
@@ -1689,7 +2471,8 @@ export class BaseballEngine {
     s.phase = "finished";
     s.message =
       s.score[1] > s.score[0] ? "VICTORY" : s.score[1] === s.score[0] ? "DRAW" : "GAME OVER";
-    s.detail = `한빛고 ${s.score[0]} : ${s.score[1]} 하늘고`;
+    const [away, home] = this.teams;
+    s.detail = `${away} ${s.score[0]} : ${s.score[1]} ${home}`;
     if (!this.recorded) {
       this.recorded = true;
       const c = s.career;
@@ -1705,8 +2488,14 @@ export class BaseballEngine {
       c.actions = DAY_ACTIONS;
       c.form = clamp(c.form - 4, 0, 100);
       const gain = clamp(
-        7 + this.matchStrikeouts + s.hits[1] - s.score[0] + (s.score[1] > s.score[0] ? 5 : 0),
-        3,
+        Math.round(
+          clamp(
+            7 + this.matchStrikeouts + s.hits[1] - s.score[0] + (s.score[1] > s.score[0] ? 5 : 0),
+            3,
+            18,
+          ) * this.stageRules.gaugeGain,
+        ),
+        2,
         18,
       );
       const before = c.scout;
@@ -1714,9 +2503,15 @@ export class BaseballEngine {
       s.lastScout = { before, after: c.scout };
       const team = teamOf(c.team);
       // The dream comes true: the watching club offers a contract at 100.
-      if (team && c.scout >= 100 && !c.draft) {
+      if (c.stage === "high" && team && c.scout >= 100 && !c.draft) {
         c.draft = `${team.city} ${team.name} 입단`;
+        c.club = team.id;
         c.history = [`${team.name} 스카우트의 입단 제의! 꿈이 이루어졌다`, ...c.history];
+      }
+      // Pro stage: the same gauge is the manager's trust; full trust opens the rotation.
+      if (c.stage === "pro" && c.scout >= 100 && !c.proGoal) {
+        c.proGoal = true;
+        c.history = [`${STAGES.pro.goalReward}! 감독이 선발 한 자리를 맡겼다`, ...c.history];
       }
       const won = s.score[1] > s.score[0],
         xp = s.matchXp + 20 + (won ? 15 : s.score[1] === s.score[0] ? 5 : 0);
@@ -1884,8 +2679,32 @@ export class BaseballEngine {
     this.emit();
     return true;
   }
+  /**
+   * After the signing ending: the same player continues on the pro stage. Pro mode stays
+   * unlocked in the save; the gauge now measures the manager's trust (new goal).
+   */
+  enterPro() {
+    const c = this.state.career,
+      club = teamOf(c.club);
+    if (!club || this.matchActive) return false;
+    if (c.stage === "pro") return true;
+    c.stage = "pro";
+    c.proUnlocked = true;
+    c.proGoal = false;
+    c.scout = 30;
+    c.energy = 100;
+    c.actions = DAY_ACTIONS;
+    c.history = [
+      `${club.city} ${club.name} 입단식 · 프로 무대 데뷔를 준비하다`,
+      ...c.history,
+    ].slice(0, 12);
+    this.persist();
+    this.start("match");
+    return true;
+  }
   draft() {
     const c = this.state.career;
+    if (c.stage === "pro") return { ok: false, message: "이미 프로 무대에서 뛰고 있습니다." };
     if (c.games < 3)
       return { ok: false, message: "스카우트가 평가하려면 공식 경기 3회가 필요합니다." };
     if (c.draft) return { ok: false, message: "이번 시즌의 진로가 이미 결정되었습니다." };

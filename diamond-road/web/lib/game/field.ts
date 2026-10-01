@@ -581,7 +581,9 @@ export class BaseballField {
     this.batter.right.rotation.x = -1.8;
     this.batter.right.rotation.z = -0.5;
     const f = s.flight;
-    this.batter.root.visible = s.mode !== "bullpen" && s.phase !== "inplay";
+    // The batter leaves the box only on a batted ball (not on a steal, pickoff or wild pitch).
+    this.batter.root.visible =
+      s.mode !== "bullpen" && !(s.phase === "inplay" && s.live?.kind === "batted");
     if (f?.swung) {
       const u = clamp((f.elapsed - f.swingTime) / 0.22, 0, 1);
       this.batter.root.rotation.y = (hand * Math.PI) / 2 + hand * Math.sin(u * Math.PI) * 1.6;
@@ -617,6 +619,14 @@ export class BaseballField {
           r.legL.rotation.x = Math.sin(this.time * 18) * 0.65;
           r.legR.rotation.x = -r.legL.rotation.x;
         }
+      } else if (i === 0 && s.stealTrack) {
+        // The E-steal runner breaks during the delivery.
+        const pose = runnerPose(s.stealTrack);
+        r.root.visible = true;
+        r.root.position.set(pose.position.x, 0, pose.position.z);
+        r.root.rotation.y = playerYaw(pose.facing);
+        r.legL.rotation.x = Math.sin(this.time * 18) * 0.65;
+        r.legR.rotation.x = -r.legL.rotation.x;
       } else if (i < 3 && s.bases[i]) {
         r.root.visible = true;
         r.root.position.set(BASES[i].x + 0.65, 0, BASES[i].z);

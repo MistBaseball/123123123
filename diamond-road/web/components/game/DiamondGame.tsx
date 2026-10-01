@@ -67,6 +67,8 @@ import {
   clamp,
   pitchMovement,
   swingWindow,
+  matchTeams,
+  STAGES,
   type GameState,
   type Mode,
   type Camera,
@@ -199,6 +201,7 @@ function CountDots({
   );
 }
 function Scoreboard({ s }: { s: GameState }) {
+  const [away, home] = matchTeams(s.career);
   return (
     <div className="scoreboard">
       <div className="board-match">
@@ -214,7 +217,8 @@ function Scoreboard({ s }: { s: GameState }) {
       <div className={`team away ${s.half === "top" ? "at-bat" : ""}`}>
         <span className="team-logo">HB</span>
         <span>
-          한빛고<small>AWAY</small>
+          {away}
+          <small>AWAY</small>
         </span>
         <strong>{s.score[0]}</strong>
       </div>
@@ -227,7 +231,8 @@ function Scoreboard({ s }: { s: GameState }) {
       <div className={`team home ${s.half === "bottom" ? "at-bat" : ""}`}>
         <strong>{s.score[1]}</strong>
         <span>
-          하늘고<small>HOME</small>
+          {home}
+          <small>HOME</small>
         </span>
         <span className="team-logo">HN</span>
       </div>
@@ -441,7 +446,7 @@ function AimPad({ engine, s }: { engine: BaseballEngine; s: GameState }) {
 function TimingBar({ s, className }: { s: GameState; className: string }) {
   const f = s.flight,
     progress = f ? clamp(f.elapsed / f.visualDuration, 0, 1) : 0,
-    w = swingWindow(s.difficulty),
+    w = swingWindow(s.difficulty, s.career.stage),
     pct = (v: number) => `${clamp(v, 0, 1) * 100}%`;
   return (
     <div className={className} aria-label={`투구 진행 ${Math.round(progress * 100)}%`}>
@@ -525,7 +530,7 @@ function LineScore({ s }: { s: GameState }) {
           </tr>
         </thead>
         <tbody>
-          {["한빛고", "하늘고"].map((name, i) => (
+          {matchTeams(s.career).map((name, i) => (
             <tr key={name}>
               <th>{name}</th>
               {s.lines[i].map((n, j) => (
@@ -553,17 +558,26 @@ function CareerView({ engine, s }: { engine: BaseballEngine; s: GameState }) {
         <div>
           <span className="eyebrow">ROAD TO THE PROS</span>
           <h2>나의 선수 · 진로</h2>
-          <p>고교 마지막 시즌. 하루의 선택이 내일의 선수를 만듭니다.</p>
+          <p>
+            {c.stage === "pro"
+              ? `${teamOf(c.club)?.name ?? "프로"} 소속 프로 시즌. 하루의 선택이 내일의 선수를 만듭니다.`
+              : "고교 마지막 시즌. 하루의 선택이 내일의 선수를 만듭니다."}
+          </p>
         </div>
         <span className="season-stamp">
-          고교 3학년 <b>DAY {String(c.day).padStart(2, "0")}</b>
+          {c.stage === "pro" ? "프로 1년차" : "고교 3학년"}{" "}
+          <b>DAY {String(c.day).padStart(2, "0")}</b>
         </span>
       </div>
       <div className="career-grid">
         <article className="player-card">
           <div className="jersey-number">18</div>
           <div className="player-card-top">
-            <span>HANEUL HIGH SCHOOL</span>
+            <span>
+              {c.stage === "pro"
+                ? `${teamOf(c.club)?.city ?? ""} ${teamOf(c.club)?.name ?? ""} · PRO`
+                : "HANEUL HIGH SCHOOL"}
+            </span>
             <Shield size={24} />
           </div>
           <div className="player-card-bottom">
@@ -624,14 +638,18 @@ function CareerView({ engine, s }: { engine: BaseballEngine; s: GameState }) {
           </article>
           <article className="panel scout-panel">
             <div className="panel-heading">
-              <h2>스카우트 리포트</h2>
+              <h2>{c.stage === "pro" ? "프로 리포트" : "스카우트 리포트"}</h2>
               <Medal size={20} />
             </div>
             <ScoutMeter s={s} big />
             <p>
-              {c.draft
-                ? `진로 확정: ${c.draft}`
-                : "시즌 경기를 마칠 때마다 탈삼진·안타·승리에 따라 평가가 3~18점 오릅니다. 100점이 되면 입단 제의를 받습니다."}
+              {c.stage === "pro"
+                ? c.proGoal
+                  ? `${STAGES.pro.goalReward} 달성! 프로 무대에서 계속 성장하세요.`
+                  : `프로 데뷔 시즌. 경기를 마칠 때마다 감독의 신뢰가 오르고, 100점이면 ${STAGES.pro.goalReward}입니다.`
+                : c.draft
+                  ? `진로 확정: ${c.draft}`
+                  : "시즌 경기를 마칠 때마다 탈삼진·안타·승리에 따라 평가가 3~18점 오릅니다. 100점이 되면 입단 제의를 받습니다."}
             </p>
           </article>
         </div>
@@ -765,7 +783,11 @@ function LifeView({
     <section className="training-view life-view">
       <div className="section-intro">
         <div>
-          <span className="eyebrow">고교 3학년 · 마지막 시즌 · {c.name}</span>
+          <span className="eyebrow">
+            {c.stage === "pro"
+              ? `프로 1년차 · ${teamOf(c.club)?.name ?? ""} · ${c.name}`
+              : `고교 3학년 · 마지막 시즌 · ${c.name}`}
+          </span>
           <h1>{headline}</h1>
           <p>
             아침에는 행동력 {DAY_ACTIONS}으로 훈련·수업·휴식을 하고, 오후에는 시즌 경기를 치릅니다.
@@ -791,7 +813,7 @@ function LifeView({
         <ChevronRight className="life-arrow" size={18} />
         <div className={`life-step ${step === 1 ? "now" : ""}`}>
           <span>오후 · 시즌 경기</span>
-          <strong>{live ? "경기 중" : "하늘고 vs 한빛고"}</strong>
+          <strong>{live ? "경기 중" : `${matchTeams(c)[1]} vs ${matchTeams(c)[0]}`}</strong>
           <small>삼진·안타·승리로 XP</small>
         </div>
         <ChevronRight className="life-arrow" size={18} />
@@ -1161,7 +1183,8 @@ function ScoutMeter({
   after?: number;
   big?: boolean;
 }) {
-  const t = teamOf(s.career.team),
+  const pro = s.career.stage === "pro",
+    t = teamOf(pro ? s.career.club : s.career.team),
     now = Math.round(after ?? s.career.scout),
     prev = before === undefined ? null : Math.round(before),
     gain = prev === null ? 0 : now - prev;
@@ -1176,7 +1199,7 @@ function ScoutMeter({
           <b>
             {t.city} {t.name}
           </b>{" "}
-          {t.scout} 스카우트 평가
+          {pro ? STAGES.pro.goal : `${t.scout} 스카우트 평가`}
         </span>
         <strong>
           {prev !== null && gain > 0 && <small>{prev} →</small>}
@@ -1190,9 +1213,13 @@ function ScoutMeter({
         <span className="now" style={{ width: `${now}%` }} />
       </div>
       {now >= 100 ? (
-        <small className="scout-note">입단 제의를 받았습니다!</small>
+        <small className="scout-note">
+          {pro ? `${STAGES.pro.goalReward}!` : "입단 제의를 받았습니다!"}
+        </small>
       ) : (
-        <small className="scout-note">입단 제의까지 {100 - now}점</small>
+        <small className="scout-note">
+          {pro ? STAGES.pro.goalReward : "입단 제의"}까지 {100 - now}점
+        </small>
       )}
     </div>
   );
@@ -1214,7 +1241,11 @@ function NightDialog({
   onClose: () => void;
 }) {
   const t = teamOf(s.career.team),
-    dream = !!recap?.scout && recap.scout.before < 100 && recap.scout.after >= 100;
+    dream =
+      s.career.stage !== "pro" &&
+      !!recap?.scout &&
+      recap.scout.before < 100 &&
+      recap.scout.after >= 100;
   if (dream && t)
     return (
       <Dialog open onOpenChange={(v) => !v && onClose()}>
@@ -1243,7 +1274,7 @@ function NightDialog({
           </div>
           <ScoutMeter s={s} before={recap!.scout!.before} after={recap!.scout!.after} big />
           <button className="primary-button" onClick={onClose}>
-            꿈을 이루다 · 시즌 계속하기 <ChevronRight size={16} />
+            입단식으로 <ChevronRight size={16} />
           </button>
         </DialogContent>
       </Dialog>
@@ -1281,6 +1312,89 @@ function NightDialog({
         </div>
         <button className="primary-button" onClick={onClose}>
           DAY {s.career.day} 아침 맞이하기 <ChevronRight size={16} />
+        </button>
+      </DialogContent>
+    </Dialog>
+  );
+}
+/**
+ * Signing ending: shown once the dream club's contract is in hand and before pro mode opens.
+ * It cannot be skipped by clicking outside; the button moves the same player to the pros.
+ */
+function EndingDialog({
+  engine,
+  s,
+  blocked,
+  onPro,
+}: {
+  engine: BaseballEngine;
+  s: GameState;
+  blocked: boolean;
+  onPro: () => void;
+}) {
+  const c = s.career,
+    t = teamOf(c.club);
+  if (!t || c.proUnlocked || blocked) return null;
+  return (
+    <Dialog open>
+      <DialogContent
+        className="dream-dialog ending-dialog"
+        style={{ "--team-color": t.color } as React.CSSProperties}
+        onInteractOutside={(e) => e.preventDefault()}
+        onEscapeKeyDown={(e) => e.preventDefault()}
+      >
+        <DialogHeader>
+          <DialogTitle>
+            <Trophy size={20} /> {t.city} {t.name} 입단식
+          </DialogTitle>
+          <DialogDescription>고교 3학년의 마지막 시즌, 그 끝에서.</DialogDescription>
+        </DialogHeader>
+        <div className="story">
+          <p>
+            하늘고 마운드에서 던진 공 하나하나가 결국 여기까지 왔다. 새벽 러닝, 불펜의 땀, 관중석의
+            {` ${t.scout}`} 스카우트를 의식하며 던진 승부구들.
+          </p>
+          <p>
+            입단식 날, {c.name}은(는) {t.name}의 유니폼을 받아 들었다. 등번호 18. &ldquo;
+            {t.motto}.&rdquo; 구단의 슬로건이 가슴에 새겨진다.
+          </p>
+          <p>
+            <b>
+              고교 무대를 넘어 {t.city} {t.name}에 입단했다. 이제 프로 무대에서 뛰게 되었다.
+            </b>
+          </p>
+        </div>
+        <div className="night-recap">
+          <div>
+            <span>고교 통산</span>
+            <strong>
+              {c.games}경기 {c.wins}승
+            </strong>
+            <small>
+              탈삼진 {c.strikeouts} · 안타 {c.hits}
+            </small>
+          </div>
+          <div>
+            <span>프로 모드 해금</span>
+            <strong>난이도 상승</strong>
+            <small>더 빠른 공 · 더 끈질긴 타자 · 더 빠른 수비</small>
+          </div>
+          <div>
+            <span>새 목표</span>
+            <strong>{STAGES.pro.goal} 100</strong>
+            <small>{STAGES.pro.goalReward}</small>
+          </div>
+        </div>
+        <button
+          className="primary-button"
+          onClick={() => {
+            if (engine.enterPro()) {
+              toast.success(`${t.name} 소속 프로 선수로 첫날을 맞았습니다`);
+              onPro();
+            } else toast.error("진행 중인 경기를 먼저 마쳐 주세요.");
+          }}
+        >
+          프로 무대로 <ChevronRight size={16} />
         </button>
       </DialogContent>
     </Dialog>
@@ -1482,6 +1596,8 @@ export default function DiamondGame() {
       }
       if (k === "r") engine.resetPitch();
       if (k === "e") engine.steal();
+      // F: pickoff throw to the lowest occupied base.
+      if (k === "f") engine.pickoff(engine.state.bases.findIndex(Boolean) + 1);
       if (k.startsWith("arrow")) {
         e.preventDefault();
         const a = engine.state.aim,
@@ -1622,6 +1738,12 @@ export default function DiamondGame() {
       <CreationDialog engine={engine} s={s} />
       <BlessingDialog engine={engine} s={s} />
       <NightDialog s={s} recap={recap} onClose={() => setRecap(null)} />
+      <EndingDialog
+        engine={engine}
+        s={s}
+        blocked={!!recap || view !== "life"}
+        onPro={() => setView("life")}
+      />
       <header className="app-header">
         <a
           className="brand"
@@ -1635,7 +1757,7 @@ export default function DiamondGame() {
           <span className="brand-mark">D</span>
           <span>
             DIAMOND <b>ROAD</b>
-            <small>고교 에이스</small>
+            <small>{s.career.stage === "pro" ? "프로 투수" : "고교 에이스"}</small>
           </span>
         </a>
         <button
@@ -1702,7 +1824,18 @@ export default function DiamondGame() {
                       DAY {s.career.day} · 경기 XP +{s.matchXp}
                     </span>
                   )}
-                  {s.mode === "match" && teamOf(s.career.team) && (
+                  {s.mode === "match" && s.career.stage === "pro" && teamOf(s.career.club) && (
+                    <span
+                      className="xp-chip scout-chip"
+                      style={
+                        { "--team-color": teamOf(s.career.club)!.color } as React.CSSProperties
+                      }
+                    >
+                      🏟 {teamOf(s.career.club)!.name} · {STAGES.pro.goal}{" "}
+                      {Math.round(s.career.scout)}
+                    </span>
+                  )}
+                  {s.mode === "match" && s.career.stage !== "pro" && teamOf(s.career.team) && (
                     <span
                       className="xp-chip scout-chip"
                       style={
@@ -1776,7 +1909,7 @@ export default function DiamondGame() {
                     <span>
                       {batting
                         ? `${engine.batter.hand === "L" ? "좌" : "우"}타 · 컨택 ${engine.batter.contact}`
-                        : "우완 투수 · 하늘고"}
+                        : `우완 투수 · ${matchTeams(s.career)[1]}`}
                     </span>
                   </div>
                 </div>
@@ -1816,7 +1949,10 @@ export default function DiamondGame() {
                         setRecap({
                           day: s.career.day - 1,
                           message: s.message,
-                          score: `하늘고 ${s.score[1]} : ${s.score[0]} 한빛고`,
+                          score: (([away, home]) =>
+                            `${home} ${s.score[1]} : ${s.score[0]} ${away}`)(
+                            matchTeams({ ...s.career, day: s.career.day - 1 }),
+                          ),
                           xp: s.lastXpGain,
                           scout: s.lastScout,
                         });
@@ -1976,7 +2112,22 @@ export default function DiamondGame() {
                   ))}
                 </div>
                 <BattingFeedback s={s} />
-                <p className="pp-keys">화면에서 조준 · 클릭/Space 스윙 · E 도루</p>
+                {s.mode === "match" && (
+                  <button
+                    className={`subtle-button steal-button ${s.stealCall ? "selected" : ""}`}
+                    disabled={!canPitch || !s.bases[0] || s.bases[1]}
+                    onClick={() => engine.steal()}
+                    aria-pressed={s.stealCall}
+                  >
+                    {s.stealCall
+                      ? "도루 사인 ON · 다음 투구에 2루로"
+                      : s.stealTrack
+                        ? "1루 주자 도루 중!"
+                        : "1루 주자 도루 사인"}{" "}
+                    <kbd>E</kbd>
+                  </button>
+                )}
+                <p className="pp-keys">화면에서 조준 · 클릭/Space 스윙 · E 도루 사인</p>
               </div>
             )}
             {!batting && (
@@ -2004,6 +2155,22 @@ export default function DiamondGame() {
                   >
                     고의4구
                   </button>
+                  {s.mode === "match" && s.bases.some(Boolean) && (
+                    <span className="pickoff-buttons" aria-label="견제">
+                      {[1, 2, 3]
+                        .filter((b) => s.bases[b - 1])
+                        .map((b) => (
+                          <button
+                            key={b}
+                            className="subtle-button"
+                            disabled={!canPitch}
+                            onClick={() => engine.pickoff(b)}
+                          >
+                            {b}루 견제
+                          </button>
+                        ))}
+                    </span>
+                  )}
                   <button
                     className="subtle-button"
                     onClick={() => engine.resetPitch()}
@@ -2044,7 +2211,7 @@ export default function DiamondGame() {
             <b>조준 + 클릭</b> 투구 / 스윙
           </span>
           <span>
-            <kbd>1–6</kbd> 구종 · <kbd>1–4</kbd> 송구
+            <kbd>1–0</kbd> 구종 · <kbd>1–4</kbd> 송구 · <kbd>F</kbd> 견제 · <kbd>E</kbd> 도루
           </span>
           <span>
             <kbd>WASD</kbd> 수동 수비
@@ -2100,8 +2267,12 @@ export default function DiamondGame() {
             </p>
             <p>
               <b>03 주루·수비</b> 주자는 홈·1루·2루·3루 순서로 달립니다. 플라이 포구는 즉시 아웃.
-              땅볼은 공과 주자의 도착 순서로 포스·태그 아웃을 판정합니다. 출루 후 E로 도루. 설정에서
-              자동 수비를 끄면 WASD로 움직이고 1–4로 송구 베이스를 정합니다.
+              땅볼은 공과 주자의 도착 순서로 포스·태그 아웃을 판정합니다. 타자와 주자는 공이 살아
+              있는 동안 계속 달리고, 뜬공이 잡히면 주자는 원래 베이스로 돌아갑니다(공이 먼저 가면
+              아웃). 공격 중 1루 주자가 있으면 E로 도루 사인 → 투구 시작과 함께 출발 → 포수 2루
+              송구와 도착 순서로 판정. 수비 중에는 F 또는 견제 버튼으로 견제구. 몸에 맞는 공은 1루
+              진루, 지친 투수는 폭투가 늘어납니다. 설정에서 자동 수비를 끄면 WASD로 움직이고 1–4로
+              송구 베이스를 정합니다.
             </p>
             <p>
               <b>04 하루 일정</b> 처음에는 꿈의 구단을 고릅니다. 그 구단 스카우트가 모든 시즌 경기를
@@ -2109,22 +2280,24 @@ export default function DiamondGame() {
               이름과 능력치를 정하고, 야구의 신이 구종 하나를 룰렛으로 내려 줍니다. 하루는 아침 →
               오후 → 밤으로 흐릅니다. 아침에는 행동력 5로 훈련 미니게임·수업 퀴즈·휴식을 하고(결과에
               따라 +0~+2), 오후에는 시즌 경기를 치릅니다. 경기가 끝나면 하루를 마무리하고 다음 날
-              아침이 됩니다. 경기 XP로 구종 상점에서 새 구종을 삽니다.
+              아침이 됩니다. 경기 XP로 구종 상점에서 새 구종을 삽니다. 입단 제의를 받으면 입단
+              스토리 뒤에 같은 선수로 프로 무대가 열리고, 상대가 강해지며 새 목표(1군 신뢰도)가
+              생깁니다.
             </p>
           </div>
           <details className="prototype-notes">
             <summary>이번 웹 점검판의 범위</summary>
             <p>
-              직접 플레이: 4구종, 조준 오차, 중력 궤적, 좌·우타 AI, 스윙, 번트, 주루, 도루,
-              포구·송구, 볼넷·삼진·파울·안타·홈런·병살·희생플라이·고의4구, 3/9이닝, 5개 카메라,
-              훈련·스카우트·진로.
+              직접 플레이: 10구종, 조준 오차, 중력 궤적, 좌·우타 AI, 스윙, 번트, 주루, 도루(E),
+              견제, 사구, 폭투, 포구·송구, 볼넷·삼진·파울·안타·홈런·병살·희생플라이·고의4구,
+              3/9이닝, 5개 카메라, 훈련·스카우트·입단 스토리·프로 모드.
             </p>
             <p>
               웹용으로 단순화: 구종 회전 효과는 보정 궤적, 타구는 능력치와 난수로 정하며,
               포구·송구·주루는 실제 이동 위치와 도착 시간으로 판정합니다. 고교 생활은 하루 단위
-              훈련/수업/휴식, 프로 진출은 시즌 결산까지 체험합니다. 연장전·견제·보크·부상·교체·세부
-              공식 기록과 프로 리그 장기 운영은 구현되어 있지 않습니다. 동점 경기는 무승부로
-              끝납니다. Unity 프로젝트와 별도인 점검용 게임입니다.
+              훈련/수업/휴식, 프로 모드는 같은 경기 시스템에 높은 난이도와 새 목표를 더한
+              단계입니다. 연장전·보크·부상·교체·세부 공식 기록과 프로 리그 장기 운영은 구현되어 있지
+              않습니다. 동점 경기는 무승부로 끝납니다. Unity 프로젝트와 별도인 점검용 게임입니다.
             </p>
             <p>
               투구 조준판의 좌우와 변화량은 투수 방향 기준입니다. 색 영역은 기본 포물선 대비 최대

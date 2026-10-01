@@ -383,7 +383,7 @@ export class SoftwareField {
         yaw,
       );
     }
-    if (s.mode !== "bullpen" && s.phase !== "inplay")
+    if (s.mode !== "bullpen" && !(s.phase === "inplay" && s.live?.kind === "batted"))
       this.drawPlayer(
         V(this.engine.batter.hand === "L" ? -0.82 : 0.82, 0, 0),
         "#b76e4c",
@@ -409,7 +409,19 @@ export class SoftwareField {
       if (l.fieldedAt === null) this.circle(V(l.land.x, 0.1, l.land.z), 2, "#f7d387", true);
     } else
       s.bases.forEach((has, i) => {
-        if (has) this.drawPlayer(V(BASES[i].x + 0.6, 0, BASES[i].z), "#b76e4c", "#273b43");
+        const steal = i === 0 ? s.stealTrack : null;
+        if (steal) {
+          const pose = runnerPose(steal);
+          this.drawPlayer(
+            pose.position,
+            "#b76e4c",
+            "#273b43",
+            true,
+            false,
+            false,
+            playerYaw(pose.facing),
+          );
+        } else if (has) this.drawPlayer(V(BASES[i].x + 0.6, 0, BASES[i].z), "#b76e4c", "#273b43");
       });
     if (s.phase !== "inplay" && (s.camera === "pitcher" || s.camera === "catcher")) {
       this.line(

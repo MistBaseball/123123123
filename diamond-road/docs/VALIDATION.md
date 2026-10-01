@@ -1,3 +1,18 @@
+# 검증 기록
+
+## 2026-10-01 — v05 (Linux, Node.js 22.22.2)
+
+| 검사 | 실제 결과 |
+|---|---|
+| 게임 규칙 | `npm test`: 45/45 통과(시나리오 A–M 포함) |
+| TypeScript / 빌드 | `npm run typecheck` 오류 없음, `npm run build` 성공(Three.js chunk 500 kB 경고만) |
+| 포맷 | Prettier 검사 통과 |
+| 브라우저 | Playwright Chromium으로 production 빌드 확인: 입단식 엔딩 대화상자 → "프로 무대로" → 프로 일정 화면(1군 신뢰도 30), 저장 `stage: pro` 유지, 프로 경기 화면(구단 이름·10구종 상점). 콘솔/페이지 오류 없음 |
+
+브라우저에서 견제·E 도루·폭투·사구 장면을 마우스로 직접 재현하지는 못했다. 해당 규칙은 엔진 시나리오 검사로 확인했다. Unity는 이번 작업 대상이 아니며 실행하지 않았다. 출력은 `validation-logs/web-checks.txt`.
+
+---
+
 # 인수인계판 검증 — 2026-09-29
 
 검사 대상은 `diamond-road-claude/web`와 함께 전달하는 Unity 투구 패키지다. 환경은 Linux, Node.js 24.19.0, npm 11.9.0이다. 사용자의 Windows Unity 환경에서 실행한 결과가 아니다.

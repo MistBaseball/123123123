@@ -1,5 +1,4 @@
 $ npm test
-npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
 
 > diamond-road-portable@0.3.1 test
 > node --experimental-strip-types scripts/check-game.mjs
@@ -18,7 +17,7 @@ PASS A batter already on second cannot be retired by a late throw to first
 PASS Automatic second baseman chooses a live force runner, not an already-safe batter
 PASS Throwing to an occupied non-force base does not retire its safe runner
 PASS Non-force outs require a tag on a runner between bases
-PASS Fly catch immediately retires batter, holds runners and never throws to first
+PASS Runners break on contact; a fly catch retires the batter and sends them back
 PASS Missed air catch lands safely; a ground pickup cannot become a fly out
 PASS Deep fly tag-up starts only after catch; third-out fly cancels all runs
 PASS Pitch movement ranges match the whole actual trajectory at every tested rating
@@ -26,43 +25,60 @@ PASS Close force plays agree at 30, 60 and 144 fps; simultaneous arrival is safe
 PASS Three outs swap sides only after explicit continue action
 PASS Walk-off victory and skipped home half; tie at regulation is a draw
 PASS Abandoned games do not leak strikeouts or conceded runs to saved career
-PASS Training consumes a day and energy; rest restores; live match blocks training
+PASS Five actions per day; finishing a match advances the day; live match blocks training
+PASS Match XP is credited on finish and buys locked pitches
+PASS Batting range hint always contains the pitch and shrinks as contact rises
 PASS Fatigue and form affect velocity and control with identical random samples
 PASS Draft milestones and thresholds are reachable and finalized once
 PASS Six complete seeded games (five 3-inning and one 9-inning) end without invalid state
 PASS Batting feedback separates timing, aim error and taking a pitch
+PASS Starting blessing grants exactly one random extra pitch, weighted by rarity
+PASS Balls in play: fly outs are not dominant and the result waits for the fielder
+PASS Landed balls keep rolling; a throw is caught the moment it reaches the bag
+PASS A fielder still throws when the runner is close; holds only when everyone is safe
+PASS Creation spends exactly the stat budget; minigame quality sets the training gain
+PASS Dream club scout watches season matches; reaching 100 brings the contract
+PASS A–C Hit by pitch comes from where the ball crosses; batter to first, forced runners move
+PASS D–E Wild pitch chance is rolled at release from stamina and rises sharply when tired
+PASS J Wild pitch: catcher misses, the ball goes to the backstop, runners advance, bases update
+PASS F E steal: runner breaks with the delivery, catcher throws to second, arrival decides
+PASS G–H Caught fly: batter out, runners RETURN; a throw beating one back retires him
+PASS I Pickoff: runner dives back from his lead; a tag before the bag is out, else safe
+PASS K Scout 100 → contract → signing ending → pro mode, kept across reloads
+PASS L Pro mode is harder on every axis, still plays complete games
+PASS M Ten data-driven pitches: all selectable, each with its own speed, break, control, stamina
+PASS Season games with steals, pickoffs and tired arms still end in a valid state
 
-27 gameplay checks passed.
+45 gameplay checks passed.
 
-Exit code: 0
+$ npm run typecheck
+
+> diamond-road-portable@0.3.1 typecheck
+> tsc --noEmit
+
 
 $ npm run build
-npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
 
 > diamond-road-portable@0.3.1 build
 > npm run typecheck && vite build
 
-npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
 
 > diamond-road-portable@0.3.1 typecheck
 > tsc --noEmit
 
 vite v8.0.13 building client environment for production...
-[2K
-transforming...✓ 1913 modules transformed.
+[2Ktransforming...✓ 1913 modules transformed.
 rendering chunks...
 computing gzip size...
 dist/index.html                           0.64 kB │ gzip:   0.41 kB
-dist/assets/index-CdKwVVT0.css           68.69 kB │ gzip:  14.05 kB
-dist/assets/software-field-BkyBDTRf.js    9.34 kB │ gzip:   3.99 kB
-dist/assets/index-7jCCV_TZ.js           445.56 kB │ gzip: 141.86 kB
-dist/assets/field-CH7O3Ohg.js           567.18 kB │ gzip: 144.72 kB
+dist/assets/index-Hcm36H9Y.css           88.98 kB │ gzip:  18.30 kB
+dist/assets/software-field-CCB7c693.js    9.99 kB │ gzip:   4.23 kB
+dist/assets/index-C4A425yZ.js           492.65 kB │ gzip: 158.53 kB
+dist/assets/field-BolDtVO-.js           568.32 kB │ gzip: 145.05 kB
 
-✓ built in 410ms
+✓ built in 1.27s
 [plugin builtin:vite-reporter] 
 (!) Some chunks are larger than 500 kB after minification. Consider:
 - Using dynamic import() to code-split the application
 - Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
 - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
-
-Exit code: 0

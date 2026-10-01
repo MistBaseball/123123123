@@ -16,6 +16,14 @@ import {
   DAY_ACTIONS,
   BLESSINGS,
   TEAMS,
+  RULES,
+  STAGES,
+  RIVALS,
+  swingWindow,
+  wildPitchChance,
+  hitsBatter,
+  runnerState,
+  pitchData,
 } from "../lib/game/engine.ts";
 
 let passed = 0;
@@ -744,5 +752,454 @@ check("Dream club scout watches season matches; reaching 100 brings the contract
   low.next();
   assert(low.state.lastScout.after > low.state.lastScout.before);
   assert.equal(low.state.career.draft, "");
+});
+
+// ── v05: hit by pitch, wild pitch, pickoff, E steal, running/fly returns, pro mode, pitches ──
+const settle = (g, n = 6000) => {
+  let i = 0;
+  while (!["result", "between", "finished"].includes(g.state.phase) && i++ < n) g.tick(1 / 60);
+  assert.equal(g.state.phase, "result", "play must reach a verdict");
+};
+/** Plays whole matches with simple scripted inputs; optional extra inputs per tick. */
+const playMatch = (g, seedId, extra = () => {}) => {
+  let ticks = 0;
+  while (g.state.phase !== "finished" && ticks++ < 150000) {
+    const s = g.state;
+    extra(g, ticks);
+    if (s.phase === "ready" && !g.batting) g.throwAt(((seedId % 3) - 1) * 0.12, 0.9);
+    if (s.phase === "between") g.continueInning();
+    if (
+      s.phase === "flight" &&
+      g.batting &&
+      s.flight.elapsed / s.flight.visualDuration > 0.88 &&
+      !s.flight.swung
+    ) {
+      g.setAim(s.flight.target.x, s.flight.target.y);
+      g.swing();
+    }
+    g.tick(1 / 30);
+    assert(s.outs >= 0 && s.outs <= 3);
+    assert(s.balls >= 0 && s.balls < 4 && s.strikes >= 0 && s.strikes < 3);
+    assert(s.bases.length === 3 && s.score.every((v) => Number.isInteger(v) && v >= 0));
+    assert(Number.isFinite(s.ball.x + s.ball.y + s.ball.z));
+    if (s.live) for (const r of s.live.runners) assert(r.progress >= 0 && r.progress <= 4);
+  }
+  assert.equal(g.state.phase, "finished", `seed ${seedId} did not finish`);
+};
+const FORCED = [
+  [true, false, false],
+  [true, true, false],
+  [true, true, false],
+  [true, true, true],
+  [true, false, true],
+  [true, true, true],
+  [true, true, true],
+  [true, true, true],
+];
+check(
+  "A–C Hit by pitch comes from where the ball crosses; batter to first, forced runners move",
+  () => {
+    for (let mask = 0; mask < 8; mask++) {
+      const g = new BaseballEngine(newCareer(), () => 0.5);
+      g.state.bases = [!!(mask & 1), !!(mask & 2), !!(mask & 4)];
+      const side = g.batter.hand === "L" ? -1 : 1;
+      assert(g.throwAt(0.92 * side, 1.0), "aim at the batter's body");
+      assert(!g.state.flight.wild);
+      assert(hitsBatter(g.state.flight.target, g.batter.hand));
+      settle(g);
+      assert.equal(g.state.lastOutcome, "HitByPitch");
+      assert.equal(g.state.message, "HIT BY PITCH");
+      assert.deepEqual(g.state.bases, FORCED[mask], `bases after HBP, mask ${mask}`);
+      assert.equal(g.state.score[0], mask === 7 ? 1 : 0, "bases loaded: runner from third scores");
+      assert.equal(g.state.balls + g.state.strikes, 0, "next batter starts a fresh count");
+    }
+    // Over the plate or on the far side never hits the batter.
+    assert(!hitsBatter(V(0, 1, 0), "R") && !hitsBatter(V(-0.9, 1, 0), "R"));
+    assert(hitsBatter(V(-0.9, 1, 0), "L") && !hitsBatter(V(0.9, 0.1, 0), "R"), "feet-level miss");
+    // Batting: a pitch at our batter's body that he takes is HBP; one he swings at is not.
+    for (const swing of [false, true]) {
+      const g = new BaseballEngine(newCareer(), () => 0.5);
+      g.state.half = "bottom";
+      g.state.timer = 0;
+      g.tick(1 / 60);
+      const side = g.batter.hand === "L" ? -1 : 1;
+      g.state.flight.target = V(0.85 * side, 1.0, 0);
+      g.state.flight.wild = false;
+      while (g.state.phase === "windup") g.tick(1 / 60);
+      if (swing) g.swing();
+      settle(g);
+      assert.equal(g.state.lastOutcome === "HitByPitch", !swing);
+      if (!swing) assert.deepEqual(g.state.bases, [true, false, false]);
+    }
+  },
+);
+check(
+  "D–E Wild pitch chance is rolled at release from stamina and rises sharply when tired",
+  () => {
+    assert(wildPitchChance(100) < wildPitchChance(60));
+    assert(wildPitchChance(60) < wildPitchChance(20) && wildPitchChance(20) < wildPitchChance(0));
+    assert(wildPitchChance(100) >= RULES.wildPitchMin && wildPitchChance(0) <= RULES.wildPitchMax);
+    assert(
+      wildPitchChance(50, pitchData("forkball").wild) > wildPitchChance(50),
+      "data multiplier",
+    );
+    const rate = (energy, bases) => {
+      const g = new BaseballEngine(newCareer(), seed(77));
+      let wild = 0;
+      for (let i = 0; i < 4000; i++) {
+        g.state.phase = "ready";
+        g.state.energy = energy;
+        g.state.bases = [...bases];
+        g.throwAt(0, 0.9);
+        if (g.state.flight.wild) wild++;
+      }
+      return wild / 4000;
+    };
+    const fresh = rate(100, [true, false, false]),
+      tired = rate(10, [true, false, false]);
+    assert(fresh < 0.012, `fresh arm wild-pitch rate ${fresh}`);
+    assert(tired > 0.045, `tired arm wild-pitch rate ${tired}`);
+    assert.equal(rate(10, [false, false, false]), 0, "no runners, no wild-pitch play");
+  },
+);
+check(
+  "J Wild pitch: catcher misses, the ball goes to the backstop, runners advance, bases update",
+  () => {
+    const g = new BaseballEngine(newCareer(), () => 0.5);
+    g.state.bases = [true, false, false];
+    g.throwAt(0.3, 0.3);
+    Object.assign(g.state.flight, { wild: true, target: V(0.3, 0.1, 0) });
+    while (g.state.phase !== "inplay") g.tick(1 / 60);
+    const l = g.state.live;
+    assert.equal(l.kind, "wild");
+    assert.equal(l.fielder, 1, "the catcher chases the ball");
+    assert.equal(l.fieldedAt, null, "the catcher did not hold the pitch");
+    assert(l.land.z < -5, "the ball got behind the plate");
+    assert.equal(l.runners.find((r) => r.from === 1).target, 2);
+    settle(g);
+    assert.equal(g.state.message, "WILD PITCH");
+    assert.equal(g.state.lastOutcome, "WildPitch");
+    assert.deepEqual(g.state.bases, [false, true, false]);
+    assert.equal(g.state.balls, 1, "the pitch itself still counts as a ball");
+    assert.equal(g.state.outs, 0);
+    // Bases loaded, ball far to the backstop: everyone moves up and the run scores.
+    const b = new BaseballEngine(newCareer(), () => 0.5);
+    b.state.bases = [true, true, true];
+    b.throwAt(0.6, 0.2);
+    Object.assign(b.state.flight, { wild: true, target: V(0.6, 0.09, 0) });
+    settle(b);
+    assert.equal(b.state.score[0], 1);
+    assert.deepEqual(b.state.bases, [false, true, true], "the batter is still at the plate");
+  },
+);
+check(
+  "F E steal: runner breaks with the delivery, catcher throws to second, arrival decides",
+  () => {
+    const verdicts = new Set();
+    for (const order of [1, 4]) {
+      const g = new BaseballEngine(newCareer(), () => 0.5);
+      g.state.half = "bottom";
+      g.state.bases = [true, false, false];
+      g.state.order[1] = order;
+      assert(g.steal());
+      assert(g.state.stealCall, "STEAL_READY");
+      while (g.state.phase === "ready") g.tick(1 / 60);
+      const t = g.state.stealTrack;
+      assert(t && t.stealing && !g.state.stealCall);
+      const start = t.progress;
+      for (let i = 0; i < 25 && g.state.phase === "windup"; i++) g.tick(1 / 60);
+      assert(t.progress > start, "running during the windup");
+      assert.equal(runnerState(t), "Stealing");
+      while (g.state.phase === "windup" || g.state.phase === "flight") g.tick(1 / 60);
+      const l = g.state.live;
+      assert.equal(l.kind, "steal");
+      assert.equal(l.fielder, 1);
+      settle(g);
+      assert.equal(l.throw.base, 2, "the catcher threw to second");
+      assert.notEqual(l.throw.receivedAt, null);
+      const r = l.runners.find((r) => r.from === 1);
+      verdicts.add(g.state.message);
+      if (g.state.message === "STOLEN BASE") {
+        assert(!r.out && g.state.outs === 0);
+        assert.deepEqual(g.state.bases, [false, true, false]);
+      } else {
+        assert.equal(g.state.message, "CAUGHT STEALING");
+        assert(r.out && g.state.outs === 1 && l.outs[0].kind === "tag" && l.outs[0].base === 2);
+        assert.deepEqual(g.state.bases, [false, false, false]);
+        assert(l.outs[0].time >= l.throw.receivedAt - 1e-9, "tagged after the ball arrived");
+      }
+      assert.equal(g.state.balls, 1, "the pitch was a ball and still counts");
+    }
+    assert.deepEqual(
+      [...verdicts].sort(),
+      ["CAUGHT STEALING", "STOLEN BASE"],
+      "fast safe, slow out",
+    );
+    // No E: nobody runs.
+    const n = new BaseballEngine(newCareer(), () => 0.5);
+    n.state.half = "bottom";
+    n.state.bases = [true, false, false];
+    while (n.state.phase === "ready") n.tick(1 / 60);
+    assert.equal(n.state.stealTrack, null);
+    // A ball put in play turns the steal into ordinary base running, keeping the jump.
+    const c = new BaseballEngine(newCareer(), () => 0.5);
+    c.state.half = "bottom";
+    c.state.bases = [true, false, false];
+    c.steal();
+    while (c.state.phase !== "flight") c.tick(1 / 60);
+    for (let i = 0; i < 20; i++) c.tick(1 / 60);
+    const jump = c.state.stealTrack.progress;
+    c.contact(0.5, 0);
+    assert.equal(c.state.live.kind, "batted");
+    assert.equal(c.state.live.runners.find((r) => r.from === 1).progress, jump);
+    assert.equal(c.state.stealTrack, null);
+    finishPlay(c);
+    // A foul is a dead ball: the runner goes back to first.
+    const f = new BaseballEngine(newCareer(), () => 0.5);
+    f.state.half = "bottom";
+    f.state.bases = [true, false, false];
+    f.steal();
+    while (f.state.phase !== "flight") f.tick(1 / 60);
+    f.foul();
+    assert.equal(f.state.stealTrack, null);
+    assert.deepEqual(f.state.bases, [true, false, false]);
+    // Second base occupied: no steal call.
+    const o = new BaseballEngine();
+    o.state.half = "bottom";
+    o.state.bases = [true, true, false];
+    assert(!o.steal());
+  },
+);
+check("G–H Caught fly: batter out, runners RETURN; a throw beating one back retires him", () => {
+  const g = new BaseballEngine(newCareer(), () => 0.5);
+  g.state.bases = [true, true, false];
+  g.contact(0.6);
+  const l = g.state.live;
+  l.fielderPos.x = l.catchPoint.x;
+  l.fielderPos.z = l.catchPoint.z;
+  let ranThrough = true;
+  while (!l.caughtFly && g.state.phase === "inplay") {
+    g.tick(1 / 60);
+    if (l.elapsed > 0.2 && !l.caughtFly)
+      ranThrough &&= l.runners.every((r) => runnerState(r) === "Running");
+    // The runner from first got greedy and is far off the bag just before the catch.
+    if (l.elapsed > l.catchAt - 0.1 && l.runners[1].progress < 1.8) l.runners[1].progress = 1.8;
+  }
+  assert(ranThrough, "nobody stops while the ball is in the air");
+  assert.equal(runnerState(l.runners[0]), "Out", "the batter is out, not a returning runner");
+  assert.equal(runnerState(l.runners[1]), "Returning");
+  assert.equal(runnerState(l.runners[2]), "Returning");
+  finishPlay(g);
+  assert.equal(l.throw.base, 1, "throw behind the runner who strayed");
+  assert(l.runners[1].out && !l.runners[2].out);
+  assert.equal(g.state.outs, 2);
+  assert.equal(g.state.message, "DOUBLE PLAY");
+  assert.deepEqual(g.state.bases, [false, true, false], "the other runner got back safely");
+  // Ball lands: runners keep going on, nobody turns back.
+  const d = new BaseballEngine(newCareer(), () => 0.5);
+  d.state.autoField = false;
+  d.state.bases = [true, false, false];
+  d.contact(0.65);
+  const m = d.state.live;
+  Object.assign(m.fielderPos, V(80, 0, -2));
+  while (!m.bounced) d.tick(1 / 60);
+  assert(m.runners.every((r) => r.target >= r.progress && r.pace === r.fullPace));
+  finishPlay(d);
+  assert.equal(d.state.outs, 0);
+});
+check("I Pickoff: runner dives back from his lead; a tag before the bag is out, else safe", () => {
+  for (const [rng, out] of [
+    [() => 0.999, true],
+    [() => 0, false],
+  ])
+    for (const base of [1, 2, 3]) {
+      const g = new BaseballEngine(newCareer(), rng);
+      g.state.bases = [base === 1, base === 2, base === 3];
+      assert(g.pickoff(base));
+      const l = g.state.live;
+      assert.equal(l.kind, "pickoff");
+      assert.equal(l.fielder, 0, "the pitcher throws");
+      assert.equal(runnerState(l.runners[0]), "Returning");
+      settle(g);
+      assert.equal(l.throw.base, base);
+      assert.equal(g.state.message, out ? "PICKOFF OUT" : "SAFE", `base ${base}`);
+      assert.equal(g.state.outs, out ? 1 : 0);
+      assert.equal(g.state.bases[base - 1], !out);
+      assert.equal(g.state.pitchCount[1] + g.state.balls + g.state.strikes, 0, "not a pitch");
+    }
+  const e = new BaseballEngine();
+  assert(!e.pickoff(1), "nobody on first");
+  e.state.half = "bottom";
+  e.state.bases = [true, false, false];
+  assert(!e.pickoff(1), "only the pitching side throws over");
+});
+check("K Scout 100 → contract → signing ending → pro mode, kept across reloads", () => {
+  const store = {};
+  globalThis.localStorage = {
+    getItem: (k) => store[k] ?? null,
+    setItem: (k, v) => (store[k] = String(v)),
+  };
+  try {
+    const g = new BaseballEngine();
+    g.chooseTeam(TEAMS[2].id);
+    g.start("match");
+    Object.assign(g.state, { inning: 3, half: "bottom", outs: 3, score: [0, 2], phase: "result" });
+    g.state.career.scout = 96;
+    g.next();
+    const c = g.state.career;
+    assert.equal(c.club, TEAMS[2].id, "signed with the dream club");
+    assert.equal(c.stage, "high");
+    assert(!c.proUnlocked, "pro opens after the ending, not before");
+    assert(g.enterPro());
+    assert.equal(c.stage, "pro");
+    assert(c.proUnlocked && c.scout < 100);
+    assert.equal(g.state.mode, "match");
+    assert(g.state.detail.includes(TEAMS[2].name));
+    assert(!g.draft().ok, "high-school draft no longer applies");
+    const again = new BaseballEngine();
+    again.load();
+    assert.equal(again.state.career.stage, "pro");
+    assert.equal(again.state.career.club, TEAMS[2].id);
+    assert(again.state.career.proUnlocked);
+    assert.equal(again.teams[1], TEAMS[2].name);
+    // A save cannot claim pro without a club; an old save with the contract recovers its club.
+    store["diamond-road-career-v1"] = JSON.stringify({ ...c, club: "", draft: "" });
+    const fake = new BaseballEngine();
+    fake.load();
+    assert.equal(fake.state.career.stage, "high");
+    const legacy = {
+      ...newCareer(),
+      team: TEAMS[0].id,
+      draft: `${TEAMS[0].city} ${TEAMS[0].name} 입단`,
+    };
+    delete legacy.stage;
+    delete legacy.club;
+    delete legacy.proUnlocked;
+    store["diamond-road-career-v1"] = JSON.stringify(legacy);
+    const old = new BaseballEngine();
+    old.load();
+    assert.equal(old.state.career.club, TEAMS[0].id);
+    assert(!old.state.career.proUnlocked, "the ending is still ahead");
+    // Pro gauge: full trust reaches the new goal once.
+    const p = new BaseballEngine(
+      Object.assign(newCareer(), { stage: "pro", club: TEAMS[1].id, proUnlocked: true }),
+    );
+    p.start("match");
+    Object.assign(p.state, { inning: 3, half: "bottom", outs: 3, score: [0, 2], phase: "result" });
+    p.state.career.scout = 99;
+    p.next();
+    assert(p.state.career.proGoal);
+    assert.equal(p.state.career.draft, "", "no second contract in the pros");
+  } finally {
+    delete globalThis.localStorage;
+  }
+});
+check("L Pro mode is harder on every axis, still plays complete games", () => {
+  const h = STAGES.high,
+    p = STAGES.pro;
+  assert(p.aiVelocity > h.aiVelocity && p.aiPitchKinds > h.aiPitchKinds);
+  assert(p.batterContact > h.batterContact && p.batterEye > h.batterEye);
+  assert(p.fielderSpeed > h.fielderSpeed && p.fielderReaction < h.fielderReaction);
+  assert(p.throwSpeed > h.throwSpeed && p.catcherArm > h.catcherArm);
+  assert(p.catcherTransfer < h.catcherTransfer && p.leadGamble < h.leadGamble);
+  assert(swingWindow("normal", "pro") < swingWindow("normal", "high"));
+  const pro = () =>
+    Object.assign(newCareer(), { stage: "pro", club: TEAMS[3].id, proUnlocked: true });
+  const avgSpeed = (career) => {
+    const g = new BaseballEngine(career, seed(5));
+    g.start("batting");
+    let sum = 0;
+    for (let i = 0; i < 300; i++) {
+      g.state.phase = "ready";
+      g.state.timer = 0;
+      g.tick(1 / 60);
+      sum += g.state.flight.speed;
+    }
+    return sum / 300;
+  };
+  assert(avgSpeed(pro()) > avgSpeed(newCareer()) + 4, "pro pitchers throw harder");
+  // Same pitches, same seed: pro hitters put more balls in play.
+  const contactRate = (career) => {
+    let hit = 0;
+    for (let i = 1; i <= 400; i++) {
+      const g = new BaseballEngine(career(), seed(i));
+      g.throwAt(0, 0.95);
+      settle(g);
+      if (g.state.lastOutcome === "InPlay" || g.state.lastOutcome === "Foul") hit++;
+    }
+    return hit;
+  };
+  assert(contactRate(pro) > contactRate(newCareer), "pro batters make more contact");
+  for (let seedId = 1; seedId <= 3; seedId++) {
+    const g = new BaseballEngine(pro(), seed(seedId * 11));
+    g.start("match", 3);
+    playMatch(g, seedId);
+    assert.equal(g.state.career.games, 1);
+  }
+});
+check(
+  "M Ten data-driven pitches: all selectable, each with its own speed, break, control, stamina",
+  () => {
+    assert.equal(PITCHES.length, 10);
+    assert.equal(new Set(PITCHES.map((p) => p.key)).size, 10, "unique number keys 1–0");
+    for (const id of ["twoseam", "sinker", "forkball", "sweeper"]) assert(pitchData(id).cost > 0);
+    for (const p of PITCHES) {
+      const g = new BaseballEngine(allPitches(), () => 0.5);
+      g.selectPitch(p.id);
+      assert.equal(g.state.selected, p.id, `${p.name} selectable`);
+      g.throwAt(0, 0.95);
+      // rng 0.5 gives a fixed speed noise; the gap to the fastball is the data's delta.
+      const fast = new BaseballEngine(allPitches(), () => 0.5);
+      fast.throwAt(0, 0.95);
+      assert(Math.abs(g.state.flight.speed - fast.state.flight.speed - p.delta) < 1e-9);
+    }
+    // Control: harder pitches miss the target by more (same random draws).
+    const miss = (id) => {
+      const g = new BaseballEngine(allPitches(), seed(9));
+      g.selectPitch(id);
+      let sum = 0;
+      for (let i = 0; i < 400; i++) {
+        g.state.phase = "ready";
+        g.throwAt(0, 0.95);
+        sum += Math.hypot(g.state.flight.target.x, g.state.flight.target.y - 0.95);
+      }
+      return sum;
+    };
+    assert(miss("forkball") > miss("sweeper") && miss("sweeper") > miss("fastball"));
+    // Stamina: one pitch of each costs energy in proportion to its data.
+    const cost = (id) => {
+      const g = new BaseballEngine(allPitches(), seed(4));
+      g.selectPitch(id);
+      g.throwAt(0, 0.95);
+      while (g.state.phase === "windup") g.tick(1 / 60);
+      return 100 - g.state.energy;
+    };
+    assert(Math.abs(cost("forkball") / cost("fastball") - pitchData("forkball").stamina) < 1e-9);
+    // Movement: each new pitch bends its own way.
+    const bends = ["twoseam", "sinker", "forkball", "sweeper"].map((id) => {
+      const m = pitchMovement(id, 75);
+      return `${Math.round(m.x * 100)},${Math.round(m.y * 100)}`;
+    });
+    assert.equal(new Set(bends).size, 4);
+    // Batter reaction comes from data: sinkers induce weaker contact, sweepers more misses.
+    assert(pitchData("sinker").soft > pitchData("fastball").soft);
+    assert(pitchData("sweeper").whiff > pitchData("twoseam").whiff);
+  },
+);
+check("Season games with steals, pickoffs and tired arms still end in a valid state", () => {
+  for (let seedId = 1; seedId <= 4; seedId++) {
+    const g = new BaseballEngine(allPitches(), seed(seedId * 23));
+    g.start("match", 3);
+    playMatch(g, seedId, (g, t) => {
+      const s = g.state;
+      if (t % 7 === 0) s.energy = Math.max(5, s.energy - 3);
+      if (s.phase === "ready" && g.batting && s.bases[0] && !s.bases[1] && !s.stealCall) g.steal();
+      if (s.phase === "ready" && !g.batting && s.bases[0] && t % 5 === 0) g.pickoff(1);
+    });
+    const l0 = g.state.lines[0].reduce((a, b) => a + b, 0),
+      l1 = g.state.lines[1].reduce((a, b) => a + b, 0);
+    assert.equal(l0, g.state.score[0]);
+    assert.equal(l1, g.state.score[1]);
+  }
 });
 console.log(`\n${passed} gameplay checks passed.`);
