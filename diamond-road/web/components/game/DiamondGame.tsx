@@ -1564,8 +1564,8 @@ function BlessingDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
             <Sparkles size={18} /> 야구의 신이 내리는 은총
           </DialogTitle>
           <DialogDescription>
-            고교 마지막 시즌의 첫날. 마운드에 선 당신에게 신이 구종 하나를 선물합니다. 아홉 구종
-            가운데 무엇이 손끝에 깃들지는 하늘만이 압니다.
+            고교 마지막 시즌의 첫날. 마운드에 선 당신에게 신이 구종 하나를 선물합니다. 포심·슬라이더
+            말고 여덟 구종 가운데 무엇이 손끝에 깃들지는 하늘만이 압니다.
           </DialogDescription>
         </DialogHeader>
         <div className={`blessing-reel ${phase}`}>
@@ -1606,7 +1606,7 @@ function BlessingDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
           <div className="blessing-result">
             <span className={`tier-badge tier-${tier}`}>{tier}</span>
             <h3>{josa(won.name, "이가")} 손끝에 깃들었다</h3>
-            <p>{won.desc} · 포심과 함께 바로 던질 수 있습니다.</p>
+            <p>{won.desc} · 포심·슬라이더와 함께 바로 던질 수 있습니다.</p>
             <button className="primary-button" onClick={() => setPhase("idle")}>
               은총을 받고 훈련 시작 <ChevronRight size={16} />
             </button>
@@ -2644,6 +2644,31 @@ export default function DiamondGame() {
             <DialogTitle>경기 설정</DialogTitle>
             <DialogDescription>나에게 맞는 속도와 조작으로 플레이하세요.</DialogDescription>
           </DialogHeader>
+          <div className="dev-mode">
+            <h4>
+              개발자 모드 <small>테스트용 · 선수 기록에 바로 저장</small>
+            </h4>
+            <div>
+              <button
+                className="subtle-button"
+                onClick={() => {
+                  engine.devMaxStats();
+                  toast.success("모든 능력치를 99로 올렸습니다");
+                }}
+              >
+                모든 능력치 최대
+              </button>
+              <button
+                className="subtle-button"
+                onClick={() => {
+                  engine.devUnlockPitches();
+                  toast.success(`${PITCHES.length}개 구종을 모두 열었습니다`);
+                }}
+              >
+                모든 구종 열기
+              </button>
+            </div>
+          </div>
           <div className="settings-row">
             <label>난이도</label>
             <Select
@@ -2723,30 +2748,6 @@ export default function DiamondGame() {
           >
             선수 처음부터 다시 시작
           </button>
-          <div className="dev-mode">
-            <h4>개발자 모드</h4>
-            <p>테스트용입니다. 선수 기록에 바로 저장됩니다.</p>
-            <div>
-              <button
-                className="subtle-button"
-                onClick={() => {
-                  engine.devMaxStats();
-                  toast.success("모든 능력치를 99로 올렸습니다");
-                }}
-              >
-                모든 능력치 최대
-              </button>
-              <button
-                className="subtle-button"
-                onClick={() => {
-                  engine.devUnlockPitches();
-                  toast.success(`${PITCHES.length}개 구종을 모두 열었습니다`);
-                }}
-              >
-                모든 구종 열기
-              </button>
-            </div>
-          </div>
         </DialogContent>
       </Dialog>
       <Dialog

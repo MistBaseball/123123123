@@ -1206,7 +1206,7 @@ kbd {
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  padding: 12px 0;
+  padding: 9px 0;
   border-bottom: 1px solid #33434b;
 }
 .settings-row > label {
@@ -4264,15 +4264,20 @@ kbd {
   margin: 0 0 6px !important;
 }
 .dev-mode {
-  margin-top: 6px;
-  padding: 12px 14px;
+  padding: 10px 12px;
   border: 1px dashed #e9a58f88;
   border-radius: 8px;
 }
 .dev-mode h4 {
-  margin: 0;
+  margin: 0 0 8px;
   font-size: 0.9rem;
   color: #f0bba9;
+}
+.dev-mode h4 small {
+  margin-left: 6px;
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: #b0bec3;
 }
 .dev-mode p {
   margin: 2px 0 10px;

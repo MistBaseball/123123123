@@ -618,16 +618,17 @@ export const STAT_POINTS = 100;
 export const STAT_CAP = 80;
 /** Starting-pitch roulette: rarer pitches have smaller weights. */
 export const BLESSINGS: { id: PitchId; weight: number; tier: string }[] = [
-  { id: "slider", weight: 20, tier: "축복" },
-  { id: "changeup", weight: 18, tier: "축복" },
-  { id: "twoseam", weight: 16, tier: "축복" },
-  { id: "curve", weight: 12, tier: "은총" },
-  { id: "cutter", weight: 10, tier: "은총" },
-  { id: "sinker", weight: 9, tier: "은총" },
-  { id: "splitter", weight: 6, tier: "신탁" },
-  { id: "sweeper", weight: 5, tier: "신탁" },
-  { id: "forkball", weight: 4, tier: "신탁" },
+  { id: "changeup", weight: 22, tier: "축복" },
+  { id: "twoseam", weight: 20, tier: "축복" },
+  { id: "curve", weight: 15, tier: "은총" },
+  { id: "cutter", weight: 13, tier: "은총" },
+  { id: "sinker", weight: 11, tier: "은총" },
+  { id: "splitter", weight: 8, tier: "신탁" },
+  { id: "sweeper", weight: 6, tier: "신탁" },
+  { id: "forkball", weight: 5, tier: "신탁" },
 ];
+/** Every new player starts with these; the roulette adds one more. */
+export const STARTING_PITCHES: PitchId[] = ["fastball", "slider"];
 /** Word plus the Korean particle that fits its last syllable, e.g. josa("커브", "을를") = "커브를". */
 export const josa = (word: string, pair: "이가" | "을를" | "은는" | "과와") => {
   const code = word.charCodeAt(word.length - 1) - 0xac00,
@@ -837,7 +838,7 @@ export const newCareer = (): Career => ({
   outs: 0,
   draft: "",
   history: ["고교 3학년, 마지막 시즌의 첫날."],
-  pitches: ["fastball"],
+  pitches: [...STARTING_PITCHES],
   actions: DAY_ACTIONS,
   blessing: "",
   created: false,

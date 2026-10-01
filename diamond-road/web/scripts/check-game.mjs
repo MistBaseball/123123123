@@ -470,10 +470,10 @@ check(
 );
 check("Match XP is credited on finish and buys locked pitches", () => {
   const g = new BaseballEngine();
-  assert.deepEqual(g.state.career.pitches, ["fastball"]);
-  g.selectPitch("slider");
+  assert.deepEqual(g.state.career.pitches, ["fastball", "slider"], "starting pitches");
+  g.selectPitch("changeup");
   assert.equal(g.state.selected, "fastball", "locked pitch cannot be selected");
-  assert(!g.buyPitch("slider").ok, "no XP yet");
+  assert(!g.buyPitch("changeup").ok, "no XP yet");
   g.state.strikes = 2;
   g.strike(true, "test");
   assert.equal(g.state.matchXp, 3);
@@ -486,13 +486,14 @@ check("Match XP is credited on finish and buys locked pitches", () => {
   g.next();
   assert.equal(g.state.career.xp, 3 + 20 + 15);
   assert.equal(g.state.lastXpGain, 38);
-  g.state.career.xp = 70;
-  assert(g.buyPitch("slider").ok);
+  g.state.career.xp = 100;
+  assert(g.buyPitch("changeup").ok);
   assert.equal(g.state.career.xp, 10);
-  assert(!g.buyPitch("slider").ok, "cannot buy twice");
+  assert(!g.buyPitch("changeup").ok, "cannot buy twice");
+  assert(!g.buyPitch("slider").ok, "the slider is already known");
   g.start("bullpen");
-  g.selectPitch("slider");
-  assert.equal(g.state.selected, "slider");
+  g.selectPitch("changeup");
+  assert.equal(g.state.selected, "changeup");
   const practice = new BaseballEngine();
   practice.start("bullpen");
   practice.state.strikes = 2;
@@ -639,13 +640,14 @@ check("Starting blessing grants exactly one random extra pitch, weighted by rari
     const g = new BaseballEngine(newCareer(), rng);
     const id = g.receiveBlessing();
     assert(BLESSINGS.some((b) => b.id === id));
-    assert.deepEqual(g.state.career.pitches, ["fastball", id]);
+    assert.deepEqual(g.state.career.pitches, ["fastball", "slider", id]);
+    assert.notEqual(id, "slider", "the roulette never repeats a starting pitch");
     assert.equal(g.state.career.blessing, id);
     assert.equal(g.receiveBlessing(), null, "only once per career");
     seen[id] = (seen[id] ?? 0) + 1;
   }
   assert.equal(Object.keys(seen).length, BLESSINGS.length, "every pitch can come up");
-  assert(seen.slider > seen.splitter, "rare pitches come up less often");
+  assert(seen.changeup > seen.forkball, "rare pitches come up less often");
 });
 check("Balls in play: fly outs are not dominant and the result waits for the fielder", () => {
   const out = { fly: 0, hit: 0, total: 0 };
