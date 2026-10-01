@@ -56,6 +56,7 @@ import {
   BaseballEngine,
   PITCHES,
   ALL_PITCHES,
+  HIDDEN_PITCHES,
   isHiddenPitch,
   SWING_GOOD,
   SWING_SWEET,
@@ -1148,6 +1149,57 @@ function LifeView({
                     {p.cost} XP로 습득
                   </>
                 )}
+              </button>
+            </article>
+          );
+        })}
+        {HIDDEN_PITCHES.map((p) => {
+          const owned = c.pitches.includes(p.id),
+            m = pitchMovement(p.id, c.stats.movement);
+          // Until unlocked the card shows nothing about the pitch or its condition.
+          return owned ? (
+            <article
+              key={p.id}
+              className="shop-card owned hidden"
+              style={{ "--pitch-color": p.color } as React.CSSProperties}
+            >
+              <div>
+                <i />
+                <strong>{p.name}</strong>
+                <small>{p.en}</small>
+                <em className="hidden-badge">히든</em>
+              </div>
+              <p>{p.desc}</p>
+              <span className="shop-meta">
+                포심보다 {-p.delta} km/h 느림 · 흔들림 최대 {Math.round(m.flutter * 100)} cm
+              </span>
+              <span className="shop-traits">
+                {pitchTraits(p).map((t) => (
+                  <i key={t.text} className={t.good ? "good" : "bad"}>
+                    {t.text}
+                  </i>
+                ))}
+              </span>
+              <button className="subtle-button" disabled>
+                <Check size={15} /> 보유 중 · <kbd>{p.key}</kbd> 키
+              </button>
+            </article>
+          ) : (
+            <article
+              key={p.id}
+              className="shop-card hidden locked"
+              style={{ "--pitch-color": "#c9a8ff" } as React.CSSProperties}
+            >
+              <div>
+                <i />
+                <strong>???</strong>
+                <small>HIDDEN</small>
+                <em className="hidden-badge">히든</em>
+              </div>
+              <p>정체를 알 수 없는 구종. 경험치로는 익힐 수 없습니다.</p>
+              <span className="shop-meta">해금 조건 비공개</span>
+              <button className="subtle-button" disabled>
+                <Lock size={15} /> 어떤 조건을 만족하면 깨어납니다
               </button>
             </article>
           );

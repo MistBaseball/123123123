@@ -4583,3 +4583,27 @@ kbd {
   font-size: 1.25rem;
   color: #f4d48c;
 }
+
+/* Hidden pitch in the shop: a mystery card until unlocked. */
+.shop-card.hidden {
+  background: linear-gradient(160deg, #2a2340, #182c36 70%);
+  border-color: #6f5a9a;
+}
+.shop-card.hidden.locked strong {
+  letter-spacing: 0.2em;
+  color: #d8c3ff;
+}
+.shop-card .hidden-badge {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #c9a8ff26;
+  color: #d8c3ff;
+  font-size: 0.75rem;
+  font-style: normal;
+  font-weight: 700;
+}
+.shop-card.hidden.locked button {
+  color: #b9a6dd;
+  font-size: 0.8125rem;
+}
