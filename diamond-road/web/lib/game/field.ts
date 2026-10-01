@@ -12,6 +12,7 @@ import {
   playerYaw,
   type Vec,
 } from "./engine";
+import * as tex from "./textures";
 
 type Figure = {
   root: THREE.Group;
@@ -24,7 +25,7 @@ type Figure = {
 export class BaseballField {
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
-  private camera = new THREE.PerspectiveCamera(32, 1, 0.1, 600);
+  private camera = new THREE.PerspectiveCamera(32, 1, 0.1, 900);
   private players: Figure[] = [];
   private batter: Figure;
   private runners: Figure[] = [];
@@ -58,28 +59,47 @@ export class BaseballField {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.25;
+    this.renderer.toneMappingExposure = 1.05;
     this.renderer.domElement.setAttribute(
       "aria-label",
       "3D 야구장. 마우스로 조준하고 클릭해 투구 또는 스윙",
     );
     this.renderer.domElement.style.touchAction = "none";
     host.appendChild(this.renderer.domElement);
-    this.scene.background = new THREE.Color("#b5d2d5");
-    this.scene.fog = new THREE.Fog("#b5d2d5", 115, 280);
-    this.scene.add(new THREE.HemisphereLight(0xe3f3ff, 0x597649, 2.1));
-    const sun = new THREE.DirectionalLight(0xffeed7, 3.2);
-    sun.position.set(-35, 70, -24);
+    // Late-afternoon game: a sky dome that fades to a warm haze, soft sky fill from above, bounce
+    // light from the grass and a low warm sun that throws long shadows across the infield.
+    this.scene.background = new THREE.Color("#c9d6dc");
+    this.scene.fog = new THREE.Fog("#d4d9d4", 170, 520);
+    const sky = new THREE.Mesh(
+      new THREE.SphereGeometry(600, 32, 16),
+      new THREE.MeshBasicMaterial({
+        map: tex.skyTexture(),
+        side: THREE.BackSide,
+        fog: false,
+        depthWrite: false,
+      }),
+    );
+    sky.position.set(0, -40, 40);
+    this.scene.add(sky);
+    this.scene.add(new THREE.HemisphereLight(0xcfe3ff, 0x4f6b3a, 1.15));
+    const sun = new THREE.DirectionalLight(0xffe2bf, 3.4);
+    sun.position.set(-48, 46, -30);
+    sun.target.position.set(0, 0, 30);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.left = -65;
-    sun.shadow.camera.right = 65;
-    sun.shadow.camera.top = 80;
-    sun.shadow.camera.bottom = -40;
-    sun.shadow.normalBias = 0.025;
-    sun.shadow.bias = -0.0003;
-    sun.shadow.camera.far = 200;
-    this.scene.add(sun);
+    sun.shadow.camera.left = -70;
+    sun.shadow.camera.right = 70;
+    sun.shadow.camera.top = 75;
+    sun.shadow.camera.bottom = -45;
+    sun.shadow.normalBias = 0.03;
+    sun.shadow.bias = -0.0004;
+    sun.shadow.camera.far = 220;
+    sun.shadow.radius = 3;
+    this.scene.add(sun, sun.target);
+    // Soft fill from the opposite side so shadowed faces keep some detail.
+    const fill = new THREE.DirectionalLight(0xbcd2ff, 0.55);
+    fill.position.set(40, 30, 60);
+    this.scene.add(fill);
     this.makePark();
     DEFENSE.forEach((p, i) => {
       const fig = this.figure(i === 1 ? "#233f58" : "#eeeade", i === 1 ? "#233f58" : "#294b62");
@@ -283,65 +303,163 @@ export class BaseballField {
     m.rotation.y = rotation;
     this.scene.add(m);
   }
-  private makePark() {
-    this.box(0, -0.27, 43, 290, 0.5, 290, "#53725a");
-    for (let i = -3; i < 15; i++)
-      this.box(0, -0.006, i * 10, 220, 0.016, 10, i % 2 ? "#497b58" : "#518760");
-    // The infield is an actual playable surface, with 27.4 m base paths.
-    const diamond = new THREE.Shape();
-    diamond.moveTo(0, -1.5);
-    diamond.lineTo(25, 24);
-    diamond.quadraticCurveTo(24, 48, 0, 49);
-    diamond.quadraticCurveTo(-24, 48, -25, 24);
-    diamond.lineTo(0, -1.5);
-    const ground = this.mesh(new THREE.ShapeGeometry(diamond, 48), "#b9916b", 0, 0.017, 0);
-    ground.rotation.x = Math.PI / 2;
-    (ground.material as THREE.MeshStandardMaterial).side = THREE.DoubleSide;
-    const inner = this.box(0, 0.028, 22.5, 25, 0.016, 25, "#548960");
-    inner.rotation.y = Math.PI / 4;
-    this.disk(0, 0, 4.3, "#c29a72", 0.032);
-    this.disk(0, 18.44, 2.8, "#c49e79", 0.05);
-    const mound = this.mesh(
-      new THREE.CylinderGeometry(1.4, 2.8, 0.28, 48),
-      "#c49e79",
-      0,
-      0.15,
-      18.44,
-    );
-    mound.receiveShadow = true;
-    this.box(0, 0.3, 18.6, 0.61, 0.025, 0.15, "#f4ede0");
-    BASES.slice(0, 3).forEach((p) => {
-      this.disk(p.x, p.z, 1.4, "#c29a72", 0.04);
-      const b = this.box(p.x, 0.1, p.z, 0.5, 0.1, 0.5, "#f4ecda");
-      b.rotation.y = Math.PI / 4;
+  /** A flat mesh lying on the ground from a 2D outline given in world (x, z) metres. */
+  private ground(outline: Vec[], material: THREE.Material, y: number, holes: Vec[][] = []) {
+    // Shape coordinates are (x, -z) so that rotating −90° about X lays them on the field.
+    const shape = new THREE.Shape(outline.map((p) => new THREE.Vector2(p.x, -p.z)));
+    shape.holes = holes.map((h) => new THREE.Path(h.map((p) => new THREE.Vector2(p.x, -p.z))));
+    const m = new THREE.Mesh(new THREE.ShapeGeometry(shape, 64), material);
+    m.rotation.x = -Math.PI / 2;
+    m.position.y = y;
+    m.receiveShadow = true;
+    this.scene.add(m);
+    return m;
+  }
+  /** A chalk stripe of real width between two ground points. */
+  private chalk(a: Vec, b: Vec, width = 0.1) {
+    const len = Math.hypot(b.x - a.x, b.z - a.z),
+      m = new THREE.Mesh(new THREE.PlaneGeometry(width, len), this.chalkMaterial);
+    m.rotation.x = -Math.PI / 2;
+    m.rotation.z = -Math.atan2(b.x - a.x, b.z - a.z);
+    m.position.set((a.x + b.x) / 2, 0.045, (a.z + b.z) / 2);
+    m.receiveShadow = true;
+    this.scene.add(m);
+  }
+  private chalkMaterial = new THREE.MeshStandardMaterial({
+    color: "#f4f1e6",
+    roughness: 0.95,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+  });
+  /** Clay material whose UVs are metres (ShapeGeometry) — `tile` metres per texture repeat. */
+  private clay(tile = 5) {
+    const map = tex.dirtColor(),
+      bump = tex.dirtDetail();
+    map.repeat.set(1 / tile, 1 / tile);
+    bump.repeat.set(1 / 1.2, 1 / 1.2);
+    return new THREE.MeshStandardMaterial({
+      map,
+      bumpMap: bump,
+      bumpScale: 0.6,
+      roughness: 0.97,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
     });
-    const plate = new THREE.Shape();
-    plate.moveTo(-0.215, 0.22);
-    plate.lineTo(0.215, 0.22);
-    plate.lineTo(0.215, 0);
-    plate.lineTo(0, -0.24);
-    plate.lineTo(-0.215, 0);
-    plate.closePath();
-    const home = this.mesh(new THREE.ShapeGeometry(plate), "#fff8e2", 0, 0.052, 0);
-    home.rotation.x = -Math.PI / 2;
-    this.line([V(-74, 0.06, 74), V(0, 0.06, 0), V(74, 0.06, 74)], "#eee8cf");
-    for (const x of [-0.76, 0.76])
-      this.line(
-        [
-          V(x - 0.25, 0.06, -0.55),
-          V(x + 0.25, 0.06, -0.55),
-          V(x + 0.25, 0.06, 0.6),
-          V(x - 0.25, 0.06, 0.6),
-          V(x - 0.25, 0.06, -0.55),
-        ],
-        "#e6d7bd",
-      );
-    const arc: Vec[] = [];
-    for (let i = 0; i <= 64; i++) {
-      const a = -Math.PI / 4 + (i * Math.PI) / 128;
-      arc.push(V(Math.sin(a) * 107, 0.03, Math.cos(a) * 107));
+  }
+  private makePark() {
+    // Turf: one 320 m plane with the mowing pattern, plus a fine blade bump that tiles every 2 m.
+    const turfMap = tex.turf(),
+      blades = tex.grassDetail();
+    blades.repeat.set(160, 160);
+    const turf = new THREE.Mesh(
+      new THREE.PlaneGeometry(320, 320),
+      new THREE.MeshStandardMaterial({
+        map: turfMap,
+        bumpMap: blades,
+        bumpScale: 0.9,
+        roughness: 0.92,
+      }),
+    );
+    turf.rotation.x = -Math.PI / 2;
+    turf.position.set(0, 0, 40);
+    turf.receiveShadow = true;
+    this.scene.add(turf);
+    const clay = this.clay();
+    // Infield skin: out along the foul lines to the 29 m arc around the mound, with the grass
+    // infield square cut out of it (its edges sit 1.2 m inside the base lines).
+    const r2 = Math.SQRT1_2,
+      arcR = 29,
+      mound = V(0, 0, 18.44),
+      lineT = 38.94,
+      skin: Vec[] = [V(0, 0, -1.2), V(-lineT * r2 - 1.1, 0, lineT * r2 - 0.3)];
+    const end = Math.atan2(lineT * r2, lineT * r2 - mound.z);
+    for (let i = 0; i <= 48; i++) {
+      const a = -end + (i / 48) * end * 2;
+      skin.push(V(Math.sin(a) * arcR, 0, mound.z + Math.cos(a) * arcR));
     }
-    this.line(arc, "#c8a37b");
+    skin.push(V(lineT * r2 + 1.1, 0, lineT * r2 - 0.3));
+    const half = 19.4 - 1.7,
+      infieldGrass = [
+        V(0, 0, 19.4 - half),
+        V(half, 0, 19.4),
+        V(0, 0, 19.4 + half),
+        V(-half, 0, 19.4),
+      ];
+    this.ground(skin, clay, 0.02, [infieldGrass]);
+    // Dirt circles: home plate area, the base cut-outs and the mound.
+    const circle = (cx: number, cz: number, r: number, y: number, m: THREE.Material) => {
+      const pts: Vec[] = [];
+      for (let i = 0; i < 48; i++) {
+        const a = (i / 48) * Math.PI * 2;
+        pts.push(V(cx + Math.sin(a) * r, 0, cz + Math.cos(a) * r));
+      }
+      return this.ground(pts, m, y);
+    };
+    circle(0, 0, 4.0, 0.024, clay);
+    for (const b of BASES.slice(0, 3)) circle(b.x, b.z, 2.4, 0.024, clay);
+    circle(0, 18.44, 2.74, 0.026, clay);
+    // Warning track in front of the wall.
+    const track: Vec[] = [];
+    for (let i = 0; i <= 64; i++) {
+      const a = -Math.PI / 4 - 0.06 + (i / 64) * (Math.PI / 2 + 0.12);
+      track.push(V(Math.sin(a) * 107.6, 0, Math.cos(a) * 107.6));
+    }
+    for (let i = 64; i >= 0; i--) {
+      const a = -Math.PI / 4 - 0.06 + (i / 64) * (Math.PI / 2 + 0.12);
+      track.push(V(Math.sin(a) * 102.5, 0, Math.cos(a) * 102.5));
+    }
+    this.ground(track, this.clay(6), 0.02);
+    // Mound: a low clay hill with the rubber on top.
+    const moundMap = tex.dirtColor();
+    moundMap.repeat.set(3, 1);
+    const hill = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.0, 2.74, 0.26, 48, 1),
+      new THREE.MeshStandardMaterial({ map: moundMap, roughness: 0.97 }),
+    );
+    hill.position.set(0, 0.15, 18.44);
+    hill.receiveShadow = true;
+    this.scene.add(hill);
+    this.box(0, 0.29, 18.6, 0.61, 0.03, 0.15, "#f4efe2");
+    // Bases: white canvas bags standing a little off the dirt.
+    const bagMaterial = new THREE.MeshStandardMaterial({ color: "#f3efe6", roughness: 0.7 });
+    BASES.slice(0, 3).forEach((p) => {
+      const bag = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.09, 0.38), bagMaterial);
+      bag.position.set(p.x, 0.07, p.z);
+      bag.rotation.y = Math.PI / 4;
+      bag.castShadow = bag.receiveShadow = true;
+      this.scene.add(bag);
+    });
+    // Home plate: white pentagon on a thin black rubber edge.
+    const plateOutline = (k: number) => [
+      V(-0.215 * k, 0, 0.22 * k),
+      V(0.215 * k, 0, 0.22 * k),
+      V(0.215 * k, 0, 0),
+      V(0, 0, -0.24 * k),
+      V(-0.215 * k, 0, 0),
+    ];
+    this.ground(plateOutline(1.08), new THREE.MeshStandardMaterial({ color: "#2b2b28" }), 0.05);
+    this.ground(
+      plateOutline(1),
+      new THREE.MeshStandardMaterial({ color: "#fbf9f2", roughness: 0.6 }),
+      0.055,
+    );
+    // Chalk: foul lines to the poles, batter's boxes and the catcher's box.
+    this.chalk(V(-0.3, 0, 0.3), V(-106 * r2, 0, 106 * r2), 0.1);
+    this.chalk(V(0.3, 0, 0.3), V(106 * r2, 0, 106 * r2), 0.1);
+    // Batter's boxes: 1.22 × 1.83 m, 15 cm off the plate.
+    for (const x of [-0.98, 0.98]) {
+      const x0 = x - 0.61,
+        x1 = x + 0.61,
+        z0 = -0.92,
+        z1 = 0.92;
+      this.chalk(V(x0, 0, z0), V(x1, 0, z0), 0.08);
+      this.chalk(V(x1, 0, z0), V(x1, 0, z1), 0.08);
+      this.chalk(V(x1, 0, z1), V(x0, 0, z1), 0.08);
+      this.chalk(V(x0, 0, z1), V(x0, 0, z0), 0.08);
+    }
+    this.chalk(V(-0.65, 0, -0.9), V(-0.65, 0, -3.0), 0.08);
+    this.chalk(V(0.65, 0, -0.9), V(0.65, 0, -3.0), 0.08);
+    this.chalk(V(-0.65, 0, -3.0), V(0.65, 0, -3.0), 0.08);
     for (let i = 0; i < 40; i++) {
       const a = -Math.PI / 4 + ((i + 0.5) * Math.PI) / 80,
         x = Math.sin(a) * 108,
