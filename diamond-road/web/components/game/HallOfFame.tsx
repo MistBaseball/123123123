@@ -98,6 +98,10 @@ export function HallOfFameButton({ engine, career }: { engine: BaseballEngine; c
               친구들과 커리어 기록을 겨뤄요 · 닉네임을 정하면 경기마다 기록이 자동으로 올라가요.
             </DialogDescription>
           </DialogHeader>
+          <p className="hof-warn">
+            ⚠️ 일주일 이상 아무도 접속하지 않으면 명예의 전당이 자동으로 비활성화됩니다(무료 서버
+            일시정지). 그동안 게임은 정상이고, 서버가 다시 켜지면 기록도 그대로 돌아와요.
+          </p>
 
           <section className="hof-profile">
             {!profile || editing ? (
@@ -235,6 +239,10 @@ export function HallOfFameButton({ engine, career }: { engine: BaseballEngine; c
               )}
             </section>
           )}
+          <p className="hidden-hint">
+            전당 입구의 낡은 명판 · 『투타 모두 정상에 섰던 그 이름으로 첫발을 뗀 자, 처음부터
+            하늘에 닿으리라』
+          </p>
         </DialogContent>
       </Dialog>
     </>

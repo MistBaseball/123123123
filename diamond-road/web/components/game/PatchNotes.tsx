@@ -261,6 +261,10 @@ export function PatchNotesButton() {
               </li>
             ))}
           </ol>
+          <p className="hidden-hint">
+            개발 노트 구석의 낙서 · &ldquo;가장 느린 팔, 가장 예민한 손끝&rdquo; &ldquo;이름이 곧
+            재능인 선수&rdquo; …무슨 뜻이었더라?
+          </p>
         </DialogContent>
       </Dialog>
     </>

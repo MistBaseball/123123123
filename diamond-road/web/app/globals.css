@@ -5354,3 +5354,29 @@ kbd {
   background: #c0483d !important;
   color: #fff !important;
 }
+
+/* Hidden-element hints and the hall-of-fame server notice. */
+.hidden-hint {
+  margin: 12px 0 0;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  font-style: italic;
+  color: #8f9a86;
+  border-left: 2px solid #5b5236;
+  padding-left: 10px;
+}
+.hint-footer {
+  margin: 28px 0 8px;
+  text-align: center;
+  border: 0;
+  padding: 0;
+}
+.hof-warn {
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: #e6c98a;
+  background: #2a2414;
+  border: 1px solid #5b4a22;
+  border-radius: 6px;
+  padding: 8px 10px;
+}

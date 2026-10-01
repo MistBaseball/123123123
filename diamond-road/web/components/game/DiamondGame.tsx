@@ -1310,6 +1310,9 @@ function LifeView({
         </p>
       </div>
       <CareerView engine={engine} s={s} />
+      <p className="hidden-hint hint-footer">
+        🔍 게임 곳곳에 히든 요소의 힌트가 숨어 있어요. 화면 구석의 작은 글씨를 잘 읽어 보세요.
+      </p>
     </section>
   );
 }
@@ -1485,6 +1488,10 @@ function CreationDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
                 </div>
               ))}
             </div>
+            <p className="hidden-hint">
+              스카우트 수첩에 끼워진 오래된 쪽지 · &ldquo;공은 누구보다 느렸지만 손끝은 누구보다
+              예민했던 투수가 있었다. 그의 공은 춤을 췄다.&rdquo;
+            </p>
             <p className={`creation-left ${left === 0 ? "done" : ""}`}>
               남은 포인트 <b>{left}</b>
               {left > 0
