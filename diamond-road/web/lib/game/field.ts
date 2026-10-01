@@ -462,89 +462,169 @@ export class BaseballField {
     this.chalk(V(-0.65, 0, -0.9), V(-0.65, 0, -3.0), 0.08);
     this.chalk(V(0.65, 0, -0.9), V(0.65, 0, -3.0), 0.08);
     this.chalk(V(-0.65, 0, -3.0), V(0.65, 0, -3.0), 0.08);
-    for (let i = 0; i < 40; i++) {
-      const a = -Math.PI / 4 + ((i + 0.5) * Math.PI) / 80,
-        x = Math.sin(a) * 108,
-        z = Math.cos(a) * 108;
-      const f = this.box(x, 1.6, z, 4.4, 3.2, 0.5, "#294e49");
-      f.rotation.y = a;
-      const top = this.box(x, 3.25, z, 4.4, 0.12, 0.65, "#e2c97b");
-      top.rotation.y = a;
-    }
+    this.makeStadium();
+  }
+  /** Walls, seating bowl, bleachers, crowd, scoreboard and light towers. */
+  private makeStadium() {
+    const r2 = Math.SQRT1_2;
+    // Outfield wall: one continuous padded curve with a yellow home-run line on top.
+    const fairStart = -Math.PI / 4 - 0.06,
+      fairLength = Math.PI / 2 + 0.12,
+      pad = tex.wallPadding();
+    pad.repeat.set(70, 1);
+    const wall = new THREE.Mesh(
+      new THREE.CylinderGeometry(108, 108, 3.2, 128, 1, true, fairStart, fairLength),
+      new THREE.MeshStandardMaterial({ map: pad, roughness: 0.75, side: THREE.DoubleSide }),
+    );
+    wall.position.y = 1.6;
+    wall.receiveShadow = true;
+    this.scene.add(wall);
+    const lineTop = new THREE.Mesh(
+      new THREE.CylinderGeometry(108.05, 108.05, 0.14, 128, 1, true, fairStart, fairLength),
+      new THREE.MeshStandardMaterial({ color: "#f0c43c", roughness: 0.5, side: THREE.DoubleSide }),
+    );
+    lineTop.position.y = 3.25;
+    this.scene.add(lineTop);
     for (const side of [-1, 1]) {
-      const a = (side * Math.PI) / 4;
       const pole = this.mesh(
-        new THREE.CylinderGeometry(0.12, 0.16, 14, 8),
+        new THREE.CylinderGeometry(0.12, 0.16, 16, 10),
         "#f0c74b",
-        Math.sin(a) * 106,
-        7,
-        Math.cos(a) * 106,
+        side * 107 * r2,
+        8,
+        107 * r2,
       );
       pole.castShadow = true;
     }
-    // Low-poly grandstand tiers wrap behind home plate, facing the field.
-    for (let side = -1; side <= 1; side += 2) {
-      for (let section = 0; section < 6; section++) {
-        const x = side * (9 + section * 7),
-          z = -14 + section * 5;
-        for (let row = 0; row < 5; row++) {
-          const stand = this.box(
-            x + side * row * 1.5,
-            1 + row * 0.85,
-            z - row * 2,
-            7.2,
-            0.7,
-            2.4,
-            row % 2 ? "#294652" : "#345562",
-          );
-          stand.rotation.y = -side * 0.42;
+    // Seating bowl around home plate, from the left-field line round to the right-field line:
+    // a stepped profile turned on a lathe, so every row is a real curved step.
+    const concrete = new THREE.MeshStandardMaterial({
+      color: "#7d8a8c",
+      roughness: 0.9,
+      side: THREE.DoubleSide,
+    });
+    const bowl = (
+      inner: number,
+      rows: number,
+      base: number,
+      phiStart: number,
+      phiLength: number,
+    ) => {
+      const profile: THREE.Vector2[] = [
+        new THREE.Vector2(inner, 0),
+        new THREE.Vector2(inner, base),
+      ];
+      for (let k = 0; k < rows; k++) {
+        const r = inner + k * 1.25,
+          y = base + k * 0.62;
+        profile.push(new THREE.Vector2(r + 1.25, y), new THREE.Vector2(r + 1.25, y + 0.62));
+      }
+      const top = profile[profile.length - 1];
+      profile.push(new THREE.Vector2(top.x + 0.6, top.y + 2.2), new THREE.Vector2(top.x + 0.6, 0));
+      const m = new THREE.Mesh(new THREE.LatheGeometry(profile, 96, phiStart, phiLength), concrete);
+      m.receiveShadow = true;
+      m.castShadow = true;
+      this.scene.add(m);
+      // Padded front wall (the backstop behind home is part of it).
+      const front = new THREE.Mesh(
+        new THREE.CylinderGeometry(
+          inner - 0.05,
+          inner - 0.05,
+          base,
+          96,
+          1,
+          true,
+          phiStart,
+          phiLength,
+        ),
+        new THREE.MeshStandardMaterial({
+          color: "#1f4038",
+          roughness: 0.7,
+          side: THREE.DoubleSide,
+        }),
+      );
+      front.position.y = base / 2;
+      this.scene.add(front);
+      return { inner, rows, base, phiStart, phiLength };
+    };
+    const seats = [
+      // From the right-field corner (φ = π/4), round behind home (φ = π), to the left-field corner.
+      bowl(26, 18, 1.4, Math.PI / 4 + 0.35, (Math.PI * 3) / 2 - 0.7),
+      bowl(112, 12, 3.6, -Math.PI / 4 - 0.02, Math.PI / 2 + 0.04),
+    ];
+    // Crowd: seated fans as instanced capsules in team-ish colours, most seats filled.
+    const fanGeometry = new THREE.CapsuleGeometry(0.17, 0.3, 3, 8),
+      fans = new THREE.InstancedMesh(
+        fanGeometry,
+        new THREE.MeshStandardMaterial({ roughness: 0.9 }),
+        4200,
+      ),
+      o = new THREE.Object3D(),
+      palette = [
+        "#e9dcc3",
+        "#cf6a4c",
+        "#2a4a66",
+        "#f2f0ea",
+        "#dcb356",
+        "#5b7f8c",
+        "#1f2a33",
+        "#b8423a",
+      ],
+      color = new THREE.Color();
+    let count = 0,
+      seed = 3;
+    const rnd = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296;
+    for (const b of seats)
+      for (let k = 0; k < b.rows; k++) {
+        const r = b.inner + k * 1.25 + 0.75,
+          y = b.base + k * 0.62 + 0.42,
+          perRow = Math.floor((r * b.phiLength) / 0.62);
+        for (let j = 0; j < perRow && count < 4200; j++) {
+          if (rnd() < 0.3) continue;
+          const phi = b.phiStart + ((j + 0.5) / perRow) * b.phiLength;
+          o.position.set(Math.sin(phi) * r, y, Math.cos(phi) * r);
+          o.rotation.y = phi + Math.PI;
+          o.scale.setScalar(0.9 + rnd() * 0.2);
+          o.updateMatrix();
+          fans.setMatrixAt(count, o.matrix);
+          fans.setColorAt(count, color.set(palette[Math.floor(rnd() * palette.length)]));
+          count++;
         }
       }
-      this.box(side * 21, 1, -0.5, 10, 2, 3, "#224450");
-      this.box(side * 21, 2.4, -0.5, 11, 0.25, 4, "#17313d");
-    }
-    this.box(0, 1, -14, 19, 2, 1, "#254650");
-    this.label("HANEUL BASEBALL", "#ead7a8", "#254650", 14, 2, 0, 2.7, -14, 0);
-    this.box(0, 7.5, 116, 24, 12, 1, "#233c48");
-    this.label("DIAMOND ROAD", "#f2c778", "#233c48", 22, 5, 0, 9.8, 115.4);
-    this.label("HOME OF THE NEXT ACE", "#c6d9d5", "#233c48", 20, 3, 0, 5.8, 115.3);
-    const crowdGeometry = new THREE.BoxGeometry(0.42, 0.7, 0.45);
-    const crowd = new THREE.InstancedMesh(
-      crowdGeometry,
-      new THREE.MeshStandardMaterial({ roughness: 0.9 }),
-      480,
-    );
-    const o = new THREE.Object3D();
-    const colors = ["#e9dcc3", "#cf815c", "#7f9ba2", "#183542", "#dcb356"];
-    for (let i = 0; i < 480; i++) {
-      const side = i % 2 ? 1 : -1,
-        section = Math.floor(i / 80),
-        row = Math.floor(i / 16) % 5,
-        col = Math.floor(i / 2) % 8;
-      o.position.set(
-        side * (6.7 + section * 7 + row * 1.5 + col * 0.64),
-        1.8 + row * 0.85,
-        -14 + section * 5 - row * 2,
-      );
-      o.updateMatrix();
-      crowd.setMatrixAt(i, o.matrix);
-      crowd.setColorAt(i, new THREE.Color(colors[i % colors.length]));
-    }
-    this.scene.add(crowd);
+    fans.count = count;
+    this.scene.add(fans);
+    // Behind-home sign on the backstop padding.
+    this.label("HANEUL BASEBALL", "#ead7a8", "#1f4038", 7, 0.95, 0, 0.75, -25.8, 0);
+    // Scoreboard above the centre-field bleachers.
+    this.box(0, 16, 128, 30, 13, 1.2, "#16252c");
+    this.label("DIAMOND ROAD", "#f2c778", "#16252c", 26, 5, 0, 18.8, 127.3);
+    this.label("HOME OF THE NEXT ACE", "#c6d9d5", "#16252c", 22, 3, 0, 14.2, 127.3);
+    for (const x of [-9, 9])
+      this.mesh(new THREE.CylinderGeometry(0.5, 0.6, 12, 10), "#5d6a6c", x, 5, 128.6);
+    // Light towers with glowing lamp banks, two over each stand.
+    const lamp = new THREE.MeshStandardMaterial({
+      color: "#fffbe8",
+      emissive: "#fff6d8",
+      emissiveIntensity: 1.6,
+    });
     for (const [x, z] of [
-      [-55, 10],
-      [55, 10],
-      [-74, 82],
-      [74, 82],
+      [-62, -48],
+      [74, 0],
+      [-88, 98],
+      [88, 98],
     ]) {
-      this.mesh(new THREE.CylinderGeometry(0.25, 0.45, 26, 10), "#7b8e8d", x, 13, z);
-      this.box(x, 26, z, 7, 1.4, 0.7, "#ece9d7");
-      for (let j = -2; j <= 2; j++) this.box(x + j * 1.2, 26, z - 0.4, 0.9, 0.8, 0.1, "#fffbdc");
-    }
-    for (let i = 0; i < 23; i++) {
-      const x = -140 + i * 13,
-        z = 128 + Math.sin(i) * 8;
-      this.box(x, 7 + (i % 4) * 3, z, 9, 14 + (i % 4) * 6, 9, i % 2 ? "#88a4a4" : "#789798");
+      const mast = this.mesh(new THREE.CylinderGeometry(0.35, 0.6, 34, 10), "#8a9597", x, 17, z);
+      mast.castShadow = true;
+      const head = new THREE.Group();
+      head.position.set(x, 34.5, z);
+      head.lookAt(0, 0, 30);
+      this.scene.add(head);
+      this.box(0, 0, 0, 8, 3.4, 0.5, "#e4e2d6", head);
+      for (let i = -3; i <= 3; i++)
+        for (let j = -1; j <= 1; j++) {
+          const bulb = new THREE.Mesh(new THREE.CircleGeometry(0.42, 12), lamp);
+          bulb.position.set(i * 1.1, j * 1.0, 0.27);
+          head.add(bulb);
+        }
     }
   }
   private figureCount = 0;
