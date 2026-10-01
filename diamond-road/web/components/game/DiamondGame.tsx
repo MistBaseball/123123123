@@ -3428,15 +3428,20 @@ export default function DiamondGame() {
               </form>
             ) : (
               <div>
-                <button
-                  className="subtle-button"
-                  onClick={() => {
-                    engine.devMaxStats();
-                    toast.success(`모든 능력치를 ${statCapOf(s.career)}로 올렸습니다`);
-                  }}
-                >
-                  모든 능력치 최대
-                </button>
+                {([100, 200] as const).map((v) => (
+                  <button
+                    key={v}
+                    className="subtle-button"
+                    onClick={() => {
+                      engine.devSetStats(v);
+                      toast.success(
+                        `모든 능력치를 ${v}로 올렸습니다${v === 200 ? " (상한 200 해금)" : ""}`,
+                      );
+                    }}
+                  >
+                    능력치 {v} 해금
+                  </button>
+                ))}
                 <button
                   className="subtle-button"
                   onClick={() => {

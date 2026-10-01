@@ -3338,11 +3338,15 @@ export class BaseballEngine {
     this.emit();
     return { ok: true, message: "선수 등록 완료" };
   }
-  /** Developer mode: every stat to the stage cap (100 in high school, 200 in the pros). */
-  devMaxStats() {
+  /**
+   * Developer mode: every stat to 100 or 200. 200 also lifts the stat cap to 200 for this
+   * career (even in high school), so later training and reloading keep it.
+   */
+  devSetStats(value: 100 | 200) {
     const c = this.state.career;
-    for (const k of Object.keys(c.stats) as StatKey[]) c.stats[k] = statCapOf(c);
-    c.history = ["개발자 모드 · 모든 능력치 최대", ...c.history].slice(0, 12);
+    if (value === 200) c.legend = true;
+    for (const k of Object.keys(c.stats) as StatKey[]) c.stats[k] = value;
+    c.history = [`개발자 모드 · 모든 능력치 ${value}`, ...c.history].slice(0, 12);
     this.persist();
     this.emit();
   }

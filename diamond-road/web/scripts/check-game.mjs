@@ -1418,8 +1418,16 @@ check("Stat caps: 100 in high school, 200 in the pros, where the fastball reache
   hs.state.career.energy = 100;
   hs.state.actions = 5;
   assert(!hs.train("bullpen", 1).ok, "high-school cap is 100");
-  hs.devMaxStats();
+  hs.devSetStats(100);
   assert(Object.values(hs.state.career.stats).every((v) => v === 100));
+  assert.equal(statCapOf(hs.state.career), 100, "the 100 button keeps the high-school cap");
+  hs.devSetStats(200);
+  assert(Object.values(hs.state.career.stats).every((v) => v === 200));
+  assert.equal(
+    statCapOf(hs.state.career),
+    200,
+    "the 200 button lifts the cap, even in high school",
+  );
   const pro = new BaseballEngine(
     Object.assign(newCareer(), { stage: "pro", club: TEAMS[0].id, proUnlocked: true }),
     () => 0.5,
@@ -1427,7 +1435,7 @@ check("Stat caps: 100 in high school, 200 in the pros, where the fastball reache
   const before = pro.state.career.stats.control;
   assert(pro.train("bullpen", 1).ok);
   assert.equal(pro.state.career.stats.control, before + 4, "pro training gains are doubled");
-  pro.devMaxStats();
+  pro.devSetStats(200);
   assert(Object.values(pro.state.career.stats).every((v) => v === 200));
   pro.state.effort = 100;
   pro.state.career.form = 100;
