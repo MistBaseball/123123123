@@ -4607,3 +4607,43 @@ kbd {
   color: #b9a6dd;
   font-size: 0.8125rem;
 }
+
+/* Speed readout tiers: slow pitches cool blue, fast ones orange, 160+ red and glowing. */
+.speed-readout > b {
+  transition:
+    color 0.2s,
+    text-shadow 0.2s;
+}
+.speed-readout em {
+  display: block;
+  margin-top: 4px;
+  font-style: normal;
+  font-weight: 700;
+  font-size: 0.75rem;
+}
+.speed-readout.slow > b,
+.speed-readout.slow em {
+  color: #9fd0f0;
+}
+.speed-readout.fast > b,
+.speed-readout.fast em {
+  color: #ffb45c;
+}
+.speed-readout.blazing > b,
+.speed-readout.blazing em {
+  color: #ff6b4a;
+}
+.speed-readout.blazing > b {
+  text-shadow: 0 0 18px #ff5a3c99;
+  animation: speed-blaze 0.9s ease-in-out infinite alternate;
+}
+@keyframes speed-blaze {
+  to {
+    text-shadow: 0 0 28px #ff7a4acc;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .speed-readout.blazing > b {
+    animation: none;
+  }
+}

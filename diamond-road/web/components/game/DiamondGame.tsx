@@ -118,6 +118,17 @@ const modes: { id: Mode; label: string; sub: string }[] = [
   { id: "batting", label: "배팅 케이지", sub: "타격 연습" },
 ];
 const statNames = STAT_NAMES;
+/** Speed readout colour tier and label, so fast and slow pitches read differently at a glance. */
+const speedTier = (kmh: number) =>
+  !kmh
+    ? { cls: "", label: "" }
+    : kmh >= 160
+      ? { cls: "blazing", label: "초강속구" }
+      : kmh >= 145
+        ? { cls: "fast", label: "강속구" }
+        : kmh < 115
+          ? { cls: "slow", label: "느린 공" }
+          : { cls: "", label: "" };
 /** Plain-word strengths and costs of a pitch, read from its data. */
 const pitchTraits = (p: (typeof PITCHES)[number]) =>
   [
@@ -2813,10 +2824,11 @@ export default function DiamondGame() {
                     </span>
                   </div>
                 </div>
-                <div className="speed-readout">
+                <div className={`speed-readout ${speedTier(s.lastSpeed).cls}`}>
                   <b>{s.lastSpeed || "—"}</b>
                   <span>
                     km/h<small>{s.lastPitch}</small>
+                    {speedTier(s.lastSpeed).label && <em>{speedTier(s.lastSpeed).label}</em>}
                   </span>
                 </div>
               </div>
@@ -3318,7 +3330,8 @@ export default function DiamondGame() {
             <p>
               투구 조준판의 좌우와 변화량은 투수 방향 기준입니다. 색 영역은 기본 포물선 대비 최대
               휨이며, 최종 도착 범위나 제구 오차 범위가 아닙니다. 표시 구속은 게임 내 물리 구속이며,
-              반응 시간을 위해 공 이동은 난이도에 따라 느리게 보여 줍니다.
+              반응 시간을 위해 공 이동은 난이도에 따라 느리게 보여 주고, 구속 차이가 잘 보이도록
+              빠른 공은 더 빠르게, 느린 공은 더 느리게 보여 줍니다.
             </p>
           </details>
           <button className="primary-button" onClick={() => setHelp(false)}>

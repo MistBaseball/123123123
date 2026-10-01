@@ -33,6 +33,7 @@ import {
   LEGEND_PITCHES,
   flutterOffset,
   statCapOf,
+  visualFlightTime,
   HOME_SCHOOL,
   SCHOOLS,
   makeRoster,
@@ -1657,5 +1658,22 @@ check("Hidden 오타니 start: all stats 200 in high school, seven pitches, no r
   } finally {
     delete globalThis.localStorage;
   }
+});
+check("Pitch speed is easier to see: on-screen time gap is wider than the physical one", () => {
+  const slow = new BaseballEngine(newCareer(), () => 0.5),
+    fast = new BaseballEngine(newCareer(), () => 0.5);
+  slow.state.career.stats.velocity = 45;
+  fast.state.career.stats.velocity = 100;
+  fast.state.career.legend = true;
+  fast.state.career.stats.velocity = 200;
+  for (const g of [slow, fast]) g.throwAt(0, 0.95);
+  const a = slow.state.flight,
+    b = fast.state.flight;
+  const physical = a.duration / b.duration,
+    shown = a.visualDuration / b.visualDuration;
+  assert(shown > physical * 1.25, `${physical.toFixed(2)} → ${shown.toFixed(2)}`);
+  // The difficulty still sets the overall pace, and the swing window stays a share of it.
+  assert(visualFlightTime(0.5, 140, "easy") > visualFlightTime(0.5, 140, "normal"));
+  assert(visualFlightTime(0.5, 140, "normal") > visualFlightTime(0.5, 140, "hard"));
 });
 console.log(`\n${passed} gameplay checks passed.`);

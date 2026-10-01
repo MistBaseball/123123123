@@ -736,6 +736,21 @@ export function ballistic(
   const duration = Math.sqrt((2 * d2) / (b + Math.sqrt(disc)));
   return { duration, velocity: V(dx / duration, dy / duration + 4.905 * duration, dz / duration) };
 }
+/** Reference speed (km/h) whose on-screen travel time is not stretched by speed. */
+export const SPEED_LOOK_REF = 135;
+/**
+ * On-screen travel time of a pitch (s). The difficulty slows every pitch down for reaction
+ * time, and the speed term widens the gap between slow and fast pitches beyond the physical
+ * one, so 170 km/h looks clearly faster than 130 km/h. Swing timing uses shares of this time.
+ */
+export const visualFlightTime = (
+  duration: number,
+  speed: number,
+  difficulty: "easy" | "normal" | "hard",
+) =>
+  duration *
+  (difficulty === "easy" ? 2.5 : difficulty === "normal" ? 1.8 : 1.2) *
+  clamp((SPEED_LOOK_REF / speed) ** 0.9, 0.72, 1.4);
 export function insideZone(p: Vec) {
   return Math.abs(p.x) <= 0.2515 && p.y >= 0.5135 && p.y <= 1.3865;
 }
@@ -1613,7 +1628,6 @@ export class BaseballEngine {
       target.x = clamp(target.x * 1.6, -0.6, 0.6);
     }
     const arc = ballistic(start, target, speed / 3.6)!;
-    const slow = s.difficulty === "easy" ? 2.5 : s.difficulty === "normal" ? 1.8 : 1.2;
     // The batter reads a zone around the true crossing point. The true point is always inside.
     let hint: Flight["hint"] = null;
     if (ai) {
@@ -1628,7 +1642,7 @@ export class BaseballEngine {
       aim,
       velocity: arc.velocity,
       duration: arc.duration,
-      visualDuration: arc.duration * slow,
+      visualDuration: visualFlightTime(arc.duration, speed, s.difficulty),
       elapsed: 0,
       pitch: pitch.id,
       speed,

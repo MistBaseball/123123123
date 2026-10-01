@@ -13,6 +13,8 @@ import {
   type Vec,
 } from "./engine";
 import * as tex from "./textures";
+/** Trail colour of the fastest pitches. */
+const HOT = new THREE.Color("#fff1c9");
 
 type Figure = {
   root: THREE.Group;
@@ -1308,14 +1310,19 @@ export class BaseballField {
       this.trailPositions = [];
       this.lastPhase = s.phase;
     }
+    // Pitch speed made visible: fast pitches leave a longer, brighter, white-hot trail,
+    // slow ones a short faint one (0 at 120 km/h or below, 1 at 165 km/h and up).
+    const heat = s.phase === "flight" && f ? Math.min(1, Math.max(0, (f.speed - 120) / 45)) : 0.4;
     if (s.phase === "flight" || s.phase === "inplay") {
       this.trailPositions.push(this.ball.position.clone());
-      if (this.trailPositions.length > 26) this.trailPositions.shift();
+      const keep = s.phase === "flight" ? Math.round(12 + heat * 34) : 26;
+      while (this.trailPositions.length > keep) this.trailPositions.shift();
     } else this.trailPositions = [];
     this.trail.geometry.dispose();
     this.trail.geometry = new THREE.BufferGeometry().setFromPoints(this.trailPositions);
-    const color = pitchData(f?.pitch ?? s.selected).color;
-    (this.trail.material as THREE.LineBasicMaterial).color.set(color);
+    const material = this.trail.material as THREE.LineBasicMaterial;
+    material.color.set(pitchData(f?.pitch ?? s.selected).color).lerp(HOT, heat * 0.7);
+    material.opacity = 0.4 + heat * 0.6;
     this.renderer.render(this.scene, this.camera);
   }
   dispose() {
