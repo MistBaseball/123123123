@@ -2374,6 +2374,7 @@ check(
         ground: 0,
         jump: 0,
         buntDives: 0,
+        planned: 0,
         callouts: new Set(),
       };
       for (let i = 1; i <= n; i++) {
@@ -2396,6 +2397,15 @@ check(
           }
         }
         if (g.state.replay) o.callouts.add(g.state.replay.text);
+        // Automatic fielding plans the catch early (for the motion): the plan must match.
+        if (l.caughtFly && l.plan && (l.plan.style === "catch" || l.plan.style === "jump")) {
+          o.planned++;
+          assert(
+            Math.hypot(l.fielderPos.x - l.plan.foot.x, l.fielderPos.z - l.plan.foot.z) < 0.3,
+            "the planned catch spot is where he catches",
+          );
+          assert.equal(l.catchStyle, l.plan.style);
+        }
         assert(!g.state.flash || !/캐치|호수비/.test(g.state.flash.text), "highlights are replays, not callouts");
         if (l.diveTried && !l.ground) {
           o.dives++;
@@ -2419,6 +2429,7 @@ check(
     assert(avg.missedDown > 0, "a missed dive keeps the fielder down");
     assert(avg.ground > 50, "grounders are scooped up (ground-ball catch)");
     assert(avg.jump > 0, "liners and balls at the wall get jump catches");
+    assert(avg.planned > 50, "catches are planned ahead for the motion");
     assert(avg.callouts.has("다이빙 캐치") && avg.callouts.has("점프 캐치"));
     // Bunts and the catcher never dive.
     for (let i = 1; i <= 200; i++) {

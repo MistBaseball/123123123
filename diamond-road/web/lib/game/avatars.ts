@@ -46,13 +46,19 @@ export const CLIP_KEYS = {
   throwStart: 1.0,
   throwEnd: 2.2,
   catchMoment: 0.55,
+  /** Planned catch: the glove comes up from here (0.4 s before the ball). */
+  catchStart: 0.15,
   groundPickup: 0.72,
   diveLaunch: 0.55,
+  /** Planned dive: the clip starts here at take-off (a short gather before the launch). */
+  diveStart: 0.42,
   /** Stretched out in the air: where the glove meets the ball. */
   diveReach: 0.9,
   diveDown: 1.75,
   diveUp: 3.0,
   jumpCatch: 1.35,
+  /** Planned leap: glove up, crouch and take-off from here (0.6 s before the catch). */
+  jumpStart: 0.75,
   jumpEnd: 1.9,
   slideDown: 0.3,
 };

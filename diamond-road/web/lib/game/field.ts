@@ -1032,23 +1032,47 @@ export class BaseballField {
     const fielding = (i: number, a: Avatar, fig: Figure, moved: number) => {
       if (!l || s.phase !== "inplay") return false;
       const e = l.elapsed,
-        t = l.throw;
-      // A dive (caught or not): launch at the moment, then get up in time for the throw (or,
-      // after a miss, when he can move again; a backup may be chasing the ball meanwhile).
+        t = l.throw,
+        plan = l.plan;
+      // Which way he dives: toward where the dive ends (planned) or the ball.
+      const sideOf = () => {
+        let side = this.diveSide.get(fig);
+        if (!side) {
+          const goal = plan?.end ?? (l.ground ? s.ball : l.catchPoint),
+            yaw = a.object.rotation.y,
+            dx = goal.x - fig.root.position.x,
+            dz = goal.z - fig.root.position.z;
+          // diving_r goes to the model's right (its local -X).
+          side = dx * Math.cos(yaw) - dz * Math.sin(yaw) < 0 ? "diving_r" : "diving_l";
+          this.diveSide.set(fig, side);
+        }
+        return side;
+      };
+      // Planned catch (automatic fielding): the motion starts before the ball arrives, so the
+      // crouch and take-off of a leap, the launch of a dive or the reach of a catch are seen.
+      if (plan && l.fielder === i && l.fieldedAt === null && !l.diveTried && e < plan.at) {
+        const to = plan.at - e;
+        if (plan.style === "dive" && plan.launchAt !== undefined && e >= plan.launchAt) {
+          const u = clamp((e - plan.launchAt) / Math.max(1e-3, plan.at - plan.launchAt), 0, 1);
+          a.play(sideOf(), { time: lerp(K.diveStart, K.diveReach, u), fade: 0.12 });
+          return true;
+        }
+        if (plan.style === "jump" && to < K.jumpCatch - K.jumpStart) {
+          a.play("jump_catch", { time: K.jumpCatch - to, fade: 0.15 });
+          return true;
+        }
+        if (plan.style === "catch" && to < K.catchMoment - K.catchStart) {
+          a.play("catch", { time: K.catchMoment - to, fade: 0.15 });
+          return true;
+        }
+      }
+      // A dive (caught or not): in the air at the moment, then get up in time for the throw
+      // (or, after a miss, when he can move again; a backup may be chasing the ball meanwhile).
       const diveAt = l.diveTried && l.diver === i ? l.catchMoment : undefined;
       if (diveAt !== undefined && e >= diveAt) {
         const endAt = l.downUntil ?? (l.fieldedAt ?? diveAt) + l.hold;
         if (e < endAt) {
-          let side = this.diveSide.get(fig);
-          if (!side) {
-            const ball = l.ground ? s.ball : l.catchPoint,
-              yaw = a.object.rotation.y,
-              dx = ball.x - fig.root.position.x,
-              dz = ball.z - fig.root.position.z;
-            // diving_r goes to the model's right (its local -X).
-            side = dx * Math.cos(yaw) - dz * Math.sin(yaw) < 0 ? "diving_r" : "diving_l";
-            this.diveSide.set(fig, side);
-          }
+          const side = sideOf();
           const rate = (K.diveUp - K.diveReach) / Math.max(0.6, endAt - diveAt);
           a.play(side, { time: Math.min(K.diveUp, K.diveReach + (e - diveAt) * rate), fade: 0.1 });
           return true;
@@ -1084,7 +1108,7 @@ export class BaseballField {
       else running(a, moved, 0);
       return true;
     };
-    if (!l?.diveTried) this.diveSide.clear();
+    if (!l?.diveTried && l?.plan?.style !== "dive") this.diveSide.clear();
     // --- fielders (0 = pitcher, 1 = catcher)
     this.players.forEach((fig, i) => {
       const a = this.avatars!.get(fig)!,
@@ -1396,9 +1420,12 @@ export class BaseballField {
         sx = -sx;
         sz = -sz;
       }
-      const p = this.replayAvatars[0].object.position;
-      this.replayCam.position.set(p.x + sx * 5, 1.7, p.z + sz * 5);
-      this.replayCam.lookAt(p.x, 1.05, p.z);
+      // A leap is framed wider and higher, so the ball is seen coming down into the glove.
+      const p = this.replayAvatars[0].object.position,
+        leap = R.text === "점프 캐치",
+        dist = leap ? 6.5 : 5;
+      this.replayCam.position.set(p.x + sx * dist, leap ? 1.9 : 1.7, p.z + sz * dist);
+      this.replayCam.lookAt(p.x, leap ? 1.7 : 1.05, p.z);
     }
     // Hide what belongs to the live view: name tags, the live ball and the real players shown.
     const hidden: [THREE.Object3D, boolean][] = [];
@@ -1461,6 +1488,18 @@ export class BaseballField {
             : -1;
     const a = holder >= 0 ? this.avatars.get(this.players[holder]) : undefined;
     if (a) a.ballPoint(this.ball.position);
+    // A planned catch: over its last instant the ball flies into the glove (no snap).
+    const p = l.plan;
+    if (
+      l.fieldedAt === null &&
+      p &&
+      (p.style === "catch" || p.style === "jump" || (p.style === "dive" && p.success))
+    ) {
+      const to = p.at - l.elapsed,
+        catcher = this.avatars.get(this.players[l.fielder]),
+        glove = to >= 0 && to < 0.14 ? catcher?.ballPoint(new THREE.Vector3()) : null;
+      if (glove) this.ball.position.lerp(glove, 1 - to / 0.14);
+    }
   }
   /** Number of rain streaks (kept modest for low-end laptops). */
   private static RAIN_DROPS = 1100;

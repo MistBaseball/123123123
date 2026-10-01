@@ -405,6 +405,10 @@ export const RULES = {
   wildPitchMax: 0.09,
   /** Diving catch: the fielder dives for a ball this far past his reach (m, fly / grounder). */
   diveReach: 3.0,
+  /** Automatic fielding plans a catch this early (s) so the motion has its run-up. */
+  planLead: 0.9,
+  /** A dive leaves the ground this long before the glove meets the ball (s). */
+  diveLead: 0.35,
   /** An outfielder takes over a grounder through the infield if he gets there this much sooner (s). */
   backupMargin: 0.25,
   /** A throw and a runner this close at a base (s) make a slow-motion replay of the call. */
@@ -1601,6 +1605,23 @@ export type LivePlay = {
   downUntil?: number;
   /** Who made the dive (the play may then pass to a backup fielder). */
   diver?: number;
+  /**
+   * Automatic fielding decides a catch or dive a moment early (`RULES.planLead`), so the
+   * animation can show the run-up, crouch and take-off. `gap` is how far he would be from the
+   * ball on foot (the same number the rules use); a dive's outcome is rolled when it is
+   * planned, and he flies from `launch` to `end` between `launchAt` and `at`.
+   */
+  plan?: {
+    style: "catch" | "jump" | "dive" | "none";
+    at: number;
+    gap: number;
+    foot: Vec;
+    success?: boolean;
+    end?: Vec;
+    ball?: Vec;
+    launchAt?: number;
+    launch?: Vec;
+  };
   /** An outfielder took over a grounder that got through the infield. */
   backedUp?: boolean;
   /** Low, hard liner (the fielder may have to leap for it). */
@@ -2827,6 +2848,103 @@ export class BaseballEngine {
     }
     return this.liveBall(l, l.elapsed + 12);
   }
+  /** Leap rule for a fly he reaches (see the fly catch). */
+  private jumpCatch(l: LivePlay, gap: number) {
+    return (l.lineDrive && gap > 1.15) || (Math.hypot(l.land.x, l.land.z) > 80 && gap > 0.6);
+  }
+  /**
+   * Fly ball, automatic fielding: `planLead` s before the catch, predict where his run puts
+   * him (straight at the catch point, as the movement code does) and settle catch/leap/dive.
+   */
+  private planFly(l: LivePlay) {
+    if (
+      l.plan ||
+      l.ground ||
+      l.bounced ||
+      l.kind !== "batted" ||
+      l.elapsed + 1e-8 < l.catchAt - RULES.planLead ||
+      l.elapsed >= l.catchAt
+    )
+      return;
+    const { speed, reaction } = this.fielderStats(l.fielder, l),
+      move = Math.max(0, l.catchAt - Math.max(l.elapsed, reaction, this.downTime(l))),
+      dx = l.catchPoint.x - l.fielderPos.x,
+      dz = l.catchPoint.z - l.fielderPos.z,
+      d = Math.hypot(dx, dz),
+      step = Math.min(d, speed * move),
+      foot = V(
+        l.fielderPos.x + (d ? (dx / d) * step : 0),
+        0,
+        l.fielderPos.z + (d ? (dz / d) * step : 0),
+      ),
+      gap = d - step;
+    if (gap <= CATCH_REACH)
+      l.plan = { style: this.jumpCatch(l, gap) ? "jump" : "catch", at: l.catchAt, gap, foot };
+    else if (gap <= RULES.diveReach && !l.bunt && l.fielder !== 1) {
+      const success = this.rng() < this.diveChance(l.fielder, gap, RULES.diveReach, CATCH_REACH),
+        k = success ? 0.85 : 0.6;
+      l.plan = {
+        style: "dive",
+        at: l.catchAt,
+        gap,
+        foot,
+        success,
+        end: V(lerp(foot.x, l.catchPoint.x, k), 0, lerp(foot.z, l.catchPoint.z, k)),
+        launchAt: Math.max(l.elapsed, l.catchAt - RULES.diveLead),
+      };
+    } else l.plan = { style: "none", at: l.catchAt, gap, foot };
+    if (l.plan.style !== "none") l.catchMoment = l.catchAt;
+  }
+  /**
+   * Grounder, automatic fielding: look a third of a second ahead; if the ball will pass him
+   * just out of reach (closest approach between GROUND_REACH and groundDiveReach), plan the
+   * diving stop for that moment (outcome rolled now, as the instant check used to).
+   */
+  private planGroundDive(l: LivePlay) {
+    const { speed } = this.fielderStats(l.fielder, l),
+      p0 = l.fielderPos,
+      tgt = this.interceptPoint(l),
+      d0 = Math.hypot(tgt.x - p0.x, tgt.z - p0.z);
+    let prev = Infinity,
+      prevT = 0,
+      prevPos = p0,
+      prevBall = this.liveBall(l, l.elapsed);
+    for (let k = 0; k <= 12; k++) {
+      const t = k * 0.03,
+        b = this.liveBall(l, l.elapsed + t),
+        step = Math.min(d0, speed * t),
+        fp = V(
+          p0.x + (d0 ? ((tgt.x - p0.x) / d0) * step : 0),
+          0,
+          p0.z + (d0 ? ((tgt.z - p0.z) / d0) * step : 0),
+        ),
+        g = Math.hypot(b.x - fp.x, b.z - fp.z);
+      if (g < GROUND_REACH) return; // he gets it on foot
+      if (k > 0 && g >= prev) {
+        if (prev <= RULES.groundDiveReach && prevBall.y < 1.1) {
+          const at = l.elapsed + prevT,
+            success =
+              this.rng() < this.diveChance(l.fielder, prev, RULES.groundDiveReach, GROUND_REACH),
+            kk = success ? 0.85 : 0.5;
+          l.plan = {
+            style: "dive",
+            at,
+            gap: prev,
+            foot: prevPos,
+            ball: prevBall,
+            success,
+            end: V(lerp(prevPos.x, prevBall.x, kk), 0, lerp(prevPos.z, prevBall.z, kk)),
+            launchAt: Math.max(l.elapsed, at - RULES.diveLead),
+          };
+        }
+        return;
+      }
+      prev = g;
+      prevT = t;
+      prevPos = fp;
+      prevBall = b;
+    }
+  }
   /** Seconds the chasing fielder is still down after his own missed dive. */
   private downTime(l: LivePlay) {
     return l.diver === l.fielder ? (l.downUntil ?? 0) : 0;
@@ -2853,6 +2971,8 @@ export class BaseballEngine {
    */
   private backUp(l: LivePlay) {
     if (l.kind !== "batted" || !l.ground || l.bunt || l.backedUp || l.fielder >= 6) return;
+    // He is about to dive for it: let the dive decide first.
+    if (l.plan?.style === "dive" && !l.diveTried) return;
     const ball = this.state.ball,
       past = Math.hypot(ball.x, ball.z) > Math.hypot(l.fielderPos.x, l.fielderPos.z) + 1.5;
     if (!past && !(l.diver === l.fielder && l.elapsed < (l.downUntil ?? 0))) return;
@@ -3147,6 +3267,8 @@ export class BaseballEngine {
       return;
     }
     if (l.fieldedAt === null) this.backUp(l);
+    const auto = s.autoField || this.batting;
+    if (l.fieldedAt === null && auto) this.planFly(l);
     if (l.fieldedAt === null) {
       const { speed: fielderSpeed, reaction: fielderReaction } = this.fielderStats(l.fielder, l),
         oldPos = { ...l.fielderPos },
@@ -3165,7 +3287,23 @@ export class BaseballEngine {
           0,
           l.elapsed - Math.max(previous, fielderReaction, this.downTime(l)),
         );
-        if (moving > 0) this.moveFielder(l.fielderPos, target, moving, fielderSpeed);
+        const plan = l.plan;
+        if (
+          plan?.end &&
+          plan.launchAt !== undefined &&
+          l.elapsed + 1e-8 >= plan.launchAt &&
+          l.elapsed <= plan.at + 1e-8
+        ) {
+          // In the air: from the take-off spot to where the dive ends.
+          plan.launch ??= { ...l.fielderPos };
+          const u = clamp(
+            (l.elapsed - plan.launchAt) / Math.max(1e-3, plan.at - plan.launchAt),
+            0,
+            1,
+          );
+          l.fielderPos.x = lerp(plan.launch.x, plan.end.x, u);
+          l.fielderPos.z = lerp(plan.launch.z, plan.end.z, u);
+        } else if (moving > 0) this.moveFielder(l.fielderPos, target, moving, fielderSpeed);
       }
       s.ball = this.liveBall(l, l.elapsed);
       if (!l.ground && !l.bounced && previous < l.catchAt - 1e-8 && l.elapsed + 1e-8 >= l.catchAt) {
@@ -3175,7 +3313,11 @@ export class BaseballEngine {
             0,
             lerp(oldPos.z, l.fielderPos.z, fraction),
           );
-        const gap = Math.hypot(atCatch.x - l.catchPoint.x, atCatch.z - l.catchPoint.z);
+        const plan = l.plan && l.plan.style !== "none" ? l.plan : null,
+          // Planned: the on-foot gap he would have had (the dive itself moved him already).
+          gap = plan
+            ? plan.gap
+            : Math.hypot(atCatch.x - l.catchPoint.x, atCatch.z - l.catchPoint.z);
         // Just out of reach: the fielder dives for it (once). Skill and luck decide.
         let dove = false;
         if (
@@ -3190,25 +3332,36 @@ export class BaseballEngine {
           l.diver = l.fielder;
           l.catchMoment = l.catchAt;
           dove = true;
-          if (this.rng() < this.diveChance(l.fielder, gap, RULES.diveReach, CATCH_REACH)) {
+          const made =
+            plan?.style === "dive"
+              ? !!plan.success
+              : this.rng() < this.diveChance(l.fielder, gap, RULES.diveReach, CATCH_REACH);
+          if (made) {
             l.catchStyle = "dive";
             // He ends up where the ball was, on the ground: getting up delays any throw.
-            atCatch.x = lerp(atCatch.x, l.catchPoint.x, 0.85);
-            atCatch.z = lerp(atCatch.z, l.catchPoint.z, 0.85);
+            const end =
+              plan?.end ??
+              V(lerp(atCatch.x, l.catchPoint.x, 0.85), 0, lerp(atCatch.z, l.catchPoint.z, 0.85));
+            atCatch.x = end.x;
+            atCatch.z = end.z;
             l.hold += RULES.diveGetUp;
             this.highlight(l, "다이빙 캐치", l.catchAt);
           } else {
             l.catchStyle = "dive";
             l.downUntil = l.catchAt + RULES.diveMissDown;
-            l.fielderPos.x = lerp(atCatch.x, l.catchPoint.x, 0.6);
-            l.fielderPos.z = lerp(atCatch.z, l.catchPoint.z, 0.6);
+            const end =
+              plan?.end ??
+              V(lerp(atCatch.x, l.catchPoint.x, 0.6), 0, lerp(atCatch.z, l.catchPoint.z, 0.6));
+            l.fielderPos.x = end.x;
+            l.fielderPos.z = end.z;
             s.detail = "몸을 날렸지만 글러브 끝에서 빠졌습니다!";
           }
         }
         if (gap <= CATCH_REACH || (dove && l.catchStyle === "dive" && l.downUntil === undefined)) {
           if (!dove) {
-            // Hard liners and balls at the wall are taken with a leap.
-            const jump = (l.lineDrive && gap > 1.15) || Math.hypot(l.land.x, l.land.z) > 80;
+            // A leap only when he gets there just in time: a hard liner a step away, or a ball
+            // at the wall he is still running to (not one he waits under).
+            const jump = plan ? plan.style === "jump" : this.jumpCatch(l, gap);
             l.catchStyle = jump ? "jump" : "catch";
             if (jump) {
               l.catchMoment = l.catchAt;
@@ -3271,37 +3424,49 @@ export class BaseballEngine {
       // A grounder about to get past him: one diving stop, if he is up and ready.
       const ballGap = Math.hypot(s.ball.x - l.fielderPos.x, s.ball.z - l.fielderPos.z);
       let diveStop = false;
-      if (
+      const canDive =
         l.ground &&
         l.kind === "batted" &&
         !l.bunt &&
         l.fielder !== 1 &&
         !l.diveTried &&
-        l.elapsed + 1e-8 >= Math.max(fielderReaction, this.downTime(l)) &&
-        ballGap >= GROUND_REACH &&
-        ballGap <= RULES.groundDiveReach &&
-        s.ball.y < 1.1
+        l.elapsed + 1e-8 >= Math.max(fielderReaction, this.downTime(l));
+      // Automatic fielding sees the ball coming a moment ahead (for the take-off motion).
+      if (canDive && auto && !l.plan) this.planGroundDive(l);
+      const planned = canDive && auto && l.plan?.style === "dive" ? l.plan : null;
+      if (
+        planned
+          ? l.elapsed + 1e-8 >= planned.at
+          : canDive &&
+            !auto &&
+            ballGap >= GROUND_REACH &&
+            ballGap <= RULES.groundDiveReach &&
+            s.ball.y < 1.1
       ) {
         // The ball is going by right now (closest it will get) and he cannot reach it on foot.
         const ahead = this.liveBall(l, l.elapsed + 0.05),
-          away = Math.hypot(ahead.x - l.fielderPos.x, ahead.z - l.fielderPos.z) >= ballGap;
+          away =
+            !!planned || Math.hypot(ahead.x - l.fielderPos.x, ahead.z - l.fielderPos.z) >= ballGap;
         if (away) {
           l.diveTried = true;
           l.diver = l.fielder;
           l.catchStyle = "dive";
           l.catchMoment = l.elapsed;
           if (
-            this.rng() < this.diveChance(l.fielder, ballGap, RULES.groundDiveReach, GROUND_REACH)
+            planned
+              ? planned.success
+              : this.rng() <
+                this.diveChance(l.fielder, ballGap, RULES.groundDiveReach, GROUND_REACH)
           ) {
             diveStop = true;
-            l.fielderPos.x = lerp(l.fielderPos.x, s.ball.x, 0.85);
-            l.fielderPos.z = lerp(l.fielderPos.z, s.ball.z, 0.85);
+            l.fielderPos.x = planned?.end?.x ?? lerp(l.fielderPos.x, s.ball.x, 0.85);
+            l.fielderPos.z = planned?.end?.z ?? lerp(l.fielderPos.z, s.ball.z, 0.85);
             l.hold += RULES.diveGetUp;
             this.highlight(l, "호수비", l.elapsed);
           } else {
             l.downUntil = l.elapsed + RULES.diveMissDown;
-            l.fielderPos.x = lerp(l.fielderPos.x, s.ball.x, 0.5);
-            l.fielderPos.z = lerp(l.fielderPos.z, s.ball.z, 0.5);
+            l.fielderPos.x = planned?.end?.x ?? lerp(l.fielderPos.x, s.ball.x, 0.5);
+            l.fielderPos.z = planned?.end?.z ?? lerp(l.fielderPos.z, s.ball.z, 0.5);
             s.detail = "다이빙했지만 공이 빠져나갔습니다!";
           }
         }
@@ -3309,6 +3474,12 @@ export class BaseballEngine {
       if (
         diveStop ||
         (l.bounced &&
+          // Not while in the air on a planned dive (the dive itself decides).
+          !(
+            l.plan?.style === "dive" &&
+            !l.diveTried &&
+            l.elapsed + 1e-8 >= (l.plan.launchAt ?? Infinity)
+          ) &&
           // Nobody fields the ball before reacting to it (the catcher stands next to a bunt).
           l.elapsed + 1e-8 >= Math.max(fielderReaction, this.downTime(l)) &&
           Math.hypot(s.ball.x - l.fielderPos.x, s.ball.z - l.fielderPos.z) < GROUND_REACH &&
