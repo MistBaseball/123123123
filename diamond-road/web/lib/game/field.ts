@@ -359,24 +359,71 @@ export class BaseballField {
       polygonOffsetFactor: -1,
     });
   }
+  /** Stand fronts: home bowl radius, foul-line stands' distance from the line, outfield radius. */
+  private static readonly HOME_STAND = 26;
+  private static readonly HOME_END = Math.PI / 4 + 0.35;
+  private static readonly LINE_STAND = 9;
+  private static readonly OUTFIELD_STAND = 112;
+  private static readonly OUTFIELD_END = Math.PI / 4 + 0.09;
+  /** Where the foul-line stands begin (metres from home along the line) — the bowl's end. */
+  private static lineStart() {
+    const f = BaseballField,
+      x = Math.sin(f.HOME_END) * f.HOME_STAND,
+      z = Math.cos(f.HOME_END) * f.HOME_STAND;
+    return (x + z) * Math.SQRT1_2;
+  }
+  /** Point at `along` metres down a foul line (side +1 = third, −1 = first), `out` m outside it. */
+  private static linePoint(side: number, along: number, out: number) {
+    const r2 = Math.SQRT1_2;
+    return V(side * r2 * (along + out), 0, r2 * (along - out));
+  }
+  /** Inside edge of all the stands: the grass reaches up to here. */
+  private fieldOutline() {
+    const f = BaseballField,
+      pts: Vec[] = [],
+      start = f.lineStart();
+    for (let i = 0; i <= 8; i++)
+      pts.push(f.linePoint(1, start + (i / 8) * (f.OUTFIELD_STAND - start), f.LINE_STAND));
+    for (let i = 0; i <= 64; i++) {
+      const a = f.OUTFIELD_END - (i / 64) * f.OUTFIELD_END * 2;
+      pts.push(V(Math.sin(a) * f.OUTFIELD_STAND, 0, Math.cos(a) * f.OUTFIELD_STAND));
+    }
+    for (let i = 8; i >= 0; i--)
+      pts.push(f.linePoint(-1, start + (i / 8) * (f.OUTFIELD_STAND - start), f.LINE_STAND));
+    for (let i = 0; i <= 48; i++) {
+      const a = 2 * Math.PI - f.HOME_END - (i / 48) * (2 * Math.PI - 2 * f.HOME_END);
+      pts.push(V(Math.sin(a) * f.HOME_STAND, 0, Math.cos(a) * f.HOME_STAND));
+    }
+    return pts;
+  }
   private makePark() {
     // Turf: one 320 m plane with the mowing pattern, plus a fine blade bump that tiles every 2 m.
+    // Outside the stands: concrete concourse and parking, so no grass shows past the stadium.
+    const outside = new THREE.Mesh(
+      new THREE.PlaneGeometry(900, 900),
+      new THREE.MeshStandardMaterial({ color: "#7a7f7c", roughness: 0.95 }),
+    );
+    outside.rotation.x = -Math.PI / 2;
+    outside.position.set(0, -0.05, 40);
+    outside.receiveShadow = true;
+    this.scene.add(outside);
+    // Turf: the playing field inside the stand fronts, with the mowing pattern (one texture over
+    // 320 m) and a fine blade bump tiling every 2 m. ShapeGeometry UVs are metres.
     const turfMap = tex.turf(),
       blades = tex.grassDetail();
-    blades.repeat.set(160, 160);
-    const turf = new THREE.Mesh(
-      new THREE.PlaneGeometry(320, 320),
+    turfMap.repeat.set(1 / 320, 1 / 320);
+    turfMap.offset.set(0.5, 0.625);
+    blades.repeat.set(0.5, 0.5);
+    this.ground(
+      this.fieldOutline(),
       new THREE.MeshStandardMaterial({
         map: turfMap,
         bumpMap: blades,
         bumpScale: 0.9,
         roughness: 0.92,
       }),
+      0,
     );
-    turf.rotation.x = -Math.PI / 2;
-    turf.position.set(0, 0, 40);
-    turf.receiveShadow = true;
-    this.scene.add(turf);
     const clay = this.clay();
     // Infield skin: out along the foul lines to the 29 m arc around the mound, with the grass
     // infield square cut out of it (its edges sit 1.2 m inside the base lines).
@@ -557,17 +604,58 @@ export class BaseballField {
       this.scene.add(front);
       return { inner, rows, base, phiStart, phiLength };
     };
+    const F = BaseballField;
     const seats = [
-      // From the right-field corner (φ = π/4), round behind home (φ = π), to the left-field corner.
-      bowl(26, 18, 1.4, Math.PI / 4 + 0.35, (Math.PI * 3) / 2 - 0.7),
-      bowl(112, 12, 3.6, -Math.PI / 4 - 0.02, Math.PI / 2 + 0.04),
+      // From the third-base side (φ just past π/4), round behind home (φ = π), to first base.
+      bowl(F.HOME_STAND, 18, 1.4, F.HOME_END, 2 * Math.PI - 2 * F.HOME_END),
+      bowl(F.OUTFIELD_STAND, 12, 3.6, -F.OUTFIELD_END, F.OUTFIELD_END * 2),
     ];
+    // Foul-line stands: the same stepped profile run straight along each line, joining the
+    // home bowl to the outfield stands so the bowl is closed all the way round.
+    const lineRows = 16,
+      lineBase = 1.4,
+      lineStart = F.lineStart(),
+      lineLength = F.OUTFIELD_STAND + 2 - lineStart;
+    const profile = new THREE.Shape();
+    profile.moveTo(F.LINE_STAND, 0);
+    profile.lineTo(F.LINE_STAND, lineBase);
+    for (let k = 0; k < lineRows; k++) {
+      const u = F.LINE_STAND + (k + 1) * 1.25,
+        y = lineBase + k * 0.62;
+      profile.lineTo(u, y);
+      profile.lineTo(u, y + 0.62);
+    }
+    const standBack = F.LINE_STAND + lineRows * 1.25 + 0.6;
+    profile.lineTo(standBack, lineBase + lineRows * 0.62 + 2.2);
+    profile.lineTo(standBack, 0);
+    profile.closePath();
+    const runGeometry = new THREE.ExtrudeGeometry(profile, {
+      depth: lineLength,
+      bevelEnabled: false,
+    });
+    runGeometry.translate(0, 0, lineStart);
+    for (const side of [1, -1]) {
+      // Local +Z runs down the line, local +X points away from the field.
+      const g = new THREE.Group();
+      g.rotation.y = (side * Math.PI) / 4;
+      g.scale.x = side;
+      const run = new THREE.Mesh(runGeometry, concrete);
+      run.castShadow = run.receiveShadow = true;
+      g.add(run);
+      const pad = new THREE.Mesh(
+        new THREE.BoxGeometry(0.1, lineBase, lineLength),
+        new THREE.MeshStandardMaterial({ color: "#1f4038", roughness: 0.7 }),
+      );
+      pad.position.set(F.LINE_STAND - 0.05, lineBase / 2, lineStart + lineLength / 2);
+      g.add(pad);
+      this.scene.add(g);
+    }
     // Crowd: seated fans as instanced capsules in team-ish colours, most seats filled.
-    const fanGeometry = new THREE.CylinderGeometry(0.15, 0.19, 0.62, 6),
+    const fanGeometry = new THREE.CylinderGeometry(0.15, 0.19, 0.62, 5, 1, true),
       fans = new THREE.InstancedMesh(
         fanGeometry,
         new THREE.MeshStandardMaterial({ roughness: 0.9 }),
-        4200,
+        7000,
       ),
       o = new THREE.Object3D(),
       palette = [
@@ -589,11 +677,31 @@ export class BaseballField {
         const r = b.inner + k * 1.25 + 0.75,
           y = b.base + k * 0.62 + 0.42,
           perRow = Math.floor((r * b.phiLength) / 0.62);
-        for (let j = 0; j < perRow && count < 4200; j++) {
+        for (let j = 0; j < perRow && count < 7000; j++) {
           if (rnd() < 0.3) continue;
           const phi = b.phiStart + ((j + 0.5) / perRow) * b.phiLength;
           o.position.set(Math.sin(phi) * r, y, Math.cos(phi) * r);
           o.rotation.y = phi + Math.PI;
+          o.scale.setScalar(0.9 + rnd() * 0.2);
+          o.updateMatrix();
+          fans.setMatrixAt(count, o.matrix);
+          fans.setColorAt(count, color.set(palette[Math.floor(rnd() * palette.length)]));
+          count++;
+        }
+      }
+    for (const side of [1, -1])
+      for (let k = 0; k < lineRows; k++) {
+        const out = F.LINE_STAND + k * 1.25 + 0.62,
+          y = lineBase + k * 0.62 + 0.42;
+        for (
+          let along = lineStart + 1;
+          along < lineStart + lineLength && count < 7000;
+          along += 0.62
+        ) {
+          if (rnd() < 0.35) continue;
+          const p = F.linePoint(side, along, out);
+          o.position.set(p.x, y, p.z);
+          o.rotation.y = 0;
           o.scale.setScalar(0.9 + rnd() * 0.2);
           o.updateMatrix();
           fans.setMatrixAt(count, o.matrix);
@@ -611,6 +719,25 @@ export class BaseballField {
     this.label("HOME OF THE NEXT ACE", "#c6d9d5", "#16252c", 22, 3, 0, 14.2, 127.3);
     for (const x of [-9, 9])
       this.mesh(new THREE.CylinderGeometry(0.5, 0.6, 12, 10), "#5d6a6c", x, 5, 128.6);
+    // Distant city skyline beyond the stadium (fades into the haze).
+    const towers = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshStandardMaterial({ roughness: 0.8 }),
+      70,
+    );
+    for (let i = 0; i < 70; i++) {
+      const a = -1.9 + (i / 70) * 3.8 + (rnd() - 0.5) * 0.04,
+        r = 240 + rnd() * 90,
+        h = 18 + rnd() * rnd() * 70,
+        w = 12 + rnd() * 16;
+      o.position.set(Math.sin(a) * r, h / 2, 40 + Math.cos(a) * r);
+      o.rotation.set(0, a, 0);
+      o.scale.set(w, h, 10 + rnd() * 14);
+      o.updateMatrix();
+      towers.setMatrixAt(i, o.matrix);
+      towers.setColorAt(i, color.set(["#8796a0", "#9aa7ad", "#7d8b96", "#a9b2b4"][i % 4]));
+    }
+    this.scene.add(towers);
     // Light towers with glowing lamp banks, two over each stand.
     const lamp = new THREE.MeshStandardMaterial({
       color: "#fffbe8",
