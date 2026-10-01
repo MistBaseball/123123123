@@ -2665,8 +2665,15 @@ export class BaseballEngine {
   /** A runner heading back to `base` (caught fly or pickoff) who has not touched it yet. */
   private returningRunner(l: LivePlay, base: number) {
     return (
-      l.runners.find((r) => !r.out && base < 4 && r.target === base && r.progress > base + 1e-8) ??
-      null
+      l.runners.find(
+        (r) =>
+          !r.out &&
+          base < 4 &&
+          r.target === base &&
+          r.progress > base + 1e-8 &&
+          // A batter coming back after overrunning first cannot be tagged out.
+          !(r.from === 0 && base === 1 && !l.caughtFly),
+      ) ?? null
     );
   }
   /** Throw speed of the fielder holding the ball (the pitcher's pickoff throw is fixed). */
@@ -2891,10 +2898,21 @@ export class BaseballEngine {
         // Extra bases depend on how far the fielder still is from the ball, capped by distance.
         const gap = Math.hypot(l.fielderPos.x - l.land.x, l.fielderPos.z - l.land.z);
         l.resultBases = Math.min(l.resultBases, 1 + (gap > 9 ? 1 : 0) + (gap > 22 ? 1 : 0));
-        // The ball is down: everyone sprints on; nobody turns back toward a passed base.
+        // The ball is down. A runner who already rounded the base he is owed reads the play:
+        // he takes the next one only if he beats the fielder's pickup and throw there;
+        // otherwise he goes back to the base he just passed (a batter who overran first is
+        // safe going back).
+        const pickup = Math.max(l.elapsed, this.interceptTime(l, l.fielderPos)) + l.hold;
         for (const r of l.runners) {
           r.pace = r.fullPace ?? r.pace;
-          r.target = Math.min(4, Math.max(r.from + l.resultBases, Math.ceil(r.progress - 1e-9)));
+          const owed = Math.min(4, r.from + l.resultBases),
+            next = Math.min(4, Math.ceil(r.progress - 1e-9));
+          if (next <= owed) r.target = owed;
+          else {
+            const runAt = l.elapsed + (next - r.progress) / r.pace,
+              throwAt = this.throwArrival(l, next, pickup);
+            r.target = runAt + RULES.advanceMargin < throwAt ? next : Math.floor(r.progress + 1e-9);
+          }
         }
         s.message = "FAIR BALL";
         s.detail = "타구가 땅에 닿았습니다 · 주자 진루";

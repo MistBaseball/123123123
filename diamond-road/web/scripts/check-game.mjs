@@ -2044,4 +2044,32 @@ check(
     assert(L.limitBreak(), "and available again");
   },
 );
+check(
+  "A batter who rounded first when a nearby fielder picks the ball up goes back: no free double",
+  () => {
+    let checked = 0;
+    for (let i = 1; i <= 3000; i++) {
+      const g = new BaseballEngine(newCareer(), seed(i)),
+        r = seed(i * 7 + 3);
+      g.contact(0.21 + r() * 0.75, (r() - 0.5) * 0.2);
+      const l = g.state.live;
+      if (!l || l.caughtFly) continue;
+      let at = null,
+        n = 0;
+      while (g.state.phase === "inplay" && n++ < 3000) {
+        const was = l.bounced;
+        g.tick(1 / 60);
+        if (!was && l.bounced) at = { progress: l.runners[0].progress, bases: l.resultBases };
+      }
+      if (!at || at.progress <= 1 || at.bases !== 1) continue;
+      checked++;
+      const batter = l.runners[0];
+      // He either made second because the throw could not beat him, or is safe back at first.
+      assert(!batter.out || batter.progress > 1.5, "never tagged going back to first");
+      if (!batter.out) assert(batter.progress === 1 || batter.progress >= 2);
+      assert(batter.progress < 2 || batter.target === 2);
+    }
+    assert(checked >= 3, `cases found: ${checked}`);
+  },
+);
 console.log(`\n${passed} gameplay checks passed.`);
