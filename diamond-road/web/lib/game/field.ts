@@ -2,6 +2,7 @@ import * as THREE from "three";
 import {
   BaseballEngine,
   BASES,
+  BASE_PATH_LENGTH,
   DEFENSE,
   pitchData,
   playerLabel,
@@ -15,6 +16,7 @@ import {
   type Vec,
 } from "./engine";
 import * as tex from "./textures";
+import { Avatar, CLIP_KEYS, loadAvatarAssets, type AvatarAssets } from "./avatars";
 /** White "[별호] 이름" text for a fielder's head: no box, a dark outline keeps it readable. */
 function nameTag(label: string) {
   const c = document.createElement("canvas"),
@@ -109,6 +111,12 @@ export class BaseballField {
   private trailPositions: THREE.Vector3[] = [];
   private landing: THREE.Mesh;
   private time = 0;
+  /** Mixamo players (null until the models load, or if they fail: the drawn figures stay). */
+  private avatars: Map<Figure, Avatar> | null = null;
+  private runnerMoving: boolean[] = [false, false, false, false];
+  private runnerSlide: number[] = [-1, -1, -1, -1];
+  private lastAvatarPos = new Map<Figure, THREE.Vector3>();
+  private diveSide = new Map<Figure, "diving_l" | "diving_r">();
   /** Weather: lights and sky to dim, rain streaks, and wet-ground material settings. */
   private skyDome!: THREE.Mesh;
   private hemi!: THREE.HemisphereLight;
@@ -302,6 +310,14 @@ export class BaseballField {
       new THREE.LineBasicMaterial({ color: "#ffe3a1", transparent: true, opacity: 0.8 }),
     );
     this.scene.add(this.trail);
+    // Real player models: load in the background; the drawn figures play until they are in.
+    loadAvatarAssets()
+      .then((assets) => {
+        if (!this.disposed) this.setupAvatars(assets);
+      })
+      .catch(() => {
+        /* keep the drawn figures */
+      });
     this.landing = new THREE.Mesh(
       new THREE.RingGeometry(1.8, 2, 40),
       new THREE.MeshBasicMaterial({ color: "#f8c267", side: THREE.DoubleSide }),
@@ -903,6 +919,178 @@ export class BaseballField {
     elbow.rotation.set(bend, 0, 0);
   }
   /** Both hands to these points, elbows pointing down and slightly out. */
+  /** Swaps the drawn figures for the Mixamo players (each with its own animation mixer). */
+  private setupAvatars(assets: AvatarAssets) {
+    const all = [...this.players, this.batter, ...this.runners];
+    this.avatars = new Map();
+    for (const fig of all) {
+      const a = new Avatar(assets);
+      this.scene.add(a.object);
+      this.avatars.set(fig, a);
+      // Hide the drawn body; the root stays (positions, the name tag, the camera targets).
+      for (const c of fig.root.children) if (!(c as THREE.Sprite).isSprite) c.visible = false;
+    }
+  }
+  /**
+   * Picks and times each player's animation from the game state: the pitch and the swing are
+   * scrubbed to the exact moments the rules use (release, contact); runs and idles loop.
+   */
+  private driveAvatars(dt: number, cam: string) {
+    const s = this.engine.state,
+      l = s.live,
+      batting = this.engine.batting,
+      K = CLIP_KEYS,
+      fielders = this.engine.fielders,
+      f = s.flight;
+    const place = (fig: Figure, a: Avatar, yaw: number, smooth = false) => {
+      a.object.visible = fig.root.visible;
+      const target = new THREE.Vector3(fig.root.position.x, 0, fig.root.position.z),
+        last = this.lastAvatarPos.get(fig);
+      // Small jumps (a dive's last metre) are eased; long ones (new play) snap.
+      if (smooth && last && last.distanceTo(target) < 6)
+        a.object.position.lerp(target, 1 - Math.exp(-dt * 12));
+      else a.object.position.copy(target);
+      this.lastAvatarPos.set(fig, target.clone());
+      a.object.rotation.set(0, yaw, 0);
+    };
+    // Fielder i's clip during a live play (chasing, catching, diving, throwing, covering).
+    const running = (a: Avatar, moved: number, offset: number) => {
+      if (moved > 0.02) a.play("run", { loop: true, speed: clamp(moved / dt / 6, 0.6, 1.4) });
+      else a.play("idle", { loop: true, offset });
+    };
+    // Fielder i's clip during a live play (chasing, catching, diving, throwing, covering).
+    const fielding = (i: number, a: Avatar, fig: Figure, moved: number) => {
+      if (!l || s.phase !== "inplay") return false;
+      const e = l.elapsed,
+        t = l.throw;
+      if (l.fielder !== i) {
+        // Receiver: glove up as the throw arrives.
+        const arrive = t && t.receiver === i ? t.startedAt + t.duration : null;
+        if (arrive !== null && e > arrive - 0.45 && e < arrive + 0.7)
+          a.play("catch", { time: K.catchMoment + (e - arrive), fade: 0.12 });
+        else running(a, moved, i * 1.7);
+        return true;
+      }
+      // A dive (caught or not): launch at the moment, then get up in time for the throw.
+      const diveAt = l.diveTried ? l.catchMoment : undefined;
+      if (diveAt !== undefined && e >= diveAt) {
+        const endAt = l.downUntil ?? (l.fieldedAt ?? diveAt) + l.hold;
+        if (e < endAt) {
+          let side = this.diveSide.get(fig);
+          if (!side) {
+            const ball = l.ground ? s.ball : l.catchPoint,
+              yaw = a.object.rotation.y,
+              dx = ball.x - fig.root.position.x,
+              dz = ball.z - fig.root.position.z;
+            // diving_r goes to the model's right (its local -X).
+            side = dx * Math.cos(yaw) - dz * Math.sin(yaw) < 0 ? "diving_r" : "diving_l";
+            this.diveSide.set(fig, side);
+          }
+          const rate = (K.diveUp - K.diveReach) / Math.max(0.6, endAt - diveAt);
+          a.play(side, { time: Math.min(K.diveUp, K.diveReach + (e - diveAt) * rate), fade: 0.1 });
+          return true;
+        }
+      }
+      if (t && l.state === "송구" && t.receivedAt === null)
+        a.play("throw", { time: Math.min(K.throwEnd, K.throwRelease + (e - t.startedAt)) });
+      else if (
+        l.fieldedAt !== null &&
+        (l.state === "포구" || (!t && e - l.fieldedAt < (l.catchStyle === "jump" ? 0.6 : 0.4)))
+      ) {
+        // Fielded: the catch/pickup plays out (a leap lands even if the play is already over),
+        // then the throw's wind-up so the ball leaves the hand when the rules release it.
+        const release = l.state === "포구" ? l.fieldedAt + l.hold - e : 9,
+          moment = l.catchStyle === "jump" ? (l.catchMoment ?? l.fieldedAt) : l.fieldedAt;
+        if (!l.caughtFly && release < K.throwRelease - K.throwStart)
+          a.play("throw", { time: K.throwRelease - release, fade: 0.15 });
+        else if (l.catchStyle === "jump")
+          a.play("jump_catch", { time: Math.min(K.jumpEnd, K.jumpCatch + (e - moment)) });
+        else if (l.catchStyle === "ground")
+          a.play("ground_catch", { time: K.groundPickup + (e - moment) });
+        else a.play("catch", { time: K.catchMoment + (e - moment) });
+      } else if (t && t.receivedAt !== null && e < t.receivedAt + 0.5)
+        a.play("throw", { time: Math.min(K.throwEnd, K.throwRelease + (e - t.startedAt)) });
+      else running(a, moved, 0);
+      return true;
+    };
+    if (!l?.diveTried) this.diveSide.clear();
+    // --- fielders (0 = pitcher, 1 = catcher)
+    this.players.forEach((fig, i) => {
+      const a = this.avatars!.get(fig)!,
+        p = fielders[i],
+        lefty = p?.hand === "L",
+        last = this.lastAvatarPos.get(fig),
+        moved = last ? Math.hypot(fig.root.position.x - last.x, fig.root.position.z - last.z) : 0;
+      a.setTeam(batting ? "away" : "home");
+      a.setGlove(true, lefty);
+      // Models face +Z; the drawn figures face their local -Z.
+      place(fig, a, fig.root.rotation.y + Math.PI, !!l);
+      if (fielding(i, a, fig, moved)) return;
+      if (i === 0) {
+        const clip = lefty ? "pitch_l" : "pitch_r";
+        if (s.phase === "windup")
+          a.play(clip, { time: (1 - s.timer / 0.62) * K.pitchRelease, fade: 0.1 });
+        else if (f && (s.phase === "flight" || s.phase === "result"))
+          a.play(clip, { time: Math.min(K.pitchEnd, K.pitchRelease + f.elapsed * 0.9) });
+        else if (s.phase === "ready") a.play(clip, { time: 0, fade: 0.35 });
+        else a.play("idle", { loop: true });
+      } else if (i === 1) a.play("catcher_idle", { loop: true });
+      else a.play("idle", { loop: true, offset: i * 1.7 });
+    });
+    // --- batter: stance, swing (scrubbed on the swing clock), bunt
+    {
+      const fig = this.batter,
+        a = this.avatars!.get(fig)!,
+        lefty = this.engine.batter.hand === "L",
+        side = lefty ? "_l" : "_r";
+      a.setTeam(batting ? "home" : "away");
+      a.setBat(true, lefty);
+      a.object.visible = fig.root.visible;
+      a.object.position.set(lefty ? -0.82 : 0.82, 0, 0);
+      a.object.rotation.set(0, 0, 0);
+      const since = this.swingFlight ? this.time - this.swingStart : Infinity,
+        bunt = s.swingStyle === "bunt" && batting;
+      if (since <= SWING_TIME + SWING_HOLD) {
+        if (bunt) a.play(`bunt${side}` as "bunt_r", { time: K.buntSquare });
+        else
+          a.play(`swing${side}` as "swing_r", {
+            time: Math.min(K.swingFinish, K.swingContact + (since - SWING_TIME * 0.5) * 1.5),
+            fade: 0.08,
+          });
+      } else if (bunt && (s.phase === "windup" || s.phase === "flight"))
+        a.play(`bunt${side}` as "bunt_r", {
+          time: s.phase === "windup" ? (1 - s.timer / 0.62) * K.buntSquare : K.buntSquare,
+        });
+      else a.play(`idle_bat${side}` as "idle_bat_r", { loop: true, fade: 0.35 });
+    }
+    // --- runners
+    this.runners.forEach((fig, i) => {
+      const a = this.avatars!.get(fig)!;
+      a.setTeam(batting ? "home" : "away");
+      a.setGlove(false);
+      place(fig, a, fig.root.rotation.y + Math.PI);
+      if (this.runnerSlide[i] >= 0)
+        a.play("slide", { time: K.slideDown * this.runnerSlide[i] + 0.05 });
+      else if (this.runnerMoving[i]) a.play("run", { loop: true, speed: 1.15, offset: i * 0.1 });
+      else a.play("idle", { loop: true, offset: i * 2.3 });
+    });
+    for (const a of this.avatars!.values()) a.update(dt);
+    void cam;
+  }
+  /** A fielder holding the ball shows it in his glove (or throwing hand), not in mid-air. */
+  private holdBall() {
+    const l = this.engine.state.live;
+    if (!this.avatars || !l || this.engine.state.phase !== "inplay") return;
+    const t = l.throw,
+      holder =
+        t && t.receivedAt !== null
+          ? t.receiver
+          : !t && l.fieldedAt !== null && l.kind === "batted"
+            ? l.fielder
+            : -1;
+    const a = holder >= 0 ? this.avatars.get(this.players[holder]) : undefined;
+    if (a) a.ballPoint(this.ball.position);
+  }
   /** Number of rain streaks (kept modest for low-end laptops). */
   private static RAIN_DROPS = 1100;
   private updateWeather(dt: number) {
@@ -1549,7 +1737,19 @@ export class BaseballField {
       // Lead-off stance by default: knees soft, hands out in front.
       this.hands(r, V(0.3, 0.98, -0.2), V(-0.3, 0.98, -0.2));
       const l = s.live;
-      const show = (pose: ReturnType<typeof runnerPose>) => {
+      this.runnerMoving[i] = false;
+      this.runnerSlide[i] = -1;
+      const show = (
+        pose: ReturnType<typeof runnerPose>,
+        track?: { progress: number; target: number; stealing?: boolean },
+      ) => {
+        this.runnerMoving[i] = pose.moving;
+        // Sliding into a base a throw is going to (or on a steal): the last couple of metres.
+        if (track && pose.moving && track.target > track.progress) {
+          const left = (track.target - track.progress) * BASE_PATH_LENGTH;
+          if (left < 2.6 && (track.stealing || s.live?.throw?.base === track.target))
+            this.runnerSlide[i] = 1 - left / 2.6;
+        }
         r.root.visible = pose.visible;
         r.root.position.set(pose.position.x, 0, pose.position.z);
         r.root.rotation.y = playerYaw(pose.facing);
@@ -1560,10 +1760,10 @@ export class BaseballField {
       };
       if (l && s.phase === "inplay") {
         const track = l.runners.find((r) => r.id === i);
-        if (track) show(runnerPose(track));
+        if (track) show(runnerPose(track), track);
       } else if (i === 0 && s.stealTrack) {
         // The E-steal runner breaks during the delivery.
-        show({ ...runnerPose(s.stealTrack), visible: true, moving: true });
+        show({ ...runnerPose(s.stealTrack), visible: true, moving: true }, s.stealTrack);
       } else if (i < 3 && s.bases[i]) {
         r.root.visible = true;
         r.root.position.set(BASES[i].x + 0.65, 0, BASES[i].z);
@@ -1571,6 +1771,7 @@ export class BaseballField {
       }
     });
     this.ball.position.set(s.ball.x, s.ball.y, s.ball.z);
+    this.holdBall();
     // A knuckleball barely spins (that is why it flutters): only a slow tumble.
     if (s.phase === "flight" || s.phase === "inplay")
       this.ball.rotation.x +=
@@ -1616,6 +1817,7 @@ export class BaseballField {
     material.opacity = 0.4 + heat * 0.6;
     // Ease the pitcher's and batter's joints toward this frame's pose, so phase changes
     // (set → wind-up → release → back to the set, swing → stance) never snap.
+    if (this.avatars) this.driveAvatars(dt, cam);
     this.updateWeather(dt);
     // Only the drawn image is smoothed: the computed pose is put back after rendering, so the
     // next frame's pose code never reads a blended (re-decomposed) rotation.

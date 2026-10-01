@@ -27,7 +27,7 @@ npm run typecheck
 npm run build
 ```
 
-Node.js 24 기준. `npm test`는 69개 게임 규칙 검사다. 잠금 파일을 유지한다.
+Node.js 24 기준. `npm test`는 70개 게임 규칙 검사다. 잠금 파일을 유지한다.
 규칙 변경은 관련 회귀 테스트를 추가/수정하고 검증한다. 문구 수정에 대규모 테스트를 추가하지 않는다.
 
 ## 코드 위치
@@ -36,6 +36,7 @@ Node.js 24 기준. `npm test`는 69개 게임 규칙 검사다. 잠금 파일을
 |---|---|
 | 투구·타격·주루·아웃·이닝·성장 | `web/lib/game/engine.ts` |
 | Three.js 경기장·선수·카메라 | `web/lib/game/field.ts` |
+| Mixamo 선수 모델·동작 연결 | `web/lib/game/avatars.ts`, `field.ts`의 `driveAvatars`, `tools/model-pipeline/` |
 | WebGL 없는 환경의 렌더링 | `web/lib/game/software-field.ts` |
 | 조작·조준판·메뉴·훈련 UI | `web/components/game/DiamondGame.tsx` |
 | 화면 스타일 | `web/app/globals.css` |

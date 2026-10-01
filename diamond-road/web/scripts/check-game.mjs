@@ -2361,4 +2361,76 @@ check(
     }
   },
 );
+check(
+  "Diving, jumping and ground-ball catches: near misses get a dive, skill and rain decide",
+  () => {
+    const run = (rating, rain = false, n = 600) => {
+      const o = {
+        dives: 0,
+        made: 0,
+        missedDown: 0,
+        ground: 0,
+        jump: 0,
+        buntDives: 0,
+        callouts: new Set(),
+      };
+      for (let i = 1; i <= n; i++) {
+        const g = evenDefense(new BaseballEngine(newCareer(), seed(i)), rating);
+        if (rain) Object.defineProperty(g, "raining", { get: () => true });
+        const r = seed(i * 7 + 3);
+        g.contact(0.21 + r() * 0.75, (r() - 0.5) * 0.2);
+        const l = g.state.live;
+        let k = 0,
+          downChecked = false;
+        while (g.state.phase === "inplay" && k++ < 3000) {
+          const before = { ...l.fielderPos },
+            wasDown = l.downUntil !== undefined && l.elapsed < l.downUntil - 0.05;
+          g.tick(1 / 60);
+          // A fielder who missed a dive stays down until he gets up.
+          if (wasDown && l.elapsed < l.downUntil - 0.05 && l.fieldedAt === null) {
+            assert.equal(l.fielderPos.x, before.x);
+            downChecked = true;
+          }
+        }
+        if (g.state.flash) o.callouts.add(g.state.flash.text);
+        if (l.diveTried && !l.ground) {
+          o.dives++;
+          if (l.downUntil === undefined) {
+            o.made++;
+            assert(l.caughtFly, "a diving catch is a fly out");
+          } else if (downChecked) o.missedDown++;
+        }
+        if (l.catchStyle === "ground") o.ground++;
+        if (l.catchStyle === "jump") o.jump++;
+      }
+      return o;
+    };
+    const avg = run(65),
+      good = run(95),
+      wet = run(65, true);
+    assert(avg.dives > 10 && avg.dives < 90, `dives ${avg.dives} of 600`);
+    assert(avg.made > 0 && avg.made < avg.dives, "some dives work, some do not");
+    assert(good.made / good.dives > avg.made / avg.dives, "better fielders dive better");
+    assert(wet.made / Math.max(1, wet.dives) < avg.made / avg.dives, "rain makes it harder");
+    assert(avg.missedDown > 0, "a missed dive keeps the fielder down");
+    assert(avg.ground > 50, "grounders are scooped up (ground-ball catch)");
+    assert(avg.jump > 0, "liners and balls at the wall get jump catches");
+    assert(avg.callouts.has("다이빙 캐치!") && avg.callouts.has("점프 캐치!"));
+    // Bunts and the catcher never dive.
+    for (let i = 1; i <= 200; i++) {
+      const g = new BaseballEngine(newCareer(), seed(i));
+      g.start("batting");
+      g.state.swingStyle = "bunt";
+      g.contact(0.4, 0);
+      const l = g.state.live;
+      assert(l.bunt);
+      let k = 0;
+      while (g.state.phase === "inplay" && k++ < 3000) g.tick(1 / 60);
+      assert(!l.diveTried, "no dive on a bunt");
+    }
+    // Dive chance: the closer the ball and the better the fielder, the likelier.
+    const g = new BaseballEngine(newCareer());
+    assert(g.diveChance(4, 1.7, 3, 1.6) > g.diveChance(4, 2.9, 3, 1.6));
+  },
+);
 console.log(`\n${passed} gameplay checks passed.`);

@@ -37,3 +37,4 @@
 - 다음 후보: Mixamo(로그인 필요) 사람 모델+야구 애니메이션으로 교체. 사용자 다운로드 후 업로드 → FBX→GLB 변환 → AnimationMixer 연동.
 - (취소됨 → 아래) 결정(2026-10-01): 선수 모델은 **Quaternius**(quaternius.com, 대부분 CC0) 캐릭터를 사용. 리깅이 없으면 Mixamo "Upload Character"로 자동 리깅 후 Mixamo 야구 애니메이션(투구·스윙·대기·번트·달리기 In Place·포구·송구, FBX 30fps)을 입힌다. 받은 FBX → GLB 변환, AnimationMixer 연결, 유니폼 색·등번호·글러브·배트 부착, 기존 도형 모델은 예비로 유지. 라이선스(CC0 여부)는 받는 팩마다 확인해 CREDITS에 기록.
 - 최종 결정(2026-10-01 23:07): 캐릭터와 애니메이션 모두 **Mixamo**(로그인 필요)에서 받는다. 캐릭터 FBX(With Skin, T-pose) + 애니메이션 FBX(Without Skin, 30fps, 달리기는 In Place).
+- 완료(2026-10-02): Mixamo 캐릭터 Ch06 + 동작 18개 적용(`avatars.ts`, `field.ts` `driveAvatars`). 도형 선수는 불러오기 전/실패 시 예비. 호환 렌더러는 그대로 도형.

@@ -1,0 +1,315 @@
+/**
+ * Mixamo player model + baseball animations for the 3D field.
+ *
+ * Assets (public/models): player.glb (one skinned character, "Ch06") and anims.glb (18 clips
+ * on the same skeleton, named after the source files: pitch_r, swing_l, run, diving_r, ...).
+ * Each on-field player gets a clone with its own AnimationMixer. The game never reads the
+ * animations back: it only shows them, so rules and timings stay in engine.ts.
+ */
+import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
+import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
+
+export type ClipName =
+  | "throw"
+  | "bunt_l"
+  | "bunt_r"
+  | "catch"
+  | "catcher_idle"
+  | "diving_l"
+  | "diving_r"
+  | "ground_catch"
+  | "idle"
+  | "idle_bat_l"
+  | "idle_bat_r"
+  | "jump_catch"
+  | "pitch_l"
+  | "pitch_r"
+  | "run"
+  | "slide"
+  | "swing_l"
+  | "swing_r";
+
+/**
+ * Key moments of each clip (seconds), measured from the files (dev-avatar.html):
+ * the pitch leaves the hand at 0.93 s, the bat meets the ball at 0.92 s, and so on.
+ */
+export const CLIP_KEYS = {
+  pitchRelease: 0.93,
+  pitchEnd: 2.3,
+  swingContact: 1.0,
+  swingFinish: 1.45,
+  buntSquare: 1.05,
+  throwRelease: 1.45,
+  throwStart: 1.0,
+  throwEnd: 2.2,
+  catchMoment: 0.55,
+  groundPickup: 0.72,
+  diveLaunch: 0.55,
+  /** Stretched out in the air: where the glove meets the ball. */
+  diveReach: 0.9,
+  diveDown: 1.75,
+  diveUp: 3.0,
+  jumpCatch: 1.35,
+  jumpEnd: 1.9,
+  slideDown: 0.3,
+};
+
+export type AvatarAssets = {
+  template: THREE.Object3D;
+  clips: Map<ClipName, THREE.AnimationClip>;
+  /** Team uniform textures: the navy outfit repainted (home cream, away terracotta). */
+  uniforms: { home: THREE.Material[]; away: THREE.Material[] };
+};
+
+/** Every bone name in the model starts with this prefix (three.js drops the ':'). */
+const BONE = "mixamorig9";
+
+/**
+ * The clips were made with root motion; the game moves the players itself, so keep only
+ * the hips' height (dives and slides still go down to the ground) and pin x/z to frame 0.
+ */
+function stripRootMotion(clip: THREE.AnimationClip) {
+  for (const t of clip.tracks) {
+    if (!t.name.endsWith("Hips.position")) continue;
+    const v = t.values,
+      x0 = v[0],
+      z0 = v[2];
+    for (let i = 0; i < v.length; i += 3) {
+      v[i] = x0;
+      v[i + 2] = z0;
+    }
+  }
+}
+
+/**
+ * Repaints the dark navy outfit in a team colour, keeping the cloth's shading. Skin, the
+ * white trim, the shoes and the cap stay as they are.
+ */
+function repaint(source: THREE.Texture, color: string): THREE.Texture {
+  const img = source.image as CanvasImageSource & { width: number; height: number },
+    canvas = document.createElement("canvas");
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const g = canvas.getContext("2d", { willReadFrequently: true })!;
+  g.drawImage(img, 0, 0);
+  const data = g.getImageData(0, 0, canvas.width, canvas.height),
+    px = data.data,
+    team = new THREE.Color(color);
+  const tr = team.r * 255,
+    tg = team.g * 255,
+    tb = team.b * 255;
+  for (let i = 0; i < px.length; i += 4) {
+    const r = px[i],
+      gg = px[i + 1],
+      b = px[i + 2],
+      max = Math.max(r, gg, b),
+      min = Math.min(r, gg, b);
+    // Navy / near-black cloth: dark and not warm (skin and the red parts are warm).
+    if (max > 92 || r > b + 6) continue;
+    const lum = (r + gg + b) / 3,
+      // Soft edge so seams do not show a hard line.
+      w = Math.min(1, (92 - max) / 22) * (max - min < 40 ? 1 : 0.5),
+      shade = Math.min(1.25, 0.58 + lum / 70);
+    px[i] = r + (tr * shade - r) * w;
+    px[i + 1] = gg + (tg * shade - gg) * w;
+    px[i + 2] = b + (tb * shade - b) * w;
+  }
+  g.putImageData(data, 0, 0);
+  const t = new THREE.CanvasTexture(canvas);
+  t.flipY = source.flipY;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+
+export async function loadAvatarAssets(base = import.meta.env.BASE_URL): Promise<AvatarAssets> {
+  const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder),
+    [player, anims] = await Promise.all([
+      loader.loadAsync(`${base}models/player.glb`),
+      loader.loadAsync(`${base}models/anims.glb`),
+    ]);
+  const clips = new Map<ClipName, THREE.AnimationClip>();
+  for (const c of anims.animations) {
+    stripRootMotion(c);
+    clips.set(c.name as ClipName, c);
+  }
+  const template = player.scene;
+  // Materials in mesh order, then a home and an away copy with the outfit repainted.
+  const originals: THREE.MeshStandardMaterial[] = [];
+  template.traverse((o) => {
+    const m = o as THREE.SkinnedMesh;
+    if (!m.isSkinnedMesh) return;
+    m.castShadow = true;
+    m.frustumCulled = false;
+    originals.push(m.material as THREE.MeshStandardMaterial);
+  });
+  const dress = (color: string) =>
+    originals.map((m) => {
+      const c = m.clone();
+      if (m.map) c.map = repaint(m.map, color);
+      c.roughness = 0.85;
+      c.metalness = 0;
+      return c;
+    });
+  return { template, clips, uniforms: { home: dress("#ece6d6"), away: dress("#b4563c") } };
+}
+
+/** A leather glove for the glove hand (procedural, small). */
+function makeGlove() {
+  const leather = new THREE.MeshStandardMaterial({ color: "#7a4a24", roughness: 0.7 }),
+    g = new THREE.Group(),
+    pocket = new THREE.Mesh(new THREE.SphereGeometry(0.1, 14, 10), leather);
+  pocket.scale.set(1, 1.25, 0.45);
+  pocket.position.set(0, 0.09, 0.03);
+  const thumb = new THREE.Mesh(new THREE.CapsuleGeometry(0.025, 0.07, 4, 8), leather);
+  thumb.position.set(0.075, 0.05, 0.03);
+  thumb.rotation.z = -0.6;
+  g.add(pocket, thumb);
+  g.traverse((o) => ((o as THREE.Mesh).castShadow = true));
+  return g;
+}
+/** A wooden bat, handle at the origin, barrel along +Y. */
+function makeBat() {
+  const wood = new THREE.MeshStandardMaterial({ color: "#c79a5b", roughness: 0.5 }),
+    bat = new THREE.Mesh(new THREE.CylinderGeometry(0.034, 0.014, 0.86, 12), wood);
+  bat.position.y = 0.36;
+  bat.castShadow = true;
+  const g = new THREE.Group();
+  g.add(bat);
+  return g;
+}
+
+export class Avatar {
+  readonly object: THREE.Object3D;
+  private mixer: THREE.AnimationMixer;
+  private actions = new Map<ClipName, THREE.AnimationAction>();
+  private current: ClipName | null = null;
+  private meshes: THREE.SkinnedMesh[] = [];
+  private team: "home" | "away" | null = null;
+  readonly rightHand: THREE.Object3D;
+  readonly leftHand: THREE.Object3D;
+  private glove: THREE.Object3D | null = null;
+  private bat: THREE.Object3D | null = null;
+  /** Grip points (base of the middle finger) of the bat's bottom and top hands. */
+  private grip: [THREE.Object3D, THREE.Object3D] | null = null;
+  private batDir = new THREE.Vector3(0, 1, 0);
+  private throwHand: THREE.Object3D | null = null;
+
+  constructor(private assets: AvatarAssets) {
+    this.object = SkeletonUtils.clone(assets.template);
+    this.object.traverse((o) => {
+      const m = o as THREE.SkinnedMesh;
+      if (m.isSkinnedMesh) this.meshes.push(m);
+    });
+    this.mixer = new THREE.AnimationMixer(this.object);
+    for (const [name, clip] of assets.clips) this.actions.set(name, this.mixer.clipAction(clip));
+    this.rightHand = this.object.getObjectByName(`${BONE}RightHand`)!;
+    this.leftHand = this.object.getObjectByName(`${BONE}LeftHand`)!;
+  }
+  setTeam(team: "home" | "away") {
+    if (team === this.team) return;
+    this.team = team;
+    const mats = this.assets.uniforms[team];
+    this.meshes.forEach((m, i) => (m.material = mats[i % mats.length]));
+  }
+  /** Bones live in centimetre-scaled parents: attached props need the inverse scale. */
+  private attach(prop: THREE.Object3D, bone: THREE.Object3D) {
+    bone.add(prop);
+    this.object.updateMatrixWorld(true);
+    const s = new THREE.Vector3();
+    bone.getWorldScale(s);
+    prop.scale.setScalar(1 / Math.max(1e-6, s.x));
+  }
+  /** Glove on the left hand (right-handed thrower) or the right hand. */
+  setGlove(on: boolean, leftHanded = false) {
+    if (!on) {
+      if (this.glove) this.glove.visible = false;
+      return;
+    }
+    const hand = leftHanded ? this.rightHand : this.leftHand;
+    this.throwHand = leftHanded ? this.leftHand : this.rightHand;
+    if (!this.glove) this.glove = makeGlove();
+    if (this.glove.parent !== hand) this.attach(this.glove, hand);
+    this.glove.visible = true;
+  }
+  /**
+   * Bat held in both hands: it runs from the bottom hand through the top hand, so it follows
+   * any clip (stance, swing, bunt) without per-clip calibration.
+   */
+  setBat(on: boolean, leftHanded = false) {
+    if (!on) {
+      if (this.bat) this.bat.visible = false;
+      this.grip = null;
+      return;
+    }
+    if (!this.bat) {
+      this.bat = makeBat();
+      this.object.add(this.bat);
+    }
+    const g = (side: string) =>
+      this.object.getObjectByName(`${BONE}${side}HandMiddle1`) ??
+      (side === "Left" ? this.leftHand : this.rightHand);
+    // A right-handed batter has the left hand at the knob and the right hand above it.
+    this.grip = leftHanded ? [g("Right"), g("Left")] : [g("Left"), g("Right")];
+    this.bat.visible = true;
+  }
+  private placeBat() {
+    if (!this.bat || !this.grip || !this.bat.visible) return;
+    this.object.updateMatrixWorld(true);
+    const lo = this.object.worldToLocal(this.grip[0].getWorldPosition(new THREE.Vector3())),
+      hi = this.object.worldToLocal(this.grip[1].getWorldPosition(new THREE.Vector3())),
+      d = hi.clone().sub(lo),
+      len = d.length();
+    // Hands apart (one-handed follow-through): keep the last direction from the top hand.
+    if (len > 0.03 && len < 0.3) this.batDir.copy(d.divideScalar(len));
+    const base = len < 0.3 ? lo : hi.clone().addScaledVector(this.batDir, -0.09);
+    this.bat.position.copy(base).addScaledVector(this.batDir, -0.04);
+    this.bat.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), this.batDir);
+  }
+  /**
+   * Shows a clip. `time` scrubs it to an exact moment (synchronised moves such as the pitch
+   * or the swing); without it the clip plays on its own (`loop` for run/idle). Changing clips
+   * cross-fades for `fade` seconds.
+   */
+  play(
+    name: ClipName,
+    opts: { time?: number; loop?: boolean; speed?: number; fade?: number; offset?: number } = {},
+  ) {
+    const a = this.actions.get(name);
+    if (!a) return;
+    if (this.current !== name) {
+      const prev = this.current ? this.actions.get(this.current) : null;
+      a.reset();
+      a.setLoop(opts.loop ? THREE.LoopRepeat : THREE.LoopOnce, Infinity);
+      a.clampWhenFinished = true;
+      if (opts.offset) a.time = opts.offset % a.getClip().duration;
+      a.play();
+      if (prev && prev !== a) a.crossFadeFrom(prev, opts.fade ?? 0.18, false);
+      this.current = name;
+    }
+    if (opts.time !== undefined) {
+      a.time = Math.min(Math.max(0, opts.time), a.getClip().duration - 1e-3);
+      a.timeScale = 0;
+    } else a.timeScale = opts.speed ?? 1;
+  }
+  /** Where a held ball sits: in the glove's pocket, or in the throwing hand while throwing. */
+  ballPoint(out: THREE.Vector3): THREE.Vector3 | null {
+    if (!this.glove?.visible) return null;
+    if (this.current === "throw" && this.throwHand)
+      return this.throwHand.localToWorld(out.set(0, 9, 3));
+    return this.glove.localToWorld(out.set(0, 0.09, 0.07));
+  }
+  get clip() {
+    return this.current;
+  }
+  update(dt: number) {
+    this.mixer.update(dt);
+    this.placeBat();
+  }
+  dispose() {
+    this.mixer.stopAllAction();
+    this.object.removeFromParent();
+  }
+}

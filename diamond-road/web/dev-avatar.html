@@ -1,0 +1,102 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>avatar calibration (dev only)</title>
+    <style>
+      body { margin: 0; background: #223; color: #ddd; font: 12px monospace; }
+      canvas { display: block; }
+    </style>
+  </head>
+  <body>
+    <script type="module">
+      // Dev-only page: measures the Mixamo clips (key moments, facing) and renders key frames.
+      import * as THREE from "three";
+      import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+      import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
+      import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
+      const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+      const [player, anims] = await Promise.all([
+        loader.loadAsync("/models/player.glb"),
+        loader.loadAsync("/models/anims.glb"),
+      ]);
+      const W = 220, H = 260;
+      const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+      renderer.setSize(W * 6, H * 4);
+      document.body.appendChild(renderer.domElement);
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color("#556");
+      scene.add(new THREE.HemisphereLight(0xffffff, 0x445544, 2.5));
+      const grid = new THREE.GridHelper(6, 6);
+      scene.add(grid);
+      const axes = new THREE.AxesHelper(1.2); // x red, y green, z blue
+      scene.add(axes);
+      const avatar = SkeletonUtils.clone(player.scene);
+      scene.add(avatar);
+      const mixer = new THREE.AnimationMixer(avatar);
+      const bone = (n) => avatar.getObjectByName(n.replace(":", ""));
+      const names = [];
+      avatar.traverse((o) => o.isBone && names.length < 3 && names.push(o.name));
+      const rh = bone("mixamorig9:RightHand"), lh = bone("mixamorig9:LeftHand"), hips = bone("mixamorig9:Hips");
+      const cam = new THREE.PerspectiveCamera(40, W / H, 0.1, 50);
+      const report = { bones: names, clips: {} };
+      const v = new THREE.Vector3(), prev = new THREE.Vector3();
+      const sample = (clip, t) => {
+        const a = mixer.clipAction(clip);
+        mixer.stopAllAction();
+        a.reset().play();
+        a.time = t;
+        mixer.update(0);
+        avatar.updateMatrixWorld(true);
+      };
+      for (const clip of anims.animations) {
+        const info = { duration: +clip.duration.toFixed(2) };
+        let best = 0, bestT = 0, lowY = 9, lowT = 0, bestL = 0, bestLT = 0;
+        prev.set(0, 0, 0);
+        let prevL = new THREE.Vector3();
+        for (let t = 0; t <= clip.duration; t += 1 / 60) {
+          sample(clip, t);
+          rh.getWorldPosition(v);
+          const sp = t > 0 ? v.distanceTo(prev) * 60 : 0;
+          if (sp > best) { best = sp; bestT = t; }
+          prev.copy(v);
+          const l = lh.getWorldPosition(new THREE.Vector3());
+          const spl = t > 0 ? l.distanceTo(prevL) * 60 : 0;
+          if (spl > bestL) { bestL = spl; bestLT = t; }
+          prevL.copy(l);
+          const hy = hips.getWorldPosition(new THREE.Vector3()).y;
+          if (hy < lowY) { lowY = hy; lowT = t; }
+        }
+        info.rightHandFastest = [+bestT.toFixed(2), +best.toFixed(1)];
+        info.leftHandFastest = [+bestLT.toFixed(2), +bestL.toFixed(1)];
+        info.hipsLowest = [+lowT.toFixed(2), +lowY.toFixed(2)];
+        sample(clip, 0);
+        const h0 = hips.getWorldPosition(new THREE.Vector3());
+        const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(hips.getWorldQuaternion(new THREE.Quaternion()));
+        info.start = { hips: h0.toArray().map((x) => +x.toFixed(2)), hipsForward: fwd.toArray().map((x) => +x.toFixed(2)) };
+        sample(clip, clip.duration);
+        info.endHips = hips.getWorldPosition(new THREE.Vector3()).toArray().map((x) => +x.toFixed(2));
+        report.clips[clip.name] = info;
+      }
+      // Key-frame sheet: rows = clips (by groups), columns = 6 moments, camera from +X side and front.
+      window.__render = (clipName, view = "side") => {
+        const clip = anims.animations.find((c) => c.name === clipName);
+        renderer.setScissorTest(true);
+        for (let i = 0; i < 6; i++) {
+          sample(clip, (clip.duration * i) / 5);
+          for (let r = 0; r < 4; r++) {
+            const ang = [0, Math.PI / 2, Math.PI, -Math.PI / 2][r];
+            cam.position.set(Math.sin(ang) * 4.2, 1.4, Math.cos(ang) * 4.2);
+            cam.lookAt(0, 0.9, 0);
+            const x = i * W, y = (3 - r) * H;
+            renderer.setViewport(x, y, W, H);
+            renderer.setScissor(x, y, W, H);
+            renderer.render(scene, cam);
+          }
+        }
+        return true;
+      };
+      window.__report = report;
+    </script>
+  </body>
+</html>

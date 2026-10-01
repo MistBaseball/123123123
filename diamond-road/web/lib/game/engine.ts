@@ -403,6 +403,20 @@ export const RULES = {
   wildPitchFatigue: 0.075,
   wildPitchMin: 0.002,
   wildPitchMax: 0.09,
+  /** Diving catch: the fielder dives for a ball this far past his reach (m, fly / grounder). */
+  diveReach: 3.0,
+  groundDiveReach: 4.0,
+  /** Dive success: base chance at the edge of reach, + per point of (speed+eye)/2 over 65,
+   *  − scaled by how far the ball is; capped. Rain takes some off. */
+  diveBase: 0.45,
+  diveSkill: 0.006,
+  diveDistance: 0.38,
+  diveMin: 0.08,
+  diveMax: 0.85,
+  diveRain: 0.15,
+  /** After a dive: time on the ground (caught: before the throw; missed: before chasing again). */
+  diveGetUp: 0.9,
+  diveMissDown: 1.0,
   /** Every pitch's stamina cost × this (1.3 = 30% more than the original tuning). */
   staminaScale: 1.3,
   /** Decisive pitch ("결정구" in the description): the AI batter's contact −this. */
@@ -1572,6 +1586,15 @@ export type LivePlay = {
   outs: PlayOut[];
   error: boolean;
   sacrifice: boolean;
+  /** How the ball was fielded (for the animation and the callout). */
+  catchStyle?: "catch" | "jump" | "dive" | "ground";
+  /** When the dive or jump happened (s from play start). */
+  catchMoment?: number;
+  /** A dive was tried on this ball (one per play); the fielder is down until this time. */
+  diveTried?: boolean;
+  downUntil?: number;
+  /** Low, hard liner (the fielder may have to leap for it). */
+  lineDrive?: boolean;
 };
 export type GameState = {
   mode: Mode;
@@ -2669,6 +2692,7 @@ export class BaseballEngine {
       bounced: ground,
       flightTime,
       height,
+      lineDrive,
       catchAt: flightTime * catchU,
       catchPoint,
       caughtFly: false,
@@ -2822,6 +2846,24 @@ export class BaseballEngine {
           !(r.from === 0 && base === 1 && !l.caughtFly),
       ) ?? null
     );
+  }
+  /** Chance a diving attempt by fielder i succeeds when the ball is `gap` m away. */
+  diveChance(i: number, gap: number, reach: number, near: number) {
+    const p = this.fielders[i] ? formOf(this.fielders[i]) : { speed: 65, eye: 65 },
+      skill = (p.speed + p.eye) / 2;
+    return clamp(
+      RULES.diveBase +
+        (skill - 65) * RULES.diveSkill -
+        ((gap - near) / Math.max(0.1, reach - near)) * RULES.diveDistance -
+        (this.raining ? RULES.diveRain : 0),
+      RULES.diveMin,
+      RULES.diveMax,
+    );
+  }
+  /** Big callout for a fielding highlight: gold when our team made it, red for the rival. */
+  private highlight(text: string) {
+    this.callout(text, this.batting ? "red" : "gold");
+    this.log(text);
   }
   /** Throw speed of the fielder holding the ball (the pitcher's pickoff throw is fixed). */
   private armOf(l: LivePlay) {
@@ -2998,8 +3040,12 @@ export class BaseballEngine {
         l.fielderPos.x = clamp(l.fielderPos.x + (dx / n) * fielderSpeed * dt, -85, 85);
         l.fielderPos.z = clamp(l.fielderPos.z + (dz / n) * fielderSpeed * dt, -20, 105);
       } else {
-        // The fielder needs a moment to read the ball before the first step.
-        const moving = Math.max(0, l.elapsed - Math.max(previous, fielderReaction));
+        // The fielder needs a moment to read the ball before the first step (and to get up
+        // after a missed dive).
+        const moving = Math.max(
+          0,
+          l.elapsed - Math.max(previous, fielderReaction, l.downUntil ?? 0),
+        );
         if (moving > 0) this.moveFielder(l.fielderPos, target, moving, fielderSpeed);
       }
       s.ball = this.liveBall(l, l.elapsed);
@@ -3010,7 +3056,45 @@ export class BaseballEngine {
             0,
             lerp(oldPos.z, l.fielderPos.z, fraction),
           );
-        if (Math.hypot(atCatch.x - l.catchPoint.x, atCatch.z - l.catchPoint.z) <= CATCH_REACH) {
+        const gap = Math.hypot(atCatch.x - l.catchPoint.x, atCatch.z - l.catchPoint.z);
+        // Just out of reach: the fielder dives for it (once). Skill and luck decide.
+        let dove = false;
+        if (
+          gap > CATCH_REACH &&
+          gap <= RULES.diveReach &&
+          !l.diveTried &&
+          l.kind === "batted" &&
+          !l.bunt &&
+          l.fielder !== 1
+        ) {
+          l.diveTried = true;
+          l.catchMoment = l.catchAt;
+          dove = true;
+          if (this.rng() < this.diveChance(l.fielder, gap, RULES.diveReach, CATCH_REACH)) {
+            l.catchStyle = "dive";
+            // He ends up where the ball was, on the ground: getting up delays any throw.
+            atCatch.x = lerp(atCatch.x, l.catchPoint.x, 0.85);
+            atCatch.z = lerp(atCatch.z, l.catchPoint.z, 0.85);
+            l.hold += RULES.diveGetUp;
+            this.highlight("다이빙 캐치!");
+          } else {
+            l.catchStyle = "dive";
+            l.downUntil = l.catchAt + RULES.diveMissDown;
+            l.fielderPos.x = lerp(atCatch.x, l.catchPoint.x, 0.6);
+            l.fielderPos.z = lerp(atCatch.z, l.catchPoint.z, 0.6);
+            s.detail = "몸을 날렸지만 글러브 끝에서 빠졌습니다!";
+          }
+        }
+        if (gap <= CATCH_REACH || (dove && l.catchStyle === "dive" && l.downUntil === undefined)) {
+          if (!dove) {
+            // Hard liners and balls at the wall are taken with a leap.
+            const jump = (l.lineDrive && gap > 1.15) || Math.hypot(l.land.x, l.land.z) > 80;
+            l.catchStyle = jump ? "jump" : "catch";
+            if (jump) {
+              l.catchMoment = l.catchAt;
+              this.highlight("점프 캐치!");
+            }
+          }
           l.caughtFly = true;
           l.fieldedAt = l.catchAt;
           l.state = "포구";
@@ -3064,13 +3148,53 @@ export class BaseballEngine {
         s.message = "FAIR BALL";
         s.detail = "타구가 땅에 닿았습니다 · 주자 진루";
       }
+      // A grounder about to get past him: one diving stop, if he is up and ready.
+      const ballGap = Math.hypot(s.ball.x - l.fielderPos.x, s.ball.z - l.fielderPos.z);
+      let diveStop = false;
       if (
-        l.bounced &&
-        // Nobody fields the ball before reacting to it (the catcher stands next to a bunt).
-        l.elapsed + 1e-8 >= fielderReaction &&
-        Math.hypot(s.ball.x - l.fielderPos.x, s.ball.z - l.fielderPos.z) < GROUND_REACH &&
+        l.ground &&
+        l.kind === "batted" &&
+        !l.bunt &&
+        l.fielder !== 1 &&
+        !l.diveTried &&
+        l.elapsed + 1e-8 >= Math.max(fielderReaction, l.downUntil ?? 0) &&
+        ballGap >= GROUND_REACH &&
+        ballGap <= RULES.groundDiveReach &&
         s.ball.y < 1.1
       ) {
+        // The ball is going by right now (closest it will get) and he cannot reach it on foot.
+        const ahead = this.liveBall(l, l.elapsed + 0.05),
+          away = Math.hypot(ahead.x - l.fielderPos.x, ahead.z - l.fielderPos.z) >= ballGap;
+        if (away) {
+          l.diveTried = true;
+          l.catchStyle = "dive";
+          l.catchMoment = l.elapsed;
+          if (
+            this.rng() < this.diveChance(l.fielder, ballGap, RULES.groundDiveReach, GROUND_REACH)
+          ) {
+            diveStop = true;
+            l.fielderPos.x = lerp(l.fielderPos.x, s.ball.x, 0.85);
+            l.fielderPos.z = lerp(l.fielderPos.z, s.ball.z, 0.85);
+            l.hold += RULES.diveGetUp;
+            this.highlight("호수비!");
+          } else {
+            l.downUntil = l.elapsed + RULES.diveMissDown;
+            l.fielderPos.x = lerp(l.fielderPos.x, s.ball.x, 0.5);
+            l.fielderPos.z = lerp(l.fielderPos.z, s.ball.z, 0.5);
+            s.detail = "다이빙했지만 공이 빠져나갔습니다!";
+          }
+        }
+      }
+      if (
+        diveStop ||
+        (l.bounced &&
+          // Nobody fields the ball before reacting to it (the catcher stands next to a bunt).
+          l.elapsed + 1e-8 >= Math.max(fielderReaction, l.downUntil ?? 0) &&
+          Math.hypot(s.ball.x - l.fielderPos.x, s.ball.z - l.fielderPos.z) < GROUND_REACH &&
+          s.ball.y < 1.1)
+      ) {
+        if (!diveStop) l.catchStyle = l.ground ? "ground" : "catch";
+        l.catchMoment ??= l.elapsed;
         l.fieldedAt = l.elapsed;
         l.state = "포구";
         s.detail =
