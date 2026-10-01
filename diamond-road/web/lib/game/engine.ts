@@ -1467,6 +1467,15 @@ export type Career = {
   limitless?: boolean;
   /** Developer mode: stat cap lifted for testing (250). */
   devCap?: number;
+  /** The developer password was entered during this career (hall-of-fame badge, never cleared). */
+  devUsed?: boolean;
+  /** Day each stage was reached (hall of fame): draft offer, first team, MLB contract. */
+  proDay?: number;
+  firstDay?: number;
+  mlbDay?: number;
+  /** Hall-of-fame identity of this career: row id and the secret that lets it update its row. */
+  hofId?: string;
+  hofSecret?: string;
 };
 /** Highest a stat can go for this career (the pro cap for a legend start). */
 export const statCapOf = (
@@ -4120,12 +4129,14 @@ export class BaseballEngine {
       // The dream comes true: the watching club offers a contract at 100.
       if (c.stage === "high" && team && c.scout >= 100 && !c.draft) {
         c.draft = `${team.city} ${team.name} 입단`;
+        c.proDay ??= c.day - 1;
         c.club = team.id;
         c.history = [`${team.name} 스카우트의 입단 제의! 꿈이 이루어졌다`, ...c.history];
       }
       // Pro stage: the same gauge is the manager's trust; full trust opens the rotation.
       if (c.stage === "pro" && c.scout >= 100 && !c.proGoal && c.league !== "mlb") {
         c.proGoal = true;
+        c.firstDay ??= c.day - 1;
         c.mlbScouts = Object.fromEntries(MLB_TEAMS.map((t) => [t.id, 0]));
         c.history = [`${STAGES.pro.goalReward}! 2군을 졸업하고 1군으로 올라섰다`, ...c.history];
       } else if (tierOf(c) === "first") {
@@ -4348,6 +4359,7 @@ export class BaseballEngine {
     else if (tier === "farm") {
       c.scout = 100;
       c.proGoal = true;
+      c.firstDay ??= c.day;
       c.mlbScouts = Object.fromEntries(MLB_TEAMS.map((t) => [t.id, 0]));
     } else {
       const team = teamOf(c.team);
@@ -4356,6 +4368,7 @@ export class BaseballEngine {
       if (!c.draft) {
         c.draft = `${team.city} ${team.name} 입단`;
         c.club = team.id;
+        c.proDay ??= c.day;
       }
     }
     c.history = [`개발자 모드 · ${gaugeName(c)} 100`, ...c.history].slice(0, 12);
@@ -4511,6 +4524,7 @@ export class BaseballEngine {
       t = mlbTeamOf(id);
     if (!t || !this.mlbOffers.includes(t) || this.matchActive) return false;
     c.league = "mlb";
+    c.mlbDay ??= c.day;
     c.mlbClub = t.id;
     // New club, new teammates: the team growth starts again.
     c.teamBoost = 0;

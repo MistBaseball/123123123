@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import { TrainingMinigame, TRAINING_GAMES } from "@/components/game/Minigames";
 import { PatchNotesButton } from "@/components/game/PatchNotes";
+import { HallOfFameButton } from "@/components/game/HallOfFame";
 import {
   Dialog,
   DialogContent,
@@ -2634,6 +2635,14 @@ export default function DiamondGame() {
     [manualPause, setManualPause] = useState(false),
     [pending, setPending] = useState<Mode | null>(null),
     [tour, setTour] = useState<{ track: TourTrack; step: number } | null>(null);
+  // Hall of fame: a career played while the developer password is open gets the badge
+  // (also a career started while it is still open). The mark is never removed.
+  useEffect(() => {
+    if (devUnlocked && !s.career.devUsed) {
+      s.career.devUsed = true;
+      engine.persist();
+    }
+  }, [devUnlocked, s.career, engine]);
   // Which tours are finished (stored per browser; separate from the career save).
   const readTours = (): Record<TourTrack, boolean> => {
     try {
@@ -3042,6 +3051,7 @@ export default function DiamondGame() {
             </span>
           </a>
           <PatchNotesButton />
+          <HallOfFameButton engine={engine} career={s.career} />
         </div>
         <button
           className="life-status"

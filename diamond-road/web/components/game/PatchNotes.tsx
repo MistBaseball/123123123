@@ -17,6 +17,17 @@ type Patch = { version: string; date: string; title: string; items: string[] };
 
 export const PATCHES: Patch[] = [
   {
+    version: "v11",
+    date: "10/02",
+    title: "명예의 전당",
+    items: [
+      "로고 옆 '명예의 전당'에서 친구들과 커리어 기록을 겨룰 수 있습니다.",
+      "랭킹 닉네임을 한 번 정하면 4자리 번호가 자동으로 붙고(예: 철수#4821), 경기마다 기록이 자동으로 올라갑니다.",
+      "랭킹: 종합(도달 단계·승리), 승리, 탈삼진, 안타, 최단 입단, 최단 MLB.",
+      "개발자 모드를 연 커리어에는 「개발자(버그 찾는 중)」 배지가 붙습니다.",
+    ],
+  },
+  {
     version: "v10.5",
     date: "10/02",
     title: "승률 밸런스 패치",

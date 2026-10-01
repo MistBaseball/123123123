@@ -2538,4 +2538,32 @@ check("Tier balance applies in season matches only; AI homers stay realistic", (
     assert(t.aiPower >= 1 && t.aiPower <= 2 && t.batBoost >= 0 && t.batBoost <= 0.2);
   }
 });
+check(
+  "Hall of fame: the day of the draft, the first team and the MLB contract are recorded",
+  () => {
+    const c = newCareer();
+    c.created = true;
+    c.team = TEAMS[0].id;
+    const g = new BaseballEngine(c, seed(11));
+    c.scout = 99;
+    const draftDay = c.day;
+    assert(g.devWin());
+    assert.equal(c.proDay, draftDay, "draft offer on the day of that match");
+    assert(g.enterPro());
+    c.scout = 99;
+    const firstDay = c.day;
+    assert(g.devWin());
+    assert.equal(tierOf(c), "first");
+    assert.equal(c.firstDay, firstDay);
+    c.mlbScouts = Object.fromEntries(MLB_TEAMS.map((t) => [t.id, 100]));
+    g.state.phase = "finished";
+    assert(g.signMlb(MLB_TEAMS[0].id));
+    assert.equal(c.mlbDay, c.day);
+    // A second promotion never rewrites the first record.
+    c.proGoal = false;
+    c.scout = 99;
+    g.devWin();
+    assert.equal(c.firstDay, firstDay);
+  },
+);
 console.log(`\n${passed} gameplay checks passed.`);

@@ -1,0 +1,240 @@
+/**
+ * Hall of fame button (header) and window: ranking nickname, my record, public boards.
+ * The record is sent again after every match (games/day/stage change) once a nickname is set.
+ */
+import { useEffect, useState } from "react";
+import { Trophy } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import type { BaseballEngine, Career } from "@/lib/game/engine";
+import { tierOf } from "@/lib/game/engine";
+import {
+  BOARDS,
+  NICK_MAX,
+  TIER_LABEL,
+  displayName,
+  ensureIdentity,
+  fetchBoard,
+  hofConfigured,
+  loadProfile,
+  recordOf,
+  saveProfile,
+  submitRecord,
+  type HofProfile,
+  type HofRow,
+} from "@/lib/hall-of-fame";
+
+type Sync = "idle" | "sending" | "ok" | "fail";
+
+export function HallOfFameButton({ engine, career }: { engine: BaseballEngine; career: Career }) {
+  const [open, setOpen] = useState(false),
+    [profile, setProfile] = useState<HofProfile | null>(loadProfile),
+    [draft, setDraft] = useState(""),
+    [editing, setEditing] = useState(false),
+    [sync, setSync] = useState<Sync>("idle"),
+    [board, setBoard] = useState(BOARDS[0]),
+    [rows, setRows] = useState<HofRow[] | null>(null),
+    [error, setError] = useState(false);
+
+  // Auto update: after every match (and when the career moves up a stage).
+  useEffect(() => {
+    if (!profile || !hofConfigured()) return;
+    if (ensureIdentity(career)) engine.persist();
+    let alive = true;
+    setSync("sending");
+    submitRecord(career, profile).then((ok) => alive && setSync(ok ? "ok" : "fail"));
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile, career.games, career.day, career.stage, career.proGoal, career.league, career.name]);
+
+  // Boards load when the window opens or the board changes (after our own row is sent).
+  useEffect(() => {
+    if (!open || !hofConfigured()) return;
+    let alive = true;
+    setRows(null);
+    setError(false);
+    fetchBoard(board)
+      .then((r) => alive && setRows(r))
+      .catch(() => alive && setError(true));
+    return () => {
+      alive = false;
+    };
+  }, [open, board, sync]);
+
+  const register = () => {
+    const p = saveProfile(draft);
+    if (!p) return;
+    setProfile(p);
+    setEditing(false);
+  };
+  const mine = profile && career.hofId ? career.hofId : null,
+    me = profile ? recordOf(career, profile) : null,
+    tier = tierOf(career);
+
+  return (
+    <>
+      <button
+        className="patch-button hof-button"
+        onClick={() => setOpen(true)}
+        aria-label="명예의 전당"
+      >
+        <Trophy size={15} />
+        <span>명예의 전당</span>
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="patch-dialog hof-dialog">
+          <DialogHeader>
+            <DialogTitle>명예의 전당</DialogTitle>
+            <DialogDescription>
+              친구들과 커리어 기록을 겨뤄요 · 닉네임을 정하면 경기마다 기록이 자동으로 올라가요.
+            </DialogDescription>
+          </DialogHeader>
+
+          <section className="hof-profile">
+            {!profile || editing ? (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  register();
+                }}
+              >
+                <label htmlFor="hof-nick">랭킹 닉네임</label>
+                <div className="hof-nick-row">
+                  <input
+                    id="hof-nick"
+                    value={draft}
+                    maxLength={NICK_MAX}
+                    placeholder={profile?.nickname ?? "예: 철수"}
+                    onChange={(e) => setDraft(e.target.value)}
+                  />
+                  <button type="submit" disabled={!draft.trim()}>
+                    {profile ? "바꾸기" : "등록"}
+                  </button>
+                </div>
+                <small>
+                  선수 이름은 그대로 두고, 랭킹에는 「선수 이름 (닉네임#4자리)」로 보여요. 4자리
+                  번호는 자동으로 붙어 같은 이름끼리도 구분돼요.
+                </small>
+              </form>
+            ) : (
+              <div className="hof-me-line">
+                <b>
+                  {profile.nickname}#{profile.tag}
+                </b>
+                <span>
+                  {!hofConfigured()
+                    ? "서버 연결 전 · 내 기록만 보여요"
+                    : sync === "sending"
+                      ? "기록 올리는 중…"
+                      : sync === "fail"
+                        ? "올리기 실패 · 다음 경기 뒤 다시 시도"
+                        : "경기마다 자동 갱신"}
+                </span>
+                <button
+                  onClick={() => {
+                    setDraft(profile.nickname);
+                    setEditing(true);
+                  }}
+                >
+                  닉네임 바꾸기
+                </button>
+              </div>
+            )}
+          </section>
+
+          <section className="hof-card">
+            <header>
+              <strong>내 기록</strong>
+              {me?.dev || career.devUsed ? <em className="hof-dev">개발자(버그 찾는 중)</em> : null}
+            </header>
+            <p>
+              {career.name} · {TIER_LABEL[tier]} · {career.day}일차
+            </p>
+            <dl>
+              <div>
+                <dt>경기</dt>
+                <dd>{career.games}</dd>
+              </div>
+              <div>
+                <dt>승리</dt>
+                <dd>{career.wins}</dd>
+              </div>
+              <div>
+                <dt>탈삼진</dt>
+                <dd>{career.strikeouts}</dd>
+              </div>
+              <div>
+                <dt>안타</dt>
+                <dd>{career.hits}</dd>
+              </div>
+              <div>
+                <dt>입단</dt>
+                <dd>{career.proDay ? `${career.proDay}일차` : "—"}</dd>
+              </div>
+              <div>
+                <dt>1군</dt>
+                <dd>{career.firstDay ? `${career.firstDay}일차` : "—"}</dd>
+              </div>
+              <div>
+                <dt>MLB</dt>
+                <dd>{career.mlbDay ? `${career.mlbDay}일차` : "—"}</dd>
+              </div>
+            </dl>
+          </section>
+
+          {!hofConfigured() ? (
+            <p className="hof-note">
+              온라인 랭킹은 서버를 연결하면 열려요. 지금은 내 기록만 보여요.
+            </p>
+          ) : (
+            <section>
+              <div className="hof-tabs" role="tablist">
+                {BOARDS.map((b) => (
+                  <button
+                    key={b.id}
+                    role="tab"
+                    aria-selected={b.id === board.id}
+                    className={b.id === board.id ? "on" : undefined}
+                    onClick={() => setBoard(b)}
+                  >
+                    {b.label}
+                  </button>
+                ))}
+              </div>
+              {error ? (
+                <p className="hof-note">랭킹을 불러오지 못했어요. 잠시 뒤 다시 열어 주세요.</p>
+              ) : !rows ? (
+                <p className="hof-note">불러오는 중…</p>
+              ) : rows.length === 0 ? (
+                <p className="hof-note">아직 기록이 없어요. 첫 번째 주인공이 되어 보세요!</p>
+              ) : (
+                <ol className="hof-list">
+                  {rows.map((r, i) => (
+                    <li key={r.player_id} className={r.player_id === mine ? "mine" : undefined}>
+                      <span className={`hof-rank r${i + 1}`}>{i + 1}</span>
+                      <span className="hof-name">
+                        {displayName(r)}
+                        {r.dev && <em className="hof-dev">개발자(버그 찾는 중)</em>}
+                        <small>
+                          {r.team} · {TIER_LABEL[r.tier]} · {r.games}경기
+                        </small>
+                      </span>
+                      <b>{board.value(r)}</b>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </section>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}

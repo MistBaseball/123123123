@@ -1,0 +1,98 @@
+-- Diamond Road 명예의 전당 · Supabase SQL Editor에서 한 번만 실행하세요.
+-- 읽기: 누구나 (비밀값 열은 제외). 쓰기: submit_record 함수로만, 자기 기록의 비밀값을 알 때만.
+-- 비정상 수치는 CHECK 조건으로 거부됩니다.
+
+create table if not exists public.hall_of_fame (
+  player_id uuid primary key,
+  secret_hash text not null,
+  nickname text not null check (char_length(nickname) between 1 and 12),
+  tag text not null check (tag ~ '^[0-9]{4}$'),
+  player_name text not null check (char_length(player_name) between 1 and 16),
+  team text not null default '' check (char_length(team) <= 40),
+  tier text not null check (tier in ('high', 'farm', 'first', 'mlb')),
+  tier_rank smallint not null check (tier_rank between 0 and 3),
+  day integer not null check (day between 1 and 100000),
+  games integer not null check (games between 0 and 100000),
+  wins integer not null check (wins between 0 and games),
+  strikeouts integer not null check (strikeouts between 0 and games * 60),
+  hits integer not null check (hits between 0 and games * 60),
+  runs integer not null check (runs between 0 and games * 60),
+  pro_day integer check (pro_day between 1 and day),
+  first_day integer check (first_day between 1 and day),
+  mlb_day integer check (mlb_day between 1 and day),
+  dev boolean not null default false,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.hall_of_fame enable row level security;
+drop policy if exists "hall of fame is public" on public.hall_of_fame;
+create policy "hall of fame is public" on public.hall_of_fame
+  for select to anon, authenticated using (true);
+
+-- 표를 직접 쓰는 권한은 없음. 읽기는 비밀값(secret_hash)을 뺀 열만.
+revoke all on public.hall_of_fame from anon, authenticated;
+grant select (player_id, nickname, tag, player_name, team, tier, tier_rank, day, games, wins,
+  strikeouts, hits, runs, pro_day, first_day, mlb_day, dev, updated_at)
+  on public.hall_of_fame to anon, authenticated;
+
+create or replace function public.submit_record(rec jsonb, secret text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  t text := rec->>'tier';
+begin
+  if secret is null or char_length(secret) < 16 then
+    raise exception 'bad secret';
+  end if;
+  insert into public.hall_of_fame as cur (
+    player_id, secret_hash, nickname, tag, player_name, team, tier, tier_rank, day, games, wins,
+    strikeouts, hits, runs, pro_day, first_day, mlb_day, dev, updated_at
+  ) values (
+    (rec->>'player_id')::uuid,
+    encode(sha256(convert_to(secret, 'UTF8')), 'hex'),
+    rec->>'nickname',
+    rec->>'tag',
+    rec->>'player_name',
+    coalesce(rec->>'team', ''),
+    t,
+    array_position(array['high', 'farm', 'first', 'mlb'], t) - 1,
+    (rec->>'day')::int,
+    (rec->>'games')::int,
+    (rec->>'wins')::int,
+    (rec->>'strikeouts')::int,
+    (rec->>'hits')::int,
+    (rec->>'runs')::int,
+    (rec->>'pro_day')::int,
+    (rec->>'first_day')::int,
+    (rec->>'mlb_day')::int,
+    coalesce((rec->>'dev')::boolean, false),
+    now()
+  )
+  on conflict (player_id) do update set
+    nickname = excluded.nickname,
+    tag = excluded.tag,
+    player_name = excluded.player_name,
+    team = excluded.team,
+    tier = excluded.tier,
+    tier_rank = excluded.tier_rank,
+    day = excluded.day,
+    games = excluded.games,
+    wins = excluded.wins,
+    strikeouts = excluded.strikeouts,
+    hits = excluded.hits,
+    runs = excluded.runs,
+    pro_day = excluded.pro_day,
+    first_day = excluded.first_day,
+    mlb_day = excluded.mlb_day,
+    -- 개발자 배지는 한 번 붙으면 지워지지 않는다.
+    dev = cur.dev or excluded.dev,
+    updated_at = now()
+  where cur.secret_hash = excluded.secret_hash;
+end;
+$$;
+
+revoke all on function public.submit_record(jsonb, text) from public;
+grant execute on function public.submit_record(jsonb, text) to anon, authenticated;
