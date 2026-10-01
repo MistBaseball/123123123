@@ -144,7 +144,7 @@ export class BaseballField {
       const sprite = new THREE.Sprite(
         new THREE.SpriteMaterial({ transparent: true, depthTest: false, sizeAttenuation: false }),
       );
-      sprite.position.set(0, 2.2, 0);
+      sprite.position.set(0, 2.1, 0);
       sprite.renderOrder = 10;
       sprite.visible = false;
       fig.root.add(sprite);
@@ -1135,7 +1135,7 @@ export class BaseballField {
     };
     // Name tags: position + name of whoever is on defense now (our team or the rival school).
     const fielders = this.engine.fielders,
-      tagH = narrow ? 0.026 : 0.02;
+      tagH = narrow ? 0.018 : 0.013;
     this.tags.forEach((t, i) => {
       const p = fielders[i],
         text = p ? playerLabel(p) : "";
@@ -1148,12 +1148,14 @@ export class BaseballField {
         const img = m.map.image as HTMLCanvasElement;
         t.sprite.userData.aspect = img.width / img.height;
       }
-      // Hide the tag of the player the camera is standing behind.
+      // Only while the ball is in play (not during the pitcher–batter duel), and never for
+      // the player the camera is standing behind.
       t.sprite.visible =
         s.nameTags &&
+        s.mode === "match" &&
+        (s.phase === "inplay" || (s.phase === "result" && !!s.live)) &&
         !(cam === "pitcher" && i === 0) &&
-        !(cam === "catcher" && i === 1) &&
-        s.mode === "match";
+        !(cam === "catcher" && i === 1);
       t.sprite.scale.set(tagH * (t.sprite.userData.aspect ?? 4), tagH, 1);
     });
     this.players.forEach((p, i) => {
