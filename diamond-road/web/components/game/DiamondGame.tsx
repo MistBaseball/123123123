@@ -69,6 +69,11 @@ import {
   swingWindow,
   matchTeams,
   STAGES,
+  STAT_NAMES,
+  STAT_INFO,
+  fastballSpeed,
+  josa,
+  type StatKey,
   type GameState,
   type Mode,
   type Camera,
@@ -89,14 +94,73 @@ const modes: { id: Mode; label: string; sub: string }[] = [
   { id: "bullpen", label: "불펜", sub: "투구 연습" },
   { id: "batting", label: "배팅 케이지", sub: "타격 연습" },
 ];
-const statNames: Record<keyof Career["stats"], string> = {
-  velocity: "구속",
-  control: "제구",
-  movement: "구위",
-  stamina: "체력",
-  contact: "컨택",
-  power: "파워",
+const statNames = STAT_NAMES;
+/** Plain-word strengths and costs of a pitch, read from its data. */
+const pitchTraits = (p: (typeof PITCHES)[number]) =>
+  [
+    p.whiff >= 0.12
+      ? { text: "헛스윙 유도 강함", good: true }
+      : p.whiff >= 0.09 && { text: "헛스윙 유도", good: true },
+    p.soft >= 0.05 && { text: "땅볼·약한 타구 유도", good: true },
+    p.soft > 0 && p.soft < 0.05 && { text: "약한 타구 유도", good: true },
+    p.control >= 1.15 && { text: "제구 어려움", good: false },
+    p.control > 1 && p.control < 1.15 && { text: "제구 약간 어려움", good: false },
+    p.stamina >= 1.1 && { text: "체력 소모 큼", good: false },
+    p.wild >= 1.2 && { text: "폭투 위험", good: false },
+  ].filter(Boolean) as { text: string; good: boolean }[];
+/** A stat's live effect, e.g. "138 km/h", from the same formula the game uses. */
+const statMetric = (k: StatKey, v: number) => {
+  const i = STAT_INFO[k],
+    n = i.metric(v);
+  return `${i.digits ? n.toFixed(i.digits) : Math.round(n)}${i.unit ? " " + i.unit : ""}`;
 };
+/** How much one more point changes the effect, e.g. "+0.4 km/h" or "−0.2 cm". */
+const statStep = (k: StatKey, v: number) => {
+  const i = STAT_INFO[k],
+    d = i.metric(Math.min(99, v + 1)) - i.metric(v),
+    digits = Math.abs(d) < 0.95 ? (Math.abs(d) < 0.095 ? 2 : 1) : 0;
+  return `${d >= 0 ? "+" : "−"}${Math.abs(d).toFixed(digits)}${i.unit ? " " + i.unit : ""}`;
+};
+/**
+ * Training page: what every stat does, with its current value and live in-game effect, so the
+ * player can see what a training session will actually change.
+ */
+function StatGuide({ c }: { c: Career }) {
+  return (
+    <section className="stat-guide" aria-labelledby="stat-guide-title">
+      <header>
+        <h2 id="stat-guide-title">내 능력치와 효과</h2>
+        <p>
+          숫자는 지금 능력치로 게임에서 실제로 쓰이는 값입니다. 훈련으로 1 오를 때마다 오른쪽처럼
+          바뀝니다. 최대 99.
+        </p>
+      </header>
+      <ol>
+        {(Object.keys(STAT_INFO) as StatKey[]).map((k) => {
+          const i = STAT_INFO[k],
+            v = c.stats[k];
+          return (
+            <li key={k} className={`stat-row role-${i.role === "투구" ? "pitch" : "bat"}`}>
+              <div className="stat-name">
+                <span className="stat-role">{i.role}</span>
+                <strong>{statNames[k]}</strong>
+                <b>{v}</b>
+                <Progress value={(v / 99) * 100} aria-label={`${statNames[k]} ${v}`} />
+              </div>
+              <p className="stat-what">{i.what}</p>
+              <div className="stat-effect">
+                <span>{i.label}</span>
+                <strong>{statMetric(k, v)}</strong>
+                <small>{v >= 99 ? "최대치에 도달" : `+1마다 ${statStep(k, v)}`}</small>
+                <em>{i.training} 훈련으로 상승</em>
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+    </section>
+  );
+}
 
 function Field({ engine }: { engine: BaseballEngine }) {
   const host = useRef<HTMLDivElement>(null);
@@ -200,12 +264,24 @@ function CountDots({
     </div>
   );
 }
+/** Scoreboard badge: the team's first letter, in the club color when it is a pro club. */
+function TeamLogo({ name }: { name: string }) {
+  const club = TEAMS.find((t) => t.name === name);
+  return (
+    <span
+      className="team-logo"
+      style={club ? ({ background: club.color, color: "#fff" } as React.CSSProperties) : undefined}
+    >
+      {name.slice(0, 1)}
+    </span>
+  );
+}
 function Scoreboard({ s }: { s: GameState }) {
   const [away, home] = matchTeams(s.career);
   return (
     <div className="scoreboard">
       <div className="board-match">
-        <span className="live-label">{s.mode === "match" ? "SEASON" : "PRACTICE"}</span>
+        <span className="live-label">{s.mode === "match" ? "시즌" : "연습"}</span>
         <span>
           {s.mode === "match"
             ? `${s.maxInnings}이닝 시즌 경기`
@@ -215,10 +291,10 @@ function Scoreboard({ s }: { s: GameState }) {
         </span>
       </div>
       <div className={`team away ${s.half === "top" ? "at-bat" : ""}`}>
-        <span className="team-logo">HB</span>
+        <TeamLogo name={away} />
         <span>
           {away}
-          <small>AWAY</small>
+          <small>원정</small>
         </span>
         <strong>{s.score[0]}</strong>
       </div>
@@ -232,9 +308,9 @@ function Scoreboard({ s }: { s: GameState }) {
         <strong>{s.score[1]}</strong>
         <span>
           {home}
-          <small>HOME</small>
+          <small>홈</small>
         </span>
-        <span className="team-logo">HN</span>
+        <TeamLogo name={home} />
       </div>
       <div className="counts">
         <CountDots label="B" count={s.balls} max={3} color="#9fc9a8" />
@@ -520,7 +596,7 @@ function LineScore({ s }: { s: GameState }) {
         <caption className="sr-only">이닝별 점수</caption>
         <thead>
           <tr>
-            <th>TEAM</th>
+            <th>팀</th>
             {Array.from({ length: s.maxInnings }, (_, i) => (
               <th key={i}>{i + 1}</th>
             ))}
@@ -552,12 +628,13 @@ function LineScore({ s }: { s: GameState }) {
 function CareerView({ engine, s }: { engine: BaseballEngine; s: GameState }) {
   const c = s.career;
   const [name, setName] = useState(c.name);
+  // The save loads after the first render; follow the stored name once it arrives.
+  useEffect(() => setName(c.name), [c.name]);
   return (
     <section className="career-view embedded">
       <div className="section-intro shop-intro">
         <div>
-          <span className="eyebrow">ROAD TO THE PROS</span>
-          <h2>나의 선수 · 진로</h2>
+          <h2>나의 선수와 진로</h2>
           <p>
             {c.stage === "pro"
               ? `${teamOf(c.club)?.name ?? "프로"} 소속 프로 시즌. 하루의 선택이 내일의 선수를 만듭니다.`
@@ -575,39 +652,25 @@ function CareerView({ engine, s }: { engine: BaseballEngine; s: GameState }) {
           <div className="player-card-top">
             <span>
               {c.stage === "pro"
-                ? `${teamOf(c.club)?.city ?? ""} ${teamOf(c.club)?.name ?? ""} · PRO`
-                : "HANEUL HIGH SCHOOL"}
+                ? `${teamOf(c.club)?.city ?? ""} ${teamOf(c.club)?.name ?? ""}`
+                : "하늘고등학교 야구부"}
             </span>
             <Shield size={24} />
           </div>
           <div className="player-card-bottom">
-            <span className="eyebrow">RHP · TWO-WAY PROSPECT</span>
             <h2>{c.name}</h2>
-            <p>우투 · 선발 투수</p>
+            <p>{c.stage === "pro" ? "프로 1년차 우완 투수" : "고교 3학년 우완 투수"}</p>
             <div className="player-rating">
               <strong>{Math.round(Object.values(c.stats).reduce((a, b) => a + b, 0) / 6)}</strong>
-              <span>
-                OVERALL
-                <br />
-                종합 능력
-              </span>
+              <span>종합 능력</span>
             </div>
           </div>
         </article>
         <div className="career-main">
           <article className="panel">
             <div className="panel-heading">
-              <h2>선수 능력</h2>
+              <h2>선수 정보</h2>
               <span>보유 {c.xp} XP</span>
-            </div>
-            <div className="stat-grid">
-              {Object.entries(c.stats).map(([key, val]) => (
-                <div className="stat" key={key}>
-                  <span>{statNames[key as keyof Career["stats"]]}</span>
-                  <b>{val}</b>
-                  <Progress value={val} aria-label={statNames[key as keyof Career["stats"]]} />
-                </div>
-              ))}
             </div>
             <div className="known-pitches">
               <span>보유 구종</span>
@@ -690,9 +753,18 @@ function CareerView({ engine, s }: { engine: BaseballEngine; s: GameState }) {
   );
 }
 
-const trainings = [
+const trainings: {
+  id: string;
+  stat?: StatKey;
+  icon: typeof Target;
+  name: string;
+  desc: string;
+  gain: string;
+  cost: number;
+}[] = [
   {
     id: "bullpen",
+    stat: "control" as StatKey,
     icon: Target,
     name: "불펜 피칭",
     desc: "모서리를 찌르는 한 구",
@@ -701,6 +773,7 @@ const trainings = [
   },
   {
     id: "weights",
+    stat: "velocity" as StatKey,
     icon: Dumbbell,
     name: "하체·코어",
     desc: "강한 하체에서 나오는 구속",
@@ -709,6 +782,7 @@ const trainings = [
   },
   {
     id: "breaking",
+    stat: "movement" as StatKey,
     icon: Wind,
     name: "변화구 그립",
     desc: "회전으로 만드는 다른 궤적",
@@ -717,14 +791,16 @@ const trainings = [
   },
   {
     id: "running",
+    stat: "stamina" as StatKey,
     icon: Activity,
     name: "러닝",
     desc: "마지막 이닝까지 흔들림 없이",
-    gain: "체력 능력 +0~2",
+    gain: "지구력 +0~2",
     cost: 16,
   },
   {
     id: "batting",
+    stat: "contact" as StatKey,
     icon: Crosshair,
     name: "타격 훈련",
     desc: "공을 끝까지 보고 정확하게",
@@ -733,6 +809,7 @@ const trainings = [
   },
   {
     id: "power",
+    stat: "power" as StatKey,
     icon: Zap,
     name: "장타 훈련",
     desc: "배트에 싣는 힘",
@@ -859,8 +936,10 @@ function LifeView({
           </strong>
         </div>
       </div>
+      <StatGuide c={c} />
+      <h2 className="training-title">오늘의 훈련</h2>
       <div className="training-grid">
-        {trainings.map((t, i) => (
+        {trainings.map((t) => (
           <button
             className={`training-card ${t.id === "rest" ? "rest-card" : ""}`}
             key={t.id}
@@ -874,19 +953,35 @@ function LifeView({
               r.ok ? toast.success(r.message) : toast.error(r.message);
             }}
           >
-            <span className="training-index">{String(i + 1).padStart(2, "0")}</span>
-            <t.icon size={29} />
+            <t.icon size={26} />
             <h2>{t.name}</h2>
-            <p>
-              {t.desc}
-              {TRAINING_GAMES[t.id] && (
-                <span className="mg-tag">▶ 미니게임 · {TRAINING_GAMES[t.id].title}</span>
-              )}
-            </p>
+            <p>{t.desc}</p>
+            {t.stat ? (
+              <dl className="training-stat">
+                <dt>
+                  {statNames[t.stat]} <b>{c.stats[t.stat]}</b>
+                </dt>
+                <dd>
+                  {STAT_INFO[t.stat].label} {statMetric(t.stat, c.stats[t.stat])}
+                </dd>
+              </dl>
+            ) : (
+              <dl className="training-stat">
+                <dt>{t.id === "rest" ? "현재 체력" : "컨디션"}</dt>
+                <dd>
+                  {t.id === "rest"
+                    ? `${Math.round(c.energy)} / 100 · 낮으면 구속·제구가 떨어지고 폭투가 늘어요`
+                    : `${c.form} / 100 · 낮으면 구속·제구·타구 질이 떨어져요`}
+                </dd>
+              </dl>
+            )}
+            {TRAINING_GAMES[t.id] && (
+              <span className="mg-tag">미니게임 · {TRAINING_GAMES[t.id].title}</span>
+            )}
             <div>
               <b>{t.gain}</b>
               <span>
-                {t.cost > 0 ? `체력 −${t.cost}` : "회복"}
+                {t.cost > 0 ? `체력 −${t.cost}` : "체력 회복"}
                 <ArrowUpRight size={15} />
               </span>
             </div>
@@ -916,7 +1011,6 @@ function LifeView({
       </div>
       <div className="section-intro shop-intro">
         <div>
-          <span className="eyebrow">PITCH SHOP</span>
           <h2>구종 상점</h2>
           <p>
             경기에서 모은 경험치로 새 구종을 익힙니다. 익힌 구종은 투구 플랜에서 바로 선택됩니다.
@@ -943,9 +1037,18 @@ function LifeView({
               </div>
               <p>{p.desc}</p>
               <span className="shop-meta">
-                구속 {p.delta ? p.delta : "±0"} km/h · 휨 {Math.round(Math.hypot(m.x, m.y) * 100)}{" "}
-                cm
+                {p.delta ? `포심보다 ${-p.delta} km/h 느림` : "가장 빠른 공"} · 휨{" "}
+                {Math.round(Math.hypot(m.x, m.y) * 100)} cm
               </span>
+              {pitchTraits(p).length > 0 && (
+                <span className="shop-traits">
+                  {pitchTraits(p).map((t) => (
+                    <i key={t.text} className={t.good ? "good" : "bad"}>
+                      {t.text}
+                    </i>
+                  ))}
+                </span>
+              )}
               <button
                 className={owned ? "subtle-button" : "primary-button"}
                 disabled={owned || c.xp < p.cost}
@@ -972,10 +1075,9 @@ function LifeView({
       <div className="training-note">
         <BookOpen size={18} />
         <p>
-          훈련·수업·휴식은 행동력을 1씩 씁니다. 훈련은 미니게임 결과(아쉬움·좋음·완벽)에 따라
-          능력치가 +0~+2 오르고, 다음 투구와 타격부터 반영됩니다. 낮은 체력은 구속과 제구에, 낮은
-          컨디션은 집중력에 영향을 줍니다. 컨택이 오르면 타격 때 보이는 공의 도착 범위가 작아집니다.
-          경기를 마치면 밤사이 체력이 25 회복되고 행동력이 다시 {DAY_ACTIONS}이 됩니다.
+          훈련·수업·휴식은 행동력을 1씩 씁니다. 미니게임 결과(아쉬움·좋음·완벽)에 따라 능력치가 0~2
+          오르고, 바로 다음 투구와 타석부터 반영됩니다. 경기를 마치면 밤사이 체력이 25 회복되고
+          행동력이 다시 {DAY_ACTIONS}이 됩니다.
         </p>
       </div>
       <CareerView engine={engine} s={s} />
@@ -1073,7 +1175,7 @@ function CreationDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
         ) : step === 0 ? (
           <>
             <DialogHeader>
-              <DialogTitle>DIAMOND ROAD · 프롤로그</DialogTitle>
+              <DialogTitle>프롤로그</DialogTitle>
               <DialogDescription>고교 3학년, 마지막 가을.</DialogDescription>
             </DialogHeader>
             <div className="story">
@@ -1136,7 +1238,12 @@ function CreationDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
             <div className="creation-stats">
               {statKeys.map((k) => (
                 <div key={k} className="creation-stat">
-                  <span>{statNames[k]}</span>
+                  <span>
+                    {statNames[k]}
+                    <small>
+                      {STAT_INFO[k].label} {statMetric(k, stats[k])}
+                    </small>
+                  </span>
                   <button aria-label={`${statNames[k]} 내리기`} onClick={() => bump(k, -5)}>
                     −
                   </button>
@@ -1145,12 +1252,17 @@ function CreationDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
                     +
                   </button>
                   <Progress value={((stats[k] - STAT_BASE) / (STAT_CAP - STAT_BASE)) * 100} />
+                  <p>{STAT_INFO[k].what}</p>
                 </div>
               ))}
             </div>
             <p className={`creation-left ${left === 0 ? "done" : ""}`}>
               남은 포인트 <b>{left}</b>
-              {left > 0 ? " · 모두 분배해야 등록할 수 있습니다" : " · 준비 완료"}
+              {left > 0
+                ? " · 모두 분배해야 등록할 수 있습니다"
+                : !name.trim()
+                  ? " · 선수 이름을 입력하면 등록할 수 있습니다"
+                  : " · 준비 완료"}
             </p>
             <button
               className="primary-button"
@@ -1355,7 +1467,7 @@ function EndingDialog({
             {` ${t.scout}`} 스카우트를 의식하며 던진 승부구들.
           </p>
           <p>
-            입단식 날, {c.name}은(는) {t.name}의 유니폼을 받아 들었다. 등번호 18. &ldquo;
+            입단식 날, {josa(c.name, "은는")} {t.name}의 유니폼을 받아 들었다. 등번호 18. &ldquo;
             {t.motto}.&rdquo; 구단의 슬로건이 가슴에 새겨진다.
           </p>
           <p>
@@ -1414,10 +1526,11 @@ function BlessingDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
     const id = engine.receiveBlessing();
     if (!id) return;
     // A long reel of random pitches that stops on the granted one.
-    const items = Array.from(
-      { length: 34 },
-      () => BLESSINGS[Math.floor(Math.random() * BLESSINGS.length)].id as string,
-    );
+    const items = Array.from({ length: 34 }, () => {
+      // The reel shows pitches as often as they can actually come up.
+      let r = Math.random() * BLESSINGS.reduce((a, b) => a + b.weight, 0);
+      return (BLESSINGS.find((b) => (r -= b.weight) < 0) ?? BLESSINGS[0]).id as string;
+    });
     items[30] = id;
     setReel(items);
     setOffset(0);
@@ -1439,8 +1552,8 @@ function BlessingDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
             <Sparkles size={18} /> 야구의 신이 내리는 은총
           </DialogTitle>
           <DialogDescription>
-            고교 마지막 시즌의 첫날. 마운드에 선 당신에게 신이 하나의 구종을 선물합니다. 어떤 공이
-            손끝에 깃들지는 하늘만이 압니다.
+            고교 마지막 시즌의 첫날. 마운드에 선 당신에게 신이 구종 하나를 선물합니다. 아홉 구종
+            가운데 무엇이 손끝에 깃들지는 하늘만이 압니다.
           </DialogDescription>
         </DialogHeader>
         <div className={`blessing-reel ${phase}`}>
@@ -1480,7 +1593,7 @@ function BlessingDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
         {phase === "done" && won ? (
           <div className="blessing-result">
             <span className={`tier-badge tier-${tier}`}>{tier}</span>
-            <h3>{won.name}이(가) 손끝에 깃들었다</h3>
+            <h3>{josa(won.name, "이가")} 손끝에 깃들었다</h3>
             <p>{won.desc} · 포심과 함께 바로 던질 수 있습니다.</p>
             <button className="primary-button" onClick={() => setPhase("idle")}>
               은총을 받고 훈련 시작 <ChevronRight size={16} />
@@ -1489,11 +1602,21 @@ function BlessingDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
         ) : (
           <div className="blessing-result">
             <div className="blessing-odds">
-              {BLESSINGS.map((b) => (
-                <span key={b.id} className={`tier-${b.tier}`}>
-                  {PITCHES.find((p) => p.id === b.id)!.name} {b.weight}%
-                </span>
-              ))}
+              {[...new Set(BLESSINGS.map((b) => b.tier))].map((tier) => {
+                const list = BLESSINGS.filter((b) => b.tier === tier);
+                return (
+                  <div key={tier} className={`odds-tier tier-${tier}`}>
+                    <b>
+                      {tier} {list.reduce((a, b) => a + b.weight, 0)}%
+                    </b>
+                    {list.map((b) => (
+                      <span key={b.id}>
+                        {PITCHES.find((p) => p.id === b.id)!.name} <em>{b.weight}%</em>
+                      </span>
+                    ))}
+                  </div>
+                );
+              })}
             </div>
             <button className="primary-button" disabled={phase === "spinning"} onClick={spin}>
               <Sparkles size={16} />
@@ -1779,7 +1902,7 @@ export default function DiamondGame() {
         </button>
         <div className="header-actions">
           <span className="prototype-tag">
-            PLAYABLE PROTOTYPE <b>04</b>
+            플레이 테스트 <b>05</b>
           </span>
           <button className="icon-button" onClick={() => setHelp(true)} aria-label="조작법">
             <CircleHelp size={20} />
@@ -1816,9 +1939,7 @@ export default function DiamondGame() {
               <Field engine={engine} />
               <div className="field-top">
                 <div className="chip-stack">
-                  <span className="inning-chip">
-                    {batting ? "OFFENSE · 타격" : "DEFENSE · 투구"}
-                  </span>
+                  <span className="inning-chip">{batting ? "공격 · 타격" : "수비 · 투구"}</span>
                   {s.mode === "match" && (
                     <span className="xp-chip">
                       DAY {s.career.day} · 경기 XP +{s.matchXp}
@@ -1904,7 +2025,7 @@ export default function DiamondGame() {
                 <div className="pitcher-badge">
                   <span className="uniform-number">18</span>
                   <div>
-                    <small>{batting ? "AT BAT" : "ON THE MOUND"}</small>
+                    <small>{batting ? "타석" : "마운드"}</small>
                     <strong>{batting ? engine.batter.name : s.career.name}</strong>
                     <span>
                       {batting
@@ -1976,7 +2097,7 @@ export default function DiamondGame() {
             <div className="camera-row">
               <span>
                 <CameraIcon size={15} />
-                CAMERA
+                카메라
               </span>
               <div>
                 {cameras.map((c, i) => (
@@ -1995,7 +2116,7 @@ export default function DiamondGame() {
             <div className="below-field">
               <LineScore s={s} />
               <div className="match-report">
-                <span className="eyebrow">LAST PLAY</span>
+                <span className="eyebrow">직전 플레이</span>
                 <p>{s.log[0]}</p>
                 <span>
                   투구 {s.pitchCount[1]} · 스트라이크{" "}
@@ -2043,34 +2164,40 @@ export default function DiamondGame() {
                   <h3>
                     <i>1</i> 구종
                     <small>
-                      키 1–{PITCHES.length} · 보유 {s.career.pitches.length}/{PITCHES.length}
+                      숫자키로 선택 · 보유 {s.career.pitches.length}/{PITCHES.length}
                     </small>
                   </h3>
                   <div className="pp-pitches">
-                    {PITCHES.map((p) => {
-                      const owned = s.career.pitches.includes(p.id);
-                      return (
-                        <button
-                          key={p.id}
-                          className={`${s.selected === p.id ? "selected" : ""} ${owned ? "" : "locked"}`}
-                          disabled={s.phase !== "ready" || !owned}
-                          title={owned ? p.desc : `구종 상점에서 ${p.cost} XP로 습득`}
-                          onClick={() => engine.selectPitch(p.id)}
-                          style={{ "--pitch-color": p.color } as React.CSSProperties}
-                        >
-                          <span className="pp-pitch-name">
-                            {owned ? <kbd>{p.key}</kbd> : <Lock size={11} />}
-                            {p.name}
-                          </span>
-                          <small>
-                            {owned
-                              ? `${Math.round(110 + s.career.stats.velocity * 0.43 + p.delta - (100 - s.effort) * 0.09)} km/h`
-                              : `${p.cost} XP`}
-                          </small>
-                        </button>
-                      );
-                    })}
+                    {PITCHES.filter((p) => s.career.pitches.includes(p.id)).map((p) => (
+                      <button
+                        key={p.id}
+                        className={s.selected === p.id ? "selected" : ""}
+                        disabled={s.phase !== "ready"}
+                        title={p.desc}
+                        onClick={() => engine.selectPitch(p.id)}
+                        style={{ "--pitch-color": p.color } as React.CSSProperties}
+                      >
+                        <span className="pp-pitch-name">
+                          <kbd>{p.key}</kbd>
+                          {p.name}
+                        </span>
+                        <small>
+                          {Math.round(
+                            fastballSpeed(s.career.stats.velocity) +
+                              p.delta -
+                              (100 - s.effort) * 0.09,
+                          )}{" "}
+                          km/h
+                        </small>
+                      </button>
+                    ))}
                   </div>
+                  {s.career.pitches.length < PITCHES.length && (
+                    <p className="pp-more">
+                      남은 {PITCHES.length - s.career.pitches.length}개 구종은 하루 일정의 구종
+                      상점에서 경험치로 익힙니다.
+                    </p>
+                  )}
                   <PitchMovementGuide s={s} />
                 </div>
                 <div className="pp-step">
@@ -2242,7 +2369,7 @@ export default function DiamondGame() {
       )}
       <footer className="app-footer">
         <span>
-          DIAMOND ROAD <b>·</b> WEB PLAYTEST 04
+          DIAMOND ROAD <b>·</b> 웹 플레이 테스트 05
         </span>
         <span>선수 기록 자동 저장 · 경기 진행은 현재 세션에 유지</span>
       </footer>
@@ -2255,35 +2382,65 @@ export default function DiamondGame() {
             </DialogDescription>
           </DialogHeader>
           <div className="help-steps">
-            <p>
-              <b>01 투구</b> 구종을 고르고 오른쪽 조준판을 클릭하세요. 선택한 목표에 제구·피로도
-              오차가 적용됩니다.
-            </p>
-            <p>
-              <b>02 타격</b> 3아웃 후 공격 이닝입니다. 투구가 시작되면 흐릿한 빛이 공이 올 대략적인
-              범위를 알려 줍니다(공은 그 안으로 옵니다). 노란 점선 원은 배트가 닿는 범위라서 빛보다
-              작습니다. 공의 궤적을 끝까지 보고 조준한 뒤 위쪽 게이지의 금색 구간에서 클릭하세요.
-              컨택이 오르면 빛이 작아지고 배트 범위가 넓어집니다.
-            </p>
-            <p>
-              <b>03 주루·수비</b> 주자는 홈·1루·2루·3루 순서로 달립니다. 플라이 포구는 즉시 아웃.
-              땅볼은 공과 주자의 도착 순서로 포스·태그 아웃을 판정합니다. 타자와 주자는 공이 살아
-              있는 동안 계속 달리고, 뜬공이 잡히면 주자는 원래 베이스로 돌아갑니다(공이 먼저 가면
-              아웃). 공격 중 1루 주자가 있으면 E로 도루 사인 → 투구 시작과 함께 출발 → 포수 2루
-              송구와 도착 순서로 판정. 수비 중에는 F 또는 견제 버튼으로 견제구. 몸에 맞는 공은 1루
-              진루, 지친 투수는 폭투가 늘어납니다. 설정에서 자동 수비를 끄면 WASD로 움직이고 1–4로
-              송구 베이스를 정합니다.
-            </p>
-            <p>
-              <b>04 하루 일정</b> 처음에는 꿈의 구단을 고릅니다. 그 구단 스카우트가 모든 시즌 경기를
-              지켜보고, 경기가 끝날 때마다 평가가 오르며 100점이면 입단 제의를 받습니다. 처음에는
-              이름과 능력치를 정하고, 야구의 신이 구종 하나를 룰렛으로 내려 줍니다. 하루는 아침 →
-              오후 → 밤으로 흐릅니다. 아침에는 행동력 5로 훈련 미니게임·수업 퀴즈·휴식을 하고(결과에
-              따라 +0~+2), 오후에는 시즌 경기를 치릅니다. 경기가 끝나면 하루를 마무리하고 다음 날
-              아침이 됩니다. 경기 XP로 구종 상점에서 새 구종을 삽니다. 입단 제의를 받으면 입단
-              스토리 뒤에 같은 선수로 프로 무대가 열리고, 상대가 강해지며 새 목표(1군 신뢰도)가
-              생깁니다.
-            </p>
+            <section>
+              <h3>투구</h3>
+              <ul>
+                <li>
+                  숫자키나 버튼으로 구종을 고르고, 조준판이나 스트라이크 존을 클릭해 던집니다.
+                </li>
+                <li>노린 곳에서 제구 오차만큼 벗어납니다. 체력·컨디션이 낮으면 더 벗어납니다.</li>
+                <li>
+                  주자가 있으면 <kbd>F</kbd> 또는 견제 버튼으로 견제구를 던질 수 있습니다.
+                </li>
+                <li>지친 투수는 폭투가 늘어납니다. 타자 몸에 맞으면 사구로 1루에 보냅니다.</li>
+              </ul>
+            </section>
+            <section>
+              <h3>타격</h3>
+              <ul>
+                <li>상대가 3아웃을 당하면 우리 공격입니다.</li>
+                <li>
+                  흐릿한 빛은 공이 올 범위(공은 항상 그 안), 노란 점선 원은 배트가 닿는 범위입니다.
+                </li>
+                <li>공을 끝까지 보고 조준한 뒤, 위쪽 게이지의 밝은 금색 구간에서 클릭합니다.</li>
+                <li>
+                  1루에 주자가 있으면 <kbd>E</kbd>로 도루 사인. 투구와 함께 뛰고 포수 송구와 도착
+                  순서로 판정됩니다.
+                </li>
+              </ul>
+            </section>
+            <section>
+              <h3>주루·수비</h3>
+              <ul>
+                <li>타자와 주자는 공이 살아 있는 동안 계속 달립니다.</li>
+                <li>
+                  뜬공이 떨어지기 전에 잡히면 타자 아웃, 주자는 원래 베이스로 돌아갑니다. 공이 먼저
+                  가면 아웃입니다.
+                </li>
+                <li>땅볼은 공과 주자 중 누가 먼저 베이스에 닿는지로 포스·태그 아웃을 정합니다.</li>
+                <li>
+                  설정에서 자동 수비를 끄면 <kbd>WASD</kbd>로 수비수를 움직이고 <kbd>1</kbd>–
+                  <kbd>4</kbd>로 송구 베이스를 고릅니다.
+                </li>
+              </ul>
+            </section>
+            <section>
+              <h3>하루 일정과 성장</h3>
+              <ul>
+                <li>
+                  아침에는 행동력 5로 훈련·수업·휴식, 오후에는 시즌 경기, 밤이 지나면 다음 날.
+                </li>
+                <li>
+                  훈련 미니게임 결과에 따라 능력치가 0~2 오릅니다. 능력치마다 하는 일은 하루 일정의
+                  &lsquo;내 능력치와 효과&rsquo;에 나옵니다.
+                </li>
+                <li>경기에서 모은 경험치로 구종 상점에서 새 구종을 익힙니다.</li>
+                <li>
+                  꿈의 구단 스카우트 평가가 100이 되면 입단하고, 같은 선수로 더 어려운 프로 무대가
+                  열립니다(새 목표: 1군 신뢰도).
+                </li>
+              </ul>
+            </section>
           </div>
           <details className="prototype-notes">
             <summary>이번 웹 점검판의 범위</summary>

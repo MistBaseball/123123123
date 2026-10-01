@@ -24,6 +24,10 @@ import {
   hitsBatter,
   runnerState,
   pitchData,
+  STAT_INFO,
+  STAT_NAMES,
+  fastballSpeed,
+  pitchEnergyCost,
 } from "../lib/game/engine.ts";
 
 let passed = 0;
@@ -1201,5 +1205,55 @@ check("Season games with steals, pickoffs and tired arms still end in a valid st
     assert.equal(l0, g.state.score[0]);
     assert.equal(l1, g.state.score[1]);
   }
+});
+
+check("Stat guide numbers come from the game's own formulas; movement changes AI batters", () => {
+  assert.equal(STAT_NAMES.stamina, "지구력", "never confused with the energy bar (체력)");
+  for (const [k, info] of Object.entries(STAT_INFO)) {
+    const lo = info.metric(50),
+      hi = info.metric(80);
+    assert(Number.isFinite(lo) && Number.isFinite(hi), k);
+    assert(info.lowerIsBetter ? hi < lo : hi > lo, `${k}: a higher rating must help`);
+  }
+  // Velocity: an unhurried fastball at 100% effort equals the guide's number.
+  const c = newCareer();
+  const g = new BaseballEngine(c, () => 0.5);
+  g.state.effort = 100;
+  g.state.career.form = 100;
+  g.throwAt(0, 0.95);
+  // rng 0.5 gives the speed noise gaussian = sqrt(-2 ln 0.5) * cos(pi), times 0.9 km/h.
+  const noise = Math.sqrt(-2 * Math.log(0.5)) * Math.cos(Math.PI) * 0.9;
+  assert(Math.abs(g.state.flight.speed - fastballSpeed(c.stats.velocity) - noise) < 1e-9);
+  // Stamina: one fastball costs exactly the guide's per-pitch cost.
+  const e = new BaseballEngine(newCareer(), () => 0.5);
+  e.throwAt(0, 0.95);
+  while (e.state.phase === "windup") e.tick(1 / 60);
+  assert(Math.abs(100 - e.state.energy - pitchEnergyCost(90, e.state.career.stats.stamina)) < 1e-9);
+  // Movement: same pitches and seeds, better movement → fewer balls put in play by AI batters.
+  const inPlay = (movement) => {
+    let n = 0;
+    for (let i = 1; i <= 500; i++) {
+      const career = allPitches();
+      career.stats.movement = movement;
+      const m = new BaseballEngine(career, seed(i));
+      m.selectPitch("slider");
+      m.throwAt(0, 0.95);
+      while (!["result", "inplay"].includes(m.state.phase)) m.tick(1 / 60);
+      if (m.state.phase === "inplay" || m.state.lastOutcome === "Foul") n++;
+    }
+    return n;
+  };
+  assert(inPlay(85) < inPlay(45), "a sharper slider is harder to hit");
+  // Every learnable pitch can also come from the starting roulette.
+  for (const id of ["twoseam", "sinker", "forkball", "sweeper"])
+    assert(
+      BLESSINGS.some((b) => b.id === id),
+      id,
+    );
+  assert.equal(
+    BLESSINGS.reduce((a, b) => a + b.weight, 0),
+    100,
+    "odds add up to 100%",
+  );
 });
 console.log(`\n${passed} gameplay checks passed.`);

@@ -1,5 +1,6 @@
 import { createRoot } from "react-dom/client";
 import DiamondGame from "../components/game/DiamondGame";
+import "../vendor/pretendard/pretendardvariable-dynamic-subset.css";
 import "../app/globals.css";
 
 const root = document.getElementById("root");

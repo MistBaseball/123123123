@@ -368,15 +368,109 @@ export const batReach = (contact: number, style: "contact" | "power" | "bunt") =
   (0.12 + clamp(contact, 0, 99) * 0.001) * (style === "power" ? 0.75 : style === "bunt" ? 1.3 : 1);
 /** Actions (training, rest, study) available each day before the day's match. */
 export const DAY_ACTIONS = 5;
-export const STAT_NAMES: Record<keyof Career["stats"], string> = {
+export type StatKey = keyof Career["stats"];
+export const STAT_NAMES: Record<StatKey, string> = {
   velocity: "구속",
   control: "제구",
   movement: "구위",
-  stamina: "체력",
+  // "지구력" so it is never confused with the current energy bar (체력).
+  stamina: "지구력",
   contact: "컨택",
   power: "파워",
 };
-const statLabel = (k: keyof Career["stats"]) => STAT_NAMES[k];
+/** Player fastball speed (km/h) at 100% effort, before fatigue and form. */
+export const fastballSpeed = (velocity: number) => 110 + velocity * 0.43;
+/** Energy one pitch costs at this effort (%) and stamina rating (before the pitch's own cost). */
+export const pitchEnergyCost = (effort: number, stamina: number) =>
+  (0.38 + (effort - 70) * 0.012) * (1.3 - stamina / 180);
+/** Batted-ball carry multiplier from the batter's power rating. */
+export const carryScale = (power: number) => 0.78 + power / 240;
+/** Batted balls that travel farther than this (m) are home runs. */
+export const HOME_RUN_DISTANCE = 104;
+/**
+ * How sharply the pitcher's pitches bite against AI batters (1 at a movement of 65): scales each
+ * pitch's chase / whiff / weak-contact data and slightly lowers contact on every pitch.
+ */
+export const movementBite = (movement: number) => clamp(movement, 0, 99) / 65;
+/**
+ * What each stat does, in plain words, with a live number from the same formulas the game
+ * uses. `metric` turns a rating into that number (lower is better when `lowerIsBetter`).
+ */
+export const STAT_INFO: Record<
+  StatKey,
+  {
+    role: "투구" | "타격";
+    what: string;
+    label: string;
+    unit: string;
+    digits: number;
+    lowerIsBetter?: boolean;
+    metric: (v: number) => number;
+    /** Training card that raises it, as in "<training> 훈련으로 상승". */
+    training: string;
+  }
+> = {
+  velocity: {
+    role: "투구",
+    what: "공의 빠르기. 빠를수록 타자가 늦게 반응해 헛스윙과 빗맞은 타구가 늘어요.",
+    label: "전력 포심",
+    unit: "km/h",
+    digits: 0,
+    metric: fastballSpeed,
+    training: "하체·코어",
+  },
+  control: {
+    role: "투구",
+    what: "던진 공이 노린 지점에 얼마나 가깝게 가는지. 낮으면 볼넷·사구·한가운데 실투가 늘어요.",
+    label: "목표 오차",
+    unit: "cm",
+    digits: 1,
+    lowerIsBetter: true,
+    metric: (v) => controlSpread(v, 100, 90, 100) * 100,
+    training: "불펜 피칭",
+  },
+  movement: {
+    role: "투구",
+    what: "변화구가 휘는 크기와 공의 위력. 높을수록 타자가 헛스윙하고 약하게 맞혀요.",
+    label: "슬라이더 휨",
+    unit: "cm",
+    digits: 0,
+    metric: (v) => {
+      const m = pitchMovement("slider", v);
+      return Math.hypot(m.x, m.y) * 100;
+    },
+    training: "변화구 그립",
+  },
+  stamina: {
+    role: "투구",
+    what: "던질 때 체력이 줄어드는 속도. 높을수록 경기 후반까지 구속과 제구가 유지되고 폭투가 줄어요.",
+    label: "100구당 체력 소모",
+    unit: "",
+    digits: 0,
+    lowerIsBetter: true,
+    metric: (v) => pitchEnergyCost(90, v) * 100,
+    training: "러닝",
+  },
+  contact: {
+    role: "타격",
+    what: "타석에서 공을 맞히는 능력. 배트 판정이 넓어지고 공이 올 범위가 좁게 보여요.",
+    label: "배트 판정 반경",
+    unit: "cm",
+    digits: 1,
+    metric: (v) => batReach(v, "contact") * 100,
+    training: "타격",
+  },
+  power: {
+    role: "타격",
+    what: `타구를 멀리 보내는 힘. ${HOME_RUN_DISTANCE} m를 넘기면 홈런이에요.`,
+    label: "정타 비거리",
+    unit: "m",
+    digits: 0,
+    metric: (v) => (8 + 0.81 * 115) * carryScale(v),
+    training: "장타",
+  },
+};
+const statLabel = (k: StatKey) => STAT_NAMES[k];
 /** Fictional pro clubs loosely inspired by the KBO (names deliberately changed). */
 export const TEAMS: {
   id: string;
@@ -481,12 +575,22 @@ export const STAT_POINTS = 100;
 export const STAT_CAP = 80;
 /** Starting-pitch roulette: rarer pitches have smaller weights. */
 export const BLESSINGS: { id: PitchId; weight: number; tier: string }[] = [
-  { id: "slider", weight: 30, tier: "축복" },
-  { id: "changeup", weight: 28, tier: "축복" },
-  { id: "curve", weight: 20, tier: "은총" },
-  { id: "cutter", weight: 14, tier: "은총" },
-  { id: "splitter", weight: 8, tier: "신탁" },
+  { id: "slider", weight: 20, tier: "축복" },
+  { id: "changeup", weight: 18, tier: "축복" },
+  { id: "twoseam", weight: 16, tier: "축복" },
+  { id: "curve", weight: 12, tier: "은총" },
+  { id: "cutter", weight: 10, tier: "은총" },
+  { id: "sinker", weight: 9, tier: "은총" },
+  { id: "splitter", weight: 6, tier: "신탁" },
+  { id: "sweeper", weight: 5, tier: "신탁" },
+  { id: "forkball", weight: 4, tier: "신탁" },
 ];
+/** Word plus the Korean particle that fits its last syllable, e.g. josa("커브", "을를") = "커브를". */
+export const josa = (word: string, pair: "이가" | "을를" | "은는" | "과와") => {
+  const code = word.charCodeAt(word.length - 1) - 0xac00,
+    batchim = code >= 0 && code <= 11171 && code % 28 !== 0;
+  return word + (batchim ? pair[0] : pair[1]);
+};
 export const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
 export const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 export const distance = (a: Vec, b: Vec) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
@@ -1092,7 +1196,7 @@ export class BaseballEngine {
     const fatigue = ai ? Math.max(0, s.pitchCount[0] - 25) * 0.18 : 100 - s.energy;
     const formPenalty = ai ? 0 : (100 - s.career.form) * 0.02;
     const speed = clamp(
-      (ai ? stage.aiVelocity : 110 + stats.velocity * 0.43) +
+      (ai ? stage.aiVelocity : fastballSpeed(stats.velocity)) +
         pitch.delta -
         fatigue * 0.065 -
         (100 - s.effort) * 0.09 -
@@ -1212,8 +1316,7 @@ export class BaseballEngine {
         if (!this.batting && s.mode === "match")
           s.energy = clamp(
             s.energy -
-              (0.38 + (s.effort - 70) * 0.012) *
-                (1.3 - s.career.stats.stamina / 180) *
+              pitchEnergyCost(s.effort, s.career.stats.stamina) *
                 pitchData(s.flight?.pitch ?? "fastball").stamina,
             0,
             100,
@@ -1356,8 +1459,10 @@ export class BaseballEngine {
     } else {
       const b = this.batter,
         eye = b.eye + stage.batterEye,
+        // The pitcher's movement rating sharpens each pitch's bite (1 = rating 65).
+        bite = movementBite(f.movement),
         edge = Math.max(Math.abs(f.target.x) / 0.25, Math.abs(f.target.y - 0.95) / 0.4),
-        chase = clamp(0.46 - eye * 0.004 + data.chase, 0.06, 0.45);
+        chase = clamp(0.46 - eye * 0.004 + data.chase * bite, 0.06, 0.45);
       if (hbp) {
         this.hitByPitch();
         return;
@@ -1370,7 +1475,8 @@ export class BaseballEngine {
               b.contact * 0.005 -
               (f.speed - 120) * 0.0035 +
               (100 - s.energy) * 0.002 -
-              data.whiff +
+              data.whiff * bite -
+              (bite - 1) * 0.08 +
               stage.batterContact +
               difficulty,
             0.2,
@@ -1382,7 +1488,7 @@ export class BaseballEngine {
               this.rng() * 0.75 +
               b.power * 0.001 -
               Math.max(0, edge - 0.65) * 0.25 -
-              data.soft,
+              data.soft * bite,
             0.05,
             1,
           );
@@ -1513,7 +1619,7 @@ export class BaseballEngine {
     if (this.batting && s.swingStyle === "power") q = clamp(q + 0.13, 0, 1.15);
     if (this.batting && s.swingStyle === "bunt") q = 0.18;
     const angle = clamp(timing * 4 + (this.rng() - 0.5) * 1.05, -0.76, 0.76),
-      range = (8 + q * q * 115) * (0.78 + this.batter.power / 240),
+      range = (8 + q * q * 115) * carryScale(this.batter.power),
       land = V(Math.sin(angle) * range, 0.12, Math.cos(angle) * range);
     let fielder = 2,
       best = Infinity;
@@ -1525,7 +1631,7 @@ export class BaseballEngine {
         fielder = i;
       }
     });
-    const hr = range > 104,
+    const hr = range > HOME_RUN_DISTANCE,
       bases = hr ? 4 : range > 78 ? 3 : range > 46 ? 2 : 1,
       ground = q <= 0.42;
     const lineDrive = !ground && !hr && this.rng() < 0.4;
@@ -2616,7 +2722,10 @@ export class BaseballEngine {
     const p = PITCHES.find((p) => p.id === pick.id)!;
     c.pitches = [...c.pitches, pick.id];
     c.blessing = pick.id;
-    c.history = [`신이 내린 ${pick.tier} · ${p.name}을(를) 손에 넣었다`, ...c.history].slice(0, 12);
+    c.history = [
+      `신이 내린 ${pick.tier} · ${josa(p.name, "을를")} 손에 넣었다`,
+      ...c.history,
+    ].slice(0, 12);
     this.persist();
     this.emit();
     return pick.id;
@@ -2669,7 +2778,7 @@ export class BaseballEngine {
     );
     this.persist();
     this.emit();
-    return { ok: true, message: `${p.name}을(를) 익혔습니다! 투구 플랜에서 선택하세요.` };
+    return { ok: true, message: `${josa(p.name, "을를")} 익혔습니다! 투구 플랜에서 선택하세요.` };
   }
   rename(name: string) {
     const n = name.trim().slice(0, 12);
