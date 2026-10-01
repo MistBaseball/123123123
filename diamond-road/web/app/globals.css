@@ -1080,7 +1080,9 @@ kbd {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  /* Long recaps scroll; "safe" keeps the top reachable instead of cutting it off. */
+  justify-content: safe center;
+  overflow-y: auto;
   padding: 28px;
   text-align: center;
   z-index: 4;
@@ -4870,4 +4872,12 @@ kbd {
 .skill-chip.limit {
   border-color: #d8c3ff !important;
   color: #d8c3ff !important;
+}
+
+/* The overlay's main button stays visible at the bottom even when the recap scrolls. */
+.game-overlay > .primary-button {
+  position: sticky;
+  bottom: 0;
+  flex-shrink: 0;
+  box-shadow: 0 -10px 24px #0e2022;
 }

@@ -1512,7 +1512,10 @@ function ScoutMeter({
   big?: boolean;
 }) {
   const tier = tierOf(s.career);
-  if (tier === "first") return <MlbScoutBoard s={s} recap={before !== undefined} big={big} />;
+  // The match that earned the promotion shows the trust gauge reaching 100, not empty MLB bars.
+  const promotionRecap = before !== undefined && s.lastMlb.length === 0;
+  if (tier === "first" && !promotionRecap)
+    return <MlbScoutBoard s={s} recap={before !== undefined} big={big} />;
   if (tier === "mlb") {
     const m = mlbTeamOf(s.career.mlbClub);
     return (
@@ -1794,7 +1797,7 @@ function NightDialog({
         )}
         {recap && (
           <RecapBreakdown
-            scoutParts={recap.scoutParts}
+            scoutParts={trustMaxed(s) ? [] : recap.scoutParts}
             xpParts={recap.xpParts}
             scoutLabel={gaugeName(s.career)}
           />
@@ -2519,6 +2522,9 @@ function SkillBar({ engine, s }: { engine: BaseballEngine; s: GameState }) {
     </div>
   );
 }
+/** 1st team (after its promotion match) and the majors: the trust gauge no longer moves. */
+const trustMaxed = (s: GameState) =>
+  tierOf(s.career) === "mlb" || (tierOf(s.career) === "first" && s.lastMlb.length > 0);
 /** "한강 트리플스 2군", "뉴욕 하버 나이츠", or the school. */
 const clubLine = (c: Career) => {
   const tier = tierOf(c);
@@ -3167,7 +3173,7 @@ export default function DiamondGame() {
                         />
                       )}
                       <RecapBreakdown
-                        scoutParts={s.lastScoutParts}
+                        scoutParts={trustMaxed(s) ? [] : s.lastScoutParts}
                         xpParts={s.lastXpParts}
                         scoutLabel={gaugeName(s.career)}
                       />
@@ -3702,20 +3708,55 @@ export default function DiamondGame() {
               </form>
             ) : (
               <div>
-                {([100, 200] as const).map((v) => (
+                {([100, 200, 250] as const).map((v) => (
                   <button
                     key={v}
                     className="subtle-button"
                     onClick={() => {
                       engine.devSetStats(v);
                       toast.success(
-                        `모든 능력치를 ${v}로 올렸습니다${v === 200 ? " (상한 200 해금)" : ""}`,
+                        `모든 능력치를 ${v}로 올렸습니다${v > 100 ? ` (상한 ${v} 해금)` : ""}`,
                       );
                     }}
                   >
                     능력치 {v} 해금
                   </button>
                 ))}
+                <button
+                  className="subtle-button"
+                  disabled={tierOf(s.career) === "mlb"}
+                  onClick={() => {
+                    const was = tierOf(s.career);
+                    if (!engine.devGauge100()) return;
+                    toast.success(
+                      was === "first"
+                        ? "메이저리그 4개 구단 평가 100 · 계약하거나 모두 거절할 수 있어요"
+                        : was === "farm"
+                          ? "1군 신뢰도 100 · 1군으로 승격했습니다"
+                          : "스카우트 평가 100 · 입단 제의를 받았습니다",
+                    );
+                    setSettings(false);
+                    setView("life");
+                  }}
+                >
+                  {tierOf(s.career) === "first"
+                    ? "MLB 구단 평가 100"
+                    : tierOf(s.career) === "mlb"
+                      ? "게이지 없음 (MLB)"
+                      : `${gaugeName(s.career)} 100`}
+                </button>
+                <button
+                  className="subtle-button"
+                  onClick={() => {
+                    if (engine.devWin()) {
+                      setSettings(false);
+                      setView("game");
+                      toast.success("경기를 3:0 승리로 끝냈습니다");
+                    }
+                  }}
+                >
+                  경기 3:0 승리
+                </button>
                 <button
                   className="subtle-button"
                   onClick={() => {

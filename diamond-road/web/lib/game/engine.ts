@@ -1325,14 +1325,21 @@ export type Career = {
   mlbScouts?: Record<string, number>;
   /** Turned every MLB club down: stays home with the stat cap raised to 250. */
   limitless?: boolean;
+  /** Developer mode: stat cap lifted for testing (250). */
+  devCap?: number;
 };
 /** Highest a stat can go for this career (the pro cap for a legend start). */
-export const statCapOf = (c: Pick<Career, "stage" | "legend" | "league" | "limitless">) =>
-  c.league === "mlb" || c.limitless
-    ? LIMITLESS_CAP
-    : c.legend
-      ? STAGES.pro.statCap
-      : STAGES[c.stage].statCap;
+export const statCapOf = (
+  c: Pick<Career, "stage" | "legend" | "league" | "limitless" | "devCap">,
+) =>
+  Math.max(
+    c.devCap ?? 0,
+    c.league === "mlb" || c.limitless
+      ? LIMITLESS_CAP
+      : c.legend
+        ? STAGES.pro.statCap
+        : STAGES[c.stage].statCap,
+  );
 /** Stat cap in the major league, or for staying home after turning every MLB club down. */
 export const LIMITLESS_CAP = 250;
 /** Limit break (G): every stat counts as this for one inning. */
@@ -1822,7 +1829,8 @@ export class BaseballEngine {
         clean.history = c.history.slice(0, 12);
         clean.stats = { ...newCareer().stats };
         const cap =
-          c.stage === "pro" && (c.league === "mlb" || c.limitless === true)
+          c.devCap === LIMITLESS_CAP ||
+          (c.stage === "pro" && (c.league === "mlb" || c.limitless === true))
             ? LIMITLESS_CAP
             : c.stage === "pro" || c.legend === true
               ? STAGES.pro.statCap
@@ -1864,6 +1872,7 @@ export class BaseballEngine {
           clean.stage === "pro" && c.league === "mlb" && mlbTeamOf(c.mlbClub) ? "mlb" : undefined;
         clean.mlbClub = clean.league ? c.mlbClub : undefined;
         clean.limitless = clean.stage === "pro" && c.limitless === true;
+        clean.devCap = c.devCap === LIMITLESS_CAP ? LIMITLESS_CAP : undefined;
         clean.mlbScouts = Object.fromEntries(
           MLB_TEAMS.map((t) => {
             const v = c.mlbScouts?.[t.id];
@@ -3689,9 +3698,10 @@ export class BaseballEngine {
    * Developer mode: every stat to 100 or 200. 200 also lifts the stat cap to 200 for this
    * career (even in high school), so later training and reloading keep it.
    */
-  devSetStats(value: 100 | 200) {
+  devSetStats(value: 100 | 200 | 250) {
     const c = this.state.career;
     if (value === 200) c.legend = true;
+    if (value === LIMITLESS_CAP) c.devCap = LIMITLESS_CAP;
     for (const k of Object.keys(c.stats) as StatKey[]) c.stats[k] = value;
     c.history = [`개발자 모드 · 모든 능력치 ${value}`, ...c.history].slice(0, 12);
     this.persist();
@@ -3701,6 +3711,50 @@ export class BaseballEngine {
    * Developer mode: the stage's gauge to 99 (scout evaluation in high school, first-team
    * trust in the pros), so the next good match reaches the goal.
    */
+  /**
+   * Developer mode: the stage's gauge straight to 100, with what 100 brings: the high-school
+   * contract (signing ending), promotion to the 1st team, or every MLB offer at once.
+   */
+  devGauge100() {
+    const c = this.state.career,
+      tier = tierOf(c);
+    if (tier === "mlb") return false;
+    if (tier === "first") c.mlbScouts = Object.fromEntries(MLB_TEAMS.map((t) => [t.id, 100]));
+    else if (tier === "farm") {
+      c.scout = 100;
+      c.proGoal = true;
+      c.mlbScouts = Object.fromEntries(MLB_TEAMS.map((t) => [t.id, 0]));
+    } else {
+      const team = teamOf(c.team);
+      if (!team) return false;
+      c.scout = 100;
+      if (!c.draft) {
+        c.draft = `${team.city} ${team.name} 입단`;
+        c.club = team.id;
+      }
+    }
+    c.history = [`개발자 모드 · ${gaugeName(c)} 100`, ...c.history].slice(0, 12);
+    this.persist();
+    this.start("match");
+    return true;
+  }
+  /** Developer mode: end the current season match as a 3:0 win (rewards as after a real game). */
+  devWin() {
+    const s = this.state;
+    if (s.mode !== "match" || s.phase === "finished") this.start("match");
+    Object.assign(this.state, {
+      inning: this.state.maxInnings,
+      half: "bottom",
+      outs: 3,
+      score: [0, 3],
+      phase: "result",
+      flight: null,
+      live: null,
+    });
+    this.state.lines[1][this.state.maxInnings - 1] = 3;
+    this.next();
+    return this.state.phase === "finished";
+  }
   devGauge99() {
     const c = this.state.career;
     c.scout = tierOf(c) === "first" ? 100 : 99;

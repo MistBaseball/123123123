@@ -2072,4 +2072,36 @@ check(
     assert(checked >= 3, `cases found: ${checked}`);
   },
 );
+check(
+  "Dev tools: gauge 100 at every stage, stats 250, and a 3:0 win that counts like a real one",
+  () => {
+    // High school → contract (the signing ending follows on the daily screen).
+    const hs = new BaseballEngine(Object.assign(newCareer(), { team: TEAMS[1].id }));
+    assert(hs.devGauge100());
+    assert.equal(hs.state.career.club, TEAMS[1].id);
+    // 2nd team → 1st team; 1st team → every MLB offer.
+    const farm = new BaseballEngine(proCareer());
+    assert(farm.devGauge100());
+    assert.equal(tierOf(farm.state.career), "first");
+    assert(farm.devGauge100());
+    assert.equal(farm.mlbOffers.length, MLB_TEAMS.length);
+    assert(farm.refuseMlb());
+    // Stats 250 (a dev cap that does not count as turning the majors down).
+    const d = new BaseballEngine(newCareer());
+    d.devSetStats(250);
+    assert(Object.values(d.state.career.stats).every((v) => v === 250));
+    assert.equal(statCapOf(d.state.career), 250);
+    assert(!d.state.career.limitless);
+    assert(d.canLimitBreak);
+    // 3:0 win: a finished match with the usual rewards.
+    const w = new BaseballEngine(newCareer(), () => 0.5),
+      day = w.state.career.day;
+    assert(w.devWin());
+    assert.deepEqual(w.state.score, [0, 3]);
+    assert.equal(w.state.message, "VICTORY");
+    assert.equal(w.state.career.day, day + 1);
+    assert.equal(w.state.career.wins, 1);
+    assert(w.state.lastXpGain > 0);
+  },
+);
 console.log(`\n${passed} gameplay checks passed.`);
