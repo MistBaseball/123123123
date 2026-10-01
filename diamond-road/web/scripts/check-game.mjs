@@ -28,6 +28,11 @@ import {
   STAT_NAMES,
   XP,
   HOME_LINEUP,
+  ALL_PITCHES,
+  HIDDEN_PITCHES,
+  LEGEND_PITCHES,
+  flutterOffset,
+  statCapOf,
   HOME_SCHOOL,
   SCHOOLS,
   makeRoster,
@@ -1537,5 +1542,120 @@ check("Scout recap lines always add up, including caps; the player bats, teammat
   assert(by("양서준").contact >= 90 && by("양서준").power >= 90);
   assert(by("옥동규").speed === Math.max(...named.map((p) => (p.name === "김영호" ? 0 : p.speed))));
   for (const n of ["이지섭", "유동권"]) assert(by(n).speed <= 35 && by(n).power >= 95);
+});
+check("Hidden knuckleball: secret unlock at minimum velocity and movement 75+", () => {
+  assert.equal(PITCHES.length, 10, "the shop list stays at ten");
+  assert(!PITCHES.some((p) => p.id === "knuckle") && HIDDEN_PITCHES[0].id === "knuckle");
+  assert.equal(new Set(ALL_PITCHES.map((p) => p.key)).size, ALL_PITCHES.length, "unique keys");
+  const at = (velocity, movement) => {
+    const c = newCareer();
+    Object.assign(c.stats, { velocity, movement });
+    return new BaseballEngine(c, seed(3));
+  };
+  // Training movement 74 → 75 with velocity still at the creation minimum unlocks it.
+  const g = at(45, 74);
+  assert(g.train("breaking", 0.6).ok);
+  assert.equal(g.state.career.stats.movement, 75);
+  assert(g.state.career.pitches.includes("knuckle"));
+  assert.equal(g.state.hiddenUnlock, "knuckle");
+  g.clearHiddenUnlock();
+  assert.equal(g.state.hiddenUnlock, null);
+  // Raising velocity afterwards does not take it away.
+  g.state.career.stats.velocity = 70;
+  g.train("breaking", 0.6);
+  assert(g.state.career.pitches.includes("knuckle"));
+  // One point of velocity training, or movement below 75, keeps it locked.
+  for (const [v, m] of [
+    [46, 74],
+    [45, 73],
+  ]) {
+    const x = at(v, m);
+    x.train("breaking", 0.6);
+    assert(!x.state.career.pitches.includes("knuckle"), `${v}/${m}`);
+  }
+  assert(!at(45, 60).buyPitch("knuckle").ok, "never sold in the shop");
+  // A creation build that already meets the condition gets it immediately.
+  const c = new BaseballEngine(newCareer());
+  assert(
+    c.createPlayer("너클러", {
+      velocity: 45,
+      control: 65,
+      movement: 75,
+      stamina: 65,
+      contact: 60,
+      power: 60,
+      speed: 45,
+    }).ok,
+  );
+  assert(c.state.career.pitches.includes("knuckle"));
+  // Thrown: slow, little spin wobble inside the shown box, back on target at the plate.
+  const k = at(45, 75);
+  k.checkHiddenPitches();
+  k.selectPitch("knuckle");
+  assert.equal(k.state.selected, "knuckle");
+  k.throwAt(0, 0.95);
+  const f = k.state.flight,
+    m = pitchMovement("knuckle", f.movement);
+  assert(m.flutter > 0.1 && f.speed < 115, `${f.speed}`);
+  for (let u = 0; u <= 1.0001; u += 0.05) {
+    const w = flutterOffset(m.flutter, u, f.seed);
+    assert(
+      w.x >= m.minX - 1e-9 && w.x <= m.maxX + 1e-9 && w.y >= m.minY - 1e-9 && w.y <= m.maxY + 1e-9,
+    );
+  }
+  const end = k.pitchPosition(1);
+  assert(Math.abs(end.x - f.target.x) < 1e-6 && Math.abs(end.y - f.target.y) < 1e-6);
+  // AI pitchers never throw it.
+  const ai = new BaseballEngine(newCareer(), seed(8));
+  ai.start("batting");
+  for (let i = 0; i < 200; i++) {
+    ai.state.phase = "ready";
+    ai.state.flight = null;
+    ai.launch(true);
+    if (ai.state.flight) assert.notEqual(ai.state.flight.pitch, "knuckle");
+  }
+});
+check("Hidden 오타니 start: all stats 200 in high school, seven pitches, no roulette", () => {
+  const store = {};
+  globalThis.localStorage = {
+    getItem: (k) => store[k] ?? null,
+    setItem: (k, v) => (store[k] = String(v)),
+  };
+  try {
+    const g = new BaseballEngine(newCareer());
+    const even = {
+      velocity: 62,
+      control: 62,
+      movement: 62,
+      stamina: 61,
+      contact: 61,
+      power: 62,
+      speed: 45,
+    };
+    assert(g.createPlayer(" 오타니 ", even).ok);
+    const c = g.state.career;
+    assert.equal(c.stage, "high");
+    assert(Object.values(c.stats).every((v) => v === 200));
+    assert.deepEqual([...c.pitches].sort(), [...LEGEND_PITCHES].sort());
+    assert.equal(c.pitches.length, 7);
+    assert.notEqual(c.blessing, "", "the roulette is skipped");
+    assert.equal(g.receiveBlessing(), null);
+    assert.equal(g.state.hiddenUnlock, "legend");
+    assert.equal(statCapOf(c), 200);
+    assert(!g.train("weights", 1).ok, "already at the cap");
+    g.throwAt(0, 0.95);
+    assert(g.state.flight.speed > 165, "170 km/h fastball");
+    // The high-school cap of 100 does not cut the legend down on reload.
+    const again = new BaseballEngine();
+    again.load();
+    assert(Object.values(again.state.career.stats).every((v) => v === 200));
+    // An ordinary name is untouched.
+    const n = new BaseballEngine(newCareer());
+    n.createPlayer("오타니팬", even);
+    assert.deepEqual(n.state.career.stats, even);
+    assert.equal(statCapOf(n.state.career), 100);
+  } finally {
+    delete globalThis.localStorage;
+  }
 });
 console.log(`\n${passed} gameplay checks passed.`);

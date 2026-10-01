@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import {
   Target,
@@ -55,6 +55,8 @@ import { Toaster, toast } from "sonner";
 import {
   BaseballEngine,
   PITCHES,
+  ALL_PITCHES,
+  isHiddenPitch,
   SWING_GOOD,
   SWING_SWEET,
   BLESSINGS,
@@ -71,6 +73,8 @@ import {
   swingWindow,
   matchTeams,
   STAGES,
+  statCapOf,
+  LEGEND_PITCHES,
   STAT_NAMES,
   STAT_INFO,
   HOME_LINEUP,
@@ -97,6 +101,7 @@ const keyOf = (e: KeyboardEvent) => {
   if (letter) return letter[1].toLowerCase();
   if (digit) return digit[1];
   if (e.code === "Space") return " ";
+  if (e.code === "Minus" || e.code === "NumpadSubtract") return "-";
   return e.key.toLowerCase();
 };
 const cameras: { id: Camera; label: string }[] = [
@@ -123,6 +128,8 @@ const pitchTraits = (p: (typeof PITCHES)[number]) =>
     p.control >= 1.15 && { text: "제구 어려움", good: false },
     p.control > 1 && p.control < 1.15 && { text: "제구 약간 어려움", good: false },
     p.stamina >= 1.1 && { text: "체력 소모 큼", good: false },
+    p.stamina < 1 && { text: "체력 소모 적음", good: true },
+    !!p.flutter && { text: "예측 불가 흔들림", good: true },
     p.wild >= 1.2 && { text: "폭투 위험", good: false },
   ].filter(Boolean) as { text: string; good: boolean }[];
 /** A stat's live effect, e.g. "138 km/h", from the same formula the game uses. */
@@ -143,7 +150,7 @@ const statStep = (k: StatKey, v: number) => {
  * player can see what a training session will actually change.
  */
 function StatGuide({ c }: { c: Career }) {
-  const cap = STAGES[c.stage].statCap;
+  const cap = statCapOf(c);
   return (
     <section className="stat-guide" aria-labelledby="stat-guide-title">
       <header>
@@ -151,7 +158,7 @@ function StatGuide({ c }: { c: Career }) {
         <p>
           숫자는 지금 능력치로 게임에서 실제로 쓰이는 값입니다. 훈련으로 1 오를 때마다 오른쪽처럼
           바뀝니다. 최대 {cap}
-          {c.stage === "pro" ? "" : " (프로에 가면 200까지)"}.
+          {c.stage === "pro" || c.legend ? "" : " (프로에 가면 200까지)"}.
         </p>
       </header>
       <ol>
@@ -354,7 +361,7 @@ function AimPad({ engine, s }: { engine: BaseballEngine; s: GameState }) {
   const progress = flying ? clamp(flight.elapsed / flight.visualDuration, 0, 1) : 0;
   const previous = batting ? s.batFeedback : null;
   const hint = batting && locked ? flight.hint : null;
-  const activePitch = PITCHES.find((p) => p.id === (locked ? flight.pitch : s.selected))!;
+  const activePitch = ALL_PITCHES.find((p) => p.id === (locked ? flight.pitch : s.selected))!;
   const movement = pitchMovement(
     activePitch.id,
     locked ? flight.movement : s.career.stats.movement,
@@ -562,8 +569,21 @@ function TimingBar({ s, className }: { s: GameState; className: string }) {
 }
 function PitchMovementGuide({ s }: { s: GameState }) {
   const f = s.phase === "windup" || s.phase === "flight" ? s.flight : null;
-  const p = PITCHES.find((p) => p.id === (f?.pitch ?? s.selected))!,
+  const p = ALL_PITCHES.find((p) => p.id === (f?.pitch ?? s.selected))!,
     m = pitchMovement(p.id, f?.movement ?? s.career.stats.movement);
+  if (m.flutter > 0)
+    return (
+      <p className="pp-desc" aria-label={p.name + " 움직임"}>
+        <i style={{ background: p.color }} />
+        <span>
+          <b>{p.name}</b> {p.desc}
+          <small>
+            날아오는 동안 상하좌우 최대 {Math.round(m.flutter * 100)} cm 흔들림 · 방향은 던질 때마다
+            무작위 (조준판의 색 영역)
+          </small>
+        </span>
+      </p>
+    );
   return (
     <p className="pp-desc" aria-label={p.name + " 움직임"}>
       <i style={{ background: p.color }} />
@@ -697,7 +717,7 @@ function CareerView({ engine, s }: { engine: BaseballEngine; s: GameState }) {
             </div>
             <div className="known-pitches">
               <span>보유 구종</span>
-              {PITCHES.filter((p) => c.pitches.includes(p.id)).map((p) => (
+              {ALL_PITCHES.filter((p) => c.pitches.includes(p.id)).map((p) => (
                 <b key={p.id} style={{ borderColor: p.color }}>
                   {p.name}
                 </b>
@@ -1626,12 +1646,132 @@ function EndingDialog({
     </Dialog>
   );
 }
+const CONFETTI_COLORS = ["#e8b65a", "#f4d48c", "#85bde4", "#c9a8ff", "#8bceb6", "#e58f7a", "#fff"];
+/** Falling paper confetti over the whole screen (pure CSS, clicks pass through). */
+function Confetti() {
+  const pieces = useMemo(
+    () =>
+      Array.from({ length: 70 }, (_, i) => ({
+        left: Math.random() * 100,
+        delay: Math.random() * 0.9,
+        duration: 2.4 + Math.random() * 1.8,
+        drift: (Math.random() - 0.5) * 220,
+        spin: 360 + Math.random() * 900,
+        size: 6 + Math.random() * 7,
+        color: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+      })),
+    [],
+  );
+  return createPortal(
+    <div className="confetti" aria-hidden="true">
+      {pieces.map((p, i) => (
+        <i
+          key={i}
+          style={
+            {
+              left: `${p.left}%`,
+              width: p.size,
+              height: p.size * 0.45,
+              background: p.color,
+              animationDelay: `${p.delay}s`,
+              animationDuration: `${p.duration}s`,
+              "--drift": `${p.drift}px`,
+              "--spin": `${p.spin}deg`,
+            } as React.CSSProperties
+          }
+        />
+      ))}
+    </div>,
+    document.body,
+  );
+}
+/**
+ * Fanfare for a secret condition: a hidden pitch (e.g. the knuckleball) or the legend start.
+ * The conditions themselves are never shown.
+ */
+function HiddenDialog({ engine, s }: { engine: BaseballEngine; s: GameState }) {
+  const legend = s.hiddenUnlock === "legend",
+    p = s.hiddenUnlock && !legend ? ALL_PITCHES.find((x) => x.id === s.hiddenUnlock) : null;
+  // Wait until creation and the starting roulette are out of the way.
+  const open = (legend || !!p) && s.career.created && !!s.career.team && s.career.blessing !== "";
+  useEffect(() => {
+    if (open) engine.fanfare();
+  }, [open, engine]);
+  if (!open) return null;
+  return (
+    <>
+      <Confetti />
+      <Dialog open onOpenChange={(v) => !v && engine.clearHiddenUnlock()}>
+        <DialogContent className="hidden-pitch-dialog">
+          <DialogHeader>
+            <DialogTitle>
+              <Sparkles size={18} /> 히든 조건을 만족했습니다!
+            </DialogTitle>
+            <DialogDescription>
+              {legend
+                ? "그 이름을 듣는 순간, 모두가 숨을 멈췄습니다."
+                : "아무도 가르쳐 주지 않은 공이 손끝에서 깨어났습니다."}
+            </DialogDescription>
+          </DialogHeader>
+          {legend ? (
+            <div
+              className="hidden-pitch-card legend"
+              style={{ "--pitch-color": "#e8b65a" } as React.CSSProperties}
+            >
+              <small>??? · TWO-WAY LEGEND</small>
+              <strong>이도류 전설</strong>
+              <p>
+                모든 능력치 {STAGES.pro.statCap} · 직구 최고{" "}
+                {Math.round(fastballSpeed(STAGES.pro.statCap))} km/h
+              </p>
+              <ul>
+                {LEGEND_PITCHES.map((id) => {
+                  const x = ALL_PITCHES.find((x) => x.id === id)!;
+                  return (
+                    <li key={id} className="good">
+                      {x.name}
+                    </li>
+                  );
+                })}
+              </ul>
+              <span>고교 무대에서도 능력치 상한 {STAGES.pro.statCap}</span>
+            </div>
+          ) : (
+            p && (
+              <div
+                className="hidden-pitch-card"
+                style={{ "--pitch-color": p.color } as React.CSSProperties}
+              >
+                <small>HIDDEN PITCH · {p.en}</small>
+                <strong>{p.name}</strong>
+                <p>{p.desc}</p>
+                <ul>
+                  {pitchTraits(p).map((t) => (
+                    <li key={t.text} className={t.good ? "good" : "bad"}>
+                      {t.text}
+                    </li>
+                  ))}
+                </ul>
+                <span>
+                  투구 플랜에서 <kbd>{p.key}</kbd> 키로 선택
+                </span>
+              </div>
+            )
+          )}
+          <button className="primary-button" onClick={() => engine.clearHiddenUnlock()}>
+            받아들이기 <Play size={16} />
+          </button>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
 /** Starting roulette: "a blessing from the baseball gods" grants one random pitch. */
 function BlessingDialog({ engine, s }: { engine: BaseballEngine; s: GameState }) {
   const [phase, setPhase] = useState<"idle" | "spinning" | "done">("idle");
   const [reel, setReel] = useState<string[]>([]);
   const [offset, setOffset] = useState(0);
-  const won = PITCHES.find((p) => p.id === s.career.blessing);
+  const won = ALL_PITCHES.find((p) => p.id === s.career.blessing);
   const tier = BLESSINGS.find((b) => b.id === s.career.blessing)?.tier;
   const open =
     (s.career.created && !!s.career.team && s.career.blessing === "") || phase !== "idle";
@@ -1687,7 +1827,7 @@ function BlessingDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
             }}
           >
             {(reel.length ? reel : BLESSINGS.map((b) => b.id)).map((id, i) => {
-              const p = PITCHES.find((p) => p.id === id)!;
+              const p = ALL_PITCHES.find((p) => p.id === id)!;
               const b = BLESSINGS.find((b) => b.id === id)!;
               return (
                 <div
@@ -1725,7 +1865,7 @@ function BlessingDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
                     </b>
                     {list.map((b) => (
                       <span key={b.id}>
-                        {PITCHES.find((p) => p.id === b.id)!.name} <em>{b.weight}%</em>
+                        {ALL_PITCHES.find((p) => p.id === b.id)!.name} <em>{b.weight}%</em>
                       </span>
                     ))}
                   </div>
@@ -2060,6 +2200,8 @@ function TutorialCoach({
     document.body,
   );
 }
+/** Developer-mode password (a simple lock for testers, not real security). */
+const DEV_CODE = "1324";
 export default function DiamondGame() {
   const [engine] = useState(() => new BaseballEngine());
   // Development only: lets browser tests drive the engine. Stripped from production builds.
@@ -2077,6 +2219,8 @@ export default function DiamondGame() {
     } | null>(null),
     [help, setHelp] = useState(false),
     [settings, setSettings] = useState(false),
+    [devUnlocked, setDevUnlocked] = useState(false),
+    [devCode, setDevCode] = useState(""),
     [manualPause, setManualPause] = useState(false),
     [pending, setPending] = useState<Mode | null>(null),
     [tour, setTour] = useState<{ track: TourTrack; step: number } | null>(null);
@@ -2121,6 +2265,34 @@ export default function DiamondGame() {
       try {
         const a = audio.current ?? (audio.current = new AudioContext());
         if (a.state === "suspended") void a.resume();
+        if (kind === "fanfare") {
+          // Short brass-like arpeggio, then a held major chord.
+          const notes: [number, number, number][] = [
+            [523.25, 0, 0.14],
+            [659.25, 0.14, 0.14],
+            [783.99, 0.28, 0.14],
+            [1046.5, 0.42, 0.5],
+            [523.25, 0.95, 0.9],
+            [659.25, 0.95, 0.9],
+            [783.99, 0.95, 0.9],
+            [1046.5, 0.95, 0.9],
+          ];
+          for (const [f, at, len] of notes) {
+            const o = a.createOscillator(),
+              g = a.createGain(),
+              t = a.currentTime + at;
+            o.type = "sawtooth";
+            o.frequency.setValueAtTime(f, t);
+            g.gain.setValueAtTime(0.0001, t);
+            g.gain.exponentialRampToValueAtTime(0.035, t + 0.03);
+            g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+            o.connect(g);
+            g.connect(a.destination);
+            o.start(t);
+            o.stop(t + len + 0.05);
+          }
+          return;
+        }
         const osc = a.createOscillator(),
           gain = a.createGain();
         osc.type = kind === "hit" ? "triangle" : "sine";
@@ -2244,7 +2416,7 @@ export default function DiamondGame() {
       if (engine.state.phase === "inplay" && engine.state.live) {
         if (["1", "2", "3", "4"].includes(k)) engine.selectThrowBase(Number(k));
       } else {
-        const p = PITCHES.find((p) => p.key === k);
+        const p = ALL_PITCHES.find((p) => p.key === k);
         if (p) engine.selectPitch(p.id);
       }
       if (k === " " && !target?.closest?.("button,[role=button],[role=slider]")) {
@@ -2325,14 +2497,14 @@ export default function DiamondGame() {
         description: "다음 투구의 구종 선택. 대기 중에만 가능",
         inputSchema: {
           type: "object",
-          properties: { pitch: { type: "string", enum: PITCHES.map((p) => p.id) } },
+          properties: { pitch: { type: "string", enum: ALL_PITCHES.map((p) => p.id) } },
           required: ["pitch"],
           additionalProperties: false,
         },
         annotations: { readOnlyHint: false },
         execute: (input) => {
           const p = (input as { pitch: string })?.pitch;
-          if (!PITCHES.some((x) => x.id === p) || engine.state.phase !== "ready")
+          if (!ALL_PITCHES.some((x) => x.id === p) || engine.state.phase !== "ready")
             throw new Error("유효한 구종과 투구 대기 상태가 필요합니다");
           engine.selectPitch(p as GameState["selected"]);
           return { pitch: engine.state.selected };
@@ -2375,7 +2547,9 @@ export default function DiamondGame() {
     }
     return () => abort.abort();
   }, [engine]);
-  const pitch = PITCHES.find((p) => p.id === s.selected)!;
+  const pitch = ALL_PITCHES.find((p) => p.id === s.selected)!;
+  const hiddenOwned = s.career.pitches.filter(isHiddenPitch).length,
+    regularOwned = s.career.pitches.length - hiddenOwned;
   const canPitch = s.phase === "ready" && !s.paused;
   const status =
     s.phase === "inplay"
@@ -2398,6 +2572,7 @@ export default function DiamondGame() {
       <Toaster theme="dark" position="bottom-center" />
       <CreationDialog engine={engine} s={s} />
       <BlessingDialog engine={engine} s={s} />
+      <HiddenDialog engine={engine} s={s} />
       <NightDialog s={s} recap={recap} onClose={() => setRecap(null)} />
       <EndingDialog
         engine={engine}
@@ -2764,14 +2939,18 @@ export default function DiamondGame() {
                   <h3>
                     <i>1</i> 구종
                     <small>
-                      숫자키로 선택 · 보유 {s.career.pitches.length}/{PITCHES.length}
+                      숫자키로 선택 · 보유 {regularOwned}/{PITCHES.length}
+                      {hiddenOwned > 0 && <em className="hidden-count"> · 히든 {hiddenOwned}</em>}
                     </small>
                   </h3>
                   <div className="pp-pitches">
-                    {PITCHES.filter((p) => s.career.pitches.includes(p.id)).map((p) => (
+                    {ALL_PITCHES.filter((p) => s.career.pitches.includes(p.id)).map((p) => (
                       <button
                         key={p.id}
-                        className={s.selected === p.id ? "selected" : ""}
+                        className={
+                          (s.selected === p.id ? "selected " : "") +
+                          (isHiddenPitch(p.id) ? "hidden-pitch" : "")
+                        }
                         disabled={s.phase !== "ready"}
                         title={p.desc}
                         onClick={() => engine.selectPitch(p.id)}
@@ -2792,10 +2971,10 @@ export default function DiamondGame() {
                       </button>
                     ))}
                   </div>
-                  {s.career.pitches.length < PITCHES.length && (
+                  {regularOwned < PITCHES.length && (
                     <p className="pp-more">
-                      남은 {PITCHES.length - s.career.pitches.length}개 구종은 하루 일정의 구종
-                      상점에서 경험치로 익힙니다.
+                      남은 {PITCHES.length - regularOwned}개 구종은 하루 일정의 구종 상점에서
+                      경험치로 익힙니다.
                     </p>
                   )}
                   <PitchMovementGuide s={s} />
@@ -3105,26 +3284,54 @@ export default function DiamondGame() {
             <h4>
               개발자 모드 <small>테스트용 · 선수 기록에 바로 저장</small>
             </h4>
-            <div>
-              <button
-                className="subtle-button"
-                onClick={() => {
-                  engine.devMaxStats();
-                  toast.success(`모든 능력치를 ${STAGES[s.career.stage].statCap}로 올렸습니다`);
+            {!devUnlocked ? (
+              <form
+                className="dev-lock"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (devCode === DEV_CODE) {
+                    setDevUnlocked(true);
+                    toast.success("개발자 모드를 열었습니다");
+                  } else toast.error("비밀번호가 틀렸습니다");
+                  setDevCode("");
                 }}
               >
-                모든 능력치 최대
-              </button>
-              <button
-                className="subtle-button"
-                onClick={() => {
-                  engine.devUnlockPitches();
-                  toast.success(`${PITCHES.length}개 구종을 모두 열었습니다`);
-                }}
-              >
-                모든 구종 열기
-              </button>
-            </div>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  maxLength={12}
+                  placeholder="비밀번호"
+                  aria-label="개발자 모드 비밀번호"
+                  value={devCode}
+                  onChange={(e) => setDevCode(e.target.value)}
+                />
+                <button className="subtle-button" type="submit">
+                  <Lock size={14} /> 잠금 해제
+                </button>
+              </form>
+            ) : (
+              <div>
+                <button
+                  className="subtle-button"
+                  onClick={() => {
+                    engine.devMaxStats();
+                    toast.success(`모든 능력치를 ${statCapOf(s.career)}로 올렸습니다`);
+                  }}
+                >
+                  모든 능력치 최대
+                </button>
+                <button
+                  className="subtle-button"
+                  onClick={() => {
+                    engine.devUnlockPitches();
+                    toast.success("모든 구종을 열었습니다 (히든 구종 포함)");
+                  }}
+                >
+                  모든 구종 열기
+                </button>
+              </div>
+            )}
           </div>
           <div className="settings-row">
             <label>난이도</label>

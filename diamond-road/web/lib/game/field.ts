@@ -3,7 +3,7 @@ import {
   BaseballEngine,
   BASES,
   DEFENSE,
-  PITCHES,
+  pitchData,
   V,
   batReach,
   clamp,
@@ -1278,7 +1278,10 @@ export class BaseballField {
       }
     });
     this.ball.position.set(s.ball.x, s.ball.y, s.ball.z);
-    if (s.phase === "flight" || s.phase === "inplay") this.ball.rotation.x += dt * 30;
+    // A knuckleball barely spins (that is why it flutters): only a slow tumble.
+    if (s.phase === "flight" || s.phase === "inplay")
+      this.ball.rotation.x +=
+        dt * (s.phase === "flight" && s.flight && pitchData(s.flight.pitch).flutter ? 1.2 : 30);
     this.ball.visible = s.phase === "flight" || s.phase === "inplay" || s.phase === "result";
     const ballDistance = this.camera.position.distanceTo(this.ball.position);
     this.ball.scale.setScalar(Math.max(1, ballDistance / 18));
@@ -1311,7 +1314,7 @@ export class BaseballField {
     } else this.trailPositions = [];
     this.trail.geometry.dispose();
     this.trail.geometry = new THREE.BufferGeometry().setFromPoints(this.trailPositions);
-    const color = PITCHES.find((p) => p.id === (f?.pitch ?? s.selected))!.color;
+    const color = pitchData(f?.pitch ?? s.selected).color;
     (this.trail.material as THREE.LineBasicMaterial).color.set(color);
     this.renderer.render(this.scene, this.camera);
   }

@@ -4429,3 +4429,157 @@ kbd {
 .throw-hint kbd {
   font-size: 0.6875rem;
 }
+
+/* ---- Developer-mode password ---- */
+.dev-mode .dev-lock {
+  display: flex;
+  gap: 8px;
+}
+.dev-lock input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #ffffff22;
+  border-radius: 6px;
+  background: #0b1418;
+  color: #eef3f4;
+  font: inherit;
+  letter-spacing: 0.3em;
+}
+.dev-lock input:focus {
+  outline: 2px solid #e8b65a;
+  outline-offset: 1px;
+}
+.dev-lock button {
+  flex: 0 0 auto !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ---- Hidden pitches ---- */
+.pp-pitches button.hidden-pitch {
+  background: linear-gradient(135deg, #f3efd91f, #b98cf026);
+  box-shadow: 0 0 12px #c9a8ff33;
+}
+.hidden-count {
+  font-style: normal;
+  color: #d8c3ff;
+}
+.hidden-pitch-dialog {
+  max-width: 420px;
+  text-align: center;
+}
+.hidden-pitch-card {
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  padding: 22px 18px;
+  border: 1px solid var(--pitch-color);
+  border-radius: 12px;
+  background: radial-gradient(circle at 50% 0%, #c9a8ff2e, transparent 70%), #0d171b;
+  animation: hidden-reveal 0.9s ease-out;
+}
+.hidden-pitch-card small {
+  letter-spacing: 0.2em;
+  color: #c9a8ff;
+}
+.hidden-pitch-card strong {
+  font-size: 2rem;
+  color: var(--pitch-color);
+  text-shadow: 0 0 18px #c9a8ff88;
+}
+.hidden-pitch-card p {
+  margin: 0;
+  color: #cfd8da;
+  font-size: 0.875rem;
+}
+.hidden-pitch-card ul {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin: 4px 0;
+  padding: 0;
+  list-style: none;
+}
+.hidden-pitch-card li {
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+}
+.hidden-pitch-card li.good {
+  background: #8bceb622;
+  color: #a8e3cc;
+}
+.hidden-pitch-card li.bad {
+  background: #e58f7a22;
+  color: #f0b3a4;
+}
+.hidden-pitch-card > span {
+  font-size: 0.8125rem;
+  color: #b0bec3;
+}
+@keyframes hidden-reveal {
+  from {
+    opacity: 0;
+    transform: scale(0.85);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+.hidden-pitch-card.legend strong {
+  font-size: 2.2rem;
+  background: linear-gradient(90deg, #f4d48c, #fff, #e8b65a);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.confetti {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  overflow: hidden;
+  pointer-events: none;
+}
+.confetti i {
+  position: absolute;
+  top: -20px;
+  border-radius: 1px;
+  animation-name: confetti-fall;
+  animation-timing-function: cubic-bezier(0.25, 0.6, 0.5, 1);
+  animation-fill-mode: forwards;
+}
+@keyframes confetti-fall {
+  0% {
+    transform: translate(0, 0) rotate(0);
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--drift), 105vh) rotate(var(--spin));
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .confetti {
+    display: none;
+  }
+}
+.hidden-pitch-dialog [data-slot="dialog-header"] {
+  text-align: center;
+}
+.hidden-pitch-dialog [data-slot="dialog-title"] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 1.25rem;
+  color: #f4d48c;
+}

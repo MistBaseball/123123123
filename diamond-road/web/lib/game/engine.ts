@@ -12,7 +12,8 @@ export type PitchId =
   | "twoseam"
   | "sinker"
   | "forkball"
-  | "sweeper";
+  | "sweeper"
+  | "knuckle";
 /**
  * Pitch data table. Everything that makes one pitch different from another lives here:
  * - delta: speed change (km/h) from the pitcher's fastball
@@ -41,6 +42,11 @@ export type PitchData = {
   whiff: number;
   soft: number;
   wild: number;
+  /**
+   * Knuckle-style wobble (m at movement 75): the ball zigzags inside a box of this size
+   * around its path, in a direction chosen at release. 0/absent for ordinary pitches.
+   */
+  flutter?: number;
 };
 export const PITCHES: PitchData[] = [
   {
@@ -224,7 +230,40 @@ export const PITCHES: PitchData[] = [
     wild: 1.1,
   },
 ];
-export const pitchData = (id: PitchId) => PITCHES.find((p) => p.id === id) ?? PITCHES[0];
+/**
+ * Hidden pitches: never sold in the shop or thrown by the AI. Each one unlocks by itself
+ * when the player's stats meet its secret condition (see HIDDEN_UNLOCKS).
+ */
+export const HIDDEN_PITCHES: PitchData[] = [
+  {
+    id: "knuckle",
+    name: "너클볼",
+    en: "KNUCKLEBALL",
+    key: "-",
+    delta: -24,
+    breakX: 0,
+    breakY: 0.06,
+    color: "#f3efd9",
+    desc: "회전 없이 흔들리며 날아오는 마구 · 어디로 흔들릴지 아무도 모른다",
+    cost: 0,
+    control: 1.3,
+    stamina: 0.6,
+    chase: 0.16,
+    whiff: 0.18,
+    soft: 0.1,
+    wild: 1.8,
+    flutter: 0.16,
+  },
+];
+/** Regular pitches first, then hidden ones. Use this for every id lookup. */
+export const ALL_PITCHES: PitchData[] = [...PITCHES, ...HIDDEN_PITCHES];
+export const isHiddenPitch = (id: PitchId) => HIDDEN_PITCHES.some((p) => p.id === id);
+/** Secret unlock conditions (not shown anywhere in the UI). */
+export const HIDDEN_UNLOCKS: { id: PitchId; test: (stats: Career["stats"]) => boolean }[] = [
+  // Knuckleball: velocity never trained above the creation minimum, movement 75 or more.
+  { id: "knuckle", test: (st) => st.velocity <= STAT_BASE && st.movement >= 75 },
+];
+export const pitchData = (id: PitchId) => ALL_PITCHES.find((p) => p.id === id) ?? PITCHES[0];
 // AI pitchers only use the four original pitch types.
 const AI_PITCHES = 4;
 /** Contact swing timing: the ideal moment as a share of the visible flight. */
@@ -724,18 +763,33 @@ export const GROUND_REACH = 2.2;
 const HANG_BASE = 1.4;
 const HANG_DIV = 38;
 export function pitchMovement(id: PitchId, movement: number) {
-  const p = PITCHES.find((p) => p.id === id)!,
-    x = (p.breakX * over(movement, 0.4)) / 75,
-    y = (p.breakY * over(movement, 0.4)) / 75;
+  const p = pitchData(id),
+    scale = over(movement, 0.4) / 75,
+    x = p.breakX * scale,
+    y = p.breakY * scale,
+    flutter = (p.flutter ?? 0) * scale;
   return {
     x,
     y,
-    minX: Math.min(0, x),
-    maxX: Math.max(0, x),
-    minY: Math.min(0, y),
-    maxY: Math.max(0, y),
+    /** Knuckle wobble amplitude (m); the box below already includes it. */
+    flutter,
+    minX: Math.min(0, x) - flutter,
+    maxX: Math.max(0, x) + flutter,
+    minY: Math.min(0, y) - flutter,
+    maxY: Math.max(0, y) + flutter,
   };
 }
+/**
+ * Knuckle wobble at flight share u (0–1) for a release seed: zero at release and at the plate,
+ * never larger than the flutter amplitude, so it stays inside the pitchMovement() box.
+ */
+export const flutterOffset = (flutter: number, u: number, seed: number) => {
+  const env = Math.sin(Math.PI * u);
+  return {
+    x: flutter * env * Math.sin(2 * Math.PI * 2.3 * u + seed),
+    y: flutter * env * Math.sin(2 * Math.PI * 1.6 * u + seed * 1.7 + 1),
+  };
+};
 /**
  * Control error (m, one standard deviation) of the player's pitches. Lower stamina (energy),
  * higher effort and poor form all widen it; the control stat narrows it.
@@ -994,7 +1048,24 @@ export type Career = {
   proUnlocked: boolean;
   /** The pro goal (STAGES.pro.goalReward) has been reached. */
   proGoal: boolean;
+  /** Secret "오타니" start: stats may stay above the high-school cap (optional, older saves lack it). */
+  legend?: boolean;
 };
+/** Highest a stat can go for this career (the pro cap for a legend start). */
+export const statCapOf = (c: Pick<Career, "stage" | "legend">) =>
+  c.legend ? STAGES.pro.statCap : STAGES[c.stage].statCap;
+/** Secret name: typing it on the creation screen starts a two-way legend. */
+export const isLegendName = (name: string) => /^오타니(쇼헤이)?$/.test(name.replace(/\s/g, ""));
+/** Pitches the legend start begins with (no roulette). */
+export const LEGEND_PITCHES: PitchId[] = [
+  "fastball",
+  "curve",
+  "sinker",
+  "cutter",
+  "slider",
+  "sweeper",
+  "splitter",
+];
 export const newCareer = (): Career => ({
   version: 1,
   name: "나의 선수",
@@ -1048,6 +1119,8 @@ export type Flight = {
   hint: { x: number; y: number; r: number } | null;
   /** Decided at release from the pitcher's stamina: the catcher cannot hold this pitch. */
   wild: boolean;
+  /** Knuckle wobble phase, rolled at release. */
+  seed?: number;
 };
 export type BatFeedback = {
   timing: "early" | "good" | "late" | "take";
@@ -1164,6 +1237,8 @@ export type GameState = {
   stealTrack: RunnerTrack | null;
   /** Pickoff throws during this plate appearance; runners shorten their lead after each. */
   pickoffs: number;
+  /** A hidden condition just met: a hidden pitch, or the "legend" start (UI shows a reveal). */
+  hiddenUnlock: PitchId | "legend" | null;
 };
 const initial = (career: Career, mode: Mode = "match", maxInnings = 3): GameState => ({
   mode,
@@ -1221,6 +1296,7 @@ const initial = (career: Career, mode: Mode = "match", maxInnings = 3): GameStat
   stealCall: false,
   stealTrack: null,
   pickoffs: 0,
+  hiddenUnlock: null,
 });
 export class BaseballEngine {
   private matchStrikeouts = 0;
@@ -1320,6 +1396,10 @@ export class BaseballEngine {
   sound(kind: string) {
     if (this.state.sound) this.soundCallback(kind);
   }
+  /** One-off fanfare for a hidden condition; plays even when match sounds are off. */
+  fanfare() {
+    this.soundCallback("fanfare");
+  }
   log(text: string) {
     this.state.log = [text, ...this.state.log].slice(0, 16);
   }
@@ -1372,14 +1452,15 @@ export class BaseballEngine {
         clean.scout = clamp(c.scout, 0, 100);
         clean.history = c.history.slice(0, 12);
         clean.stats = { ...newCareer().stats };
-        const cap = c.stage === "pro" ? STAGES.pro.statCap : STAGES.high.statCap;
+        const cap =
+          c.stage === "pro" || c.legend === true ? STAGES.pro.statCap : STAGES.high.statCap;
         keys.forEach((k) => {
           const v = c.stats[k];
           if (typeof v === "number" && Number.isFinite(v)) clean.stats[k] = clamp(v, 0, cap);
         });
         // Saves made before the pitch shop already had the original four pitches.
         const known = Array.isArray(c.pitches)
-          ? c.pitches.filter((id: unknown) => PITCHES.some((p) => p.id === id))
+          ? c.pitches.filter((id: unknown) => ALL_PITCHES.some((p) => p.id === id))
           : PITCHES.slice(0, AI_PITCHES).map((p) => p.id);
         clean.pitches = Array.from(new Set<PitchId>(["fastball", ...known]));
         clean.actions =
@@ -1404,8 +1485,10 @@ export class BaseballEngine {
         clean.proUnlocked = c.proUnlocked === true && !!clean.club;
         clean.stage = c.stage === "pro" && clean.proUnlocked ? "pro" : "high";
         clean.proGoal = c.proGoal === true && clean.stage === "pro";
+        clean.legend = c.legend === true;
         this.state.career = clean;
         this.state.energy = clean.energy;
+        if (this.checkHiddenPitches()) this.persist();
       }
     } catch {
       this.state.saveStatus = "저장 데이터를 읽지 못해 기본 선수로 시작";
@@ -1422,7 +1505,7 @@ export class BaseballEngine {
   }
   selectPitch(id: PitchId) {
     if (
-      PITCHES.some((p) => p.id === id) &&
+      ALL_PITCHES.some((p) => p.id === id) &&
       this.state.career.pitches.includes(id) &&
       this.state.phase === "ready"
     ) {
@@ -1437,6 +1520,7 @@ export class BaseballEngine {
     this.state.difficulty = previous.difficulty;
     this.state.autoField = previous.autoField;
     this.state.autoCamera = previous.autoCamera;
+    this.state.hiddenUnlock = previous.hiddenUnlock;
     this.recorded = false;
     this.matchStrikeouts = 0;
     this.xpParts.clear();
@@ -1554,6 +1638,7 @@ export class BaseballEngine {
       batAim: { ...s.aim },
       hint,
       wild,
+      seed: this.rng() * Math.PI * 2,
     };
     // STEAL_READY → the runner on first breaks with the pitcher's first move.
     s.stealTrack = null;
@@ -1668,10 +1753,11 @@ export class BaseballEngine {
     if (!f) return V(0.35, 1.85, 18.44);
     const t = f.duration * u,
       m = pitchMovement(f.pitch, f.movement),
-      bend = Math.sin(Math.PI * u);
+      bend = Math.sin(Math.PI * u),
+      wobble = flutterOffset(m.flutter, u, f.seed ?? 0);
     return V(
-      f.start.x + f.velocity.x * t + m.x * bend,
-      f.start.y + f.velocity.y * t - 4.905 * t * t + m.y * bend,
+      f.start.x + f.velocity.x * t + m.x * bend + wobble.x,
+      f.start.y + f.velocity.y * t - 4.905 * t * t + m.y * bend + wobble.y,
       f.start.z + f.velocity.z * t,
     );
   }
@@ -3068,7 +3154,7 @@ export class BaseballEngine {
         message: "오늘 행동력을 모두 썼습니다. 경기를 치르면 다음 날로 넘어갑니다.",
       };
     if (c.energy < o.cost) return { ok: false, message: "체력이 부족합니다. 먼저 휴식하세요." };
-    const cap = this.stageRules.statCap;
+    const cap = statCapOf(c);
     if (o.stat && c.stats[o.stat] >= cap)
       return { ok: false, message: "이미 최고 능력치입니다. 다른 훈련을 선택하세요." };
     const q = clamp(Number.isFinite(quality) ? quality : 0, 0, 1),
@@ -3086,6 +3172,7 @@ export class BaseballEngine {
       `${c.day}일차 · ${o.name}${o.stat ? ` (${grade}) +${o.gain}` : ""}`,
       ...c.history,
     ].slice(0, 12);
+    this.checkHiddenPitches();
     s.energy = c.energy;
     this.persist();
     this.emit();
@@ -3142,6 +3229,16 @@ export class BaseballEngine {
     c.stats = { ...stats };
     c.created = true;
     c.history = [`${c.name}, 고교 3학년 마지막 시즌을 시작하다.`];
+    if (isLegendName(c.name)) {
+      // Hidden start: every stat at 200, seven pitches, and no roulette.
+      c.legend = true;
+      for (const k of keys) c.stats[k] = STAGES.pro.statCap;
+      c.pitches = [...LEGEND_PITCHES];
+      c.blessing = "legend";
+      c.history = [`??? · 히든 조건 달성 · 이도류 전설이 고교 무대에 섰다`, ...c.history];
+      this.state.hiddenUnlock = "legend";
+    }
+    this.checkHiddenPitches();
     this.persist();
     this.emit();
     return { ok: true, message: "선수 등록 완료" };
@@ -3149,15 +3246,38 @@ export class BaseballEngine {
   /** Developer mode: every stat to the stage cap (100 in high school, 200 in the pros). */
   devMaxStats() {
     const c = this.state.career;
-    for (const k of Object.keys(c.stats) as StatKey[]) c.stats[k] = this.stageRules.statCap;
+    for (const k of Object.keys(c.stats) as StatKey[]) c.stats[k] = statCapOf(c);
     c.history = ["개발자 모드 · 모든 능력치 최대", ...c.history].slice(0, 12);
     this.persist();
     this.emit();
   }
-  /** Developer mode: learn every pitch without spending XP. */
+  /**
+   * Adds any hidden pitch whose secret condition the current stats meet. Once learned it
+   * stays, even if the stats change later. Returns the newly unlocked pitch or null.
+   */
+  checkHiddenPitches(): PitchId | null {
+    const c = this.state.career;
+    let found: PitchId | null = null;
+    for (const h of HIDDEN_UNLOCKS) {
+      if (c.pitches.includes(h.id) || !h.test(c.stats)) continue;
+      c.pitches = [...c.pitches, h.id];
+      c.history = [
+        `??? · 히든 구종 ${josa(pitchData(h.id).name, "을를")} 깨우쳤다`,
+        ...c.history,
+      ].slice(0, 12);
+      found = h.id;
+    }
+    if (found) this.state.hiddenUnlock = found;
+    return found;
+  }
+  clearHiddenUnlock() {
+    this.state.hiddenUnlock = null;
+    this.emit();
+  }
+  /** Developer mode: learn every pitch (hidden ones too) without spending XP. */
   devUnlockPitches() {
     const c = this.state.career;
-    c.pitches = PITCHES.map((p) => p.id);
+    c.pitches = ALL_PITCHES.map((p) => p.id);
     if (!c.blessing) c.blessing = "none";
     c.history = ["개발자 모드 · 모든 구종 열기", ...c.history].slice(0, 12);
     this.persist();
