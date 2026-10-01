@@ -1665,6 +1665,11 @@ export type GameState = {
   coin: { result: "go" | "cancel" } | null;
   /** Big centre-screen callout ("폭투", "풀카운트"); `id` changes each time one fires. */
   flash: { text: string; tone: string; id: number } | null;
+  /**
+   * Fielding highlight (diving/jumping catch, diving stop): the 3D view shows it again in a
+   * small slow-motion "TV" window. `fielder` made it at play time `at` (s); `id` is new each time.
+   */
+  replay: { text: string; fielder: number; at: number; id: number } | null;
   /** Settings: rain may fall (off = always clear). Kept in this browser. */
   rainOn: boolean;
   /** The match was called off by rain. */
@@ -1744,6 +1749,7 @@ const initial = (career: Career, mode: Mode = "match", maxInnings = 3): GameStat
   coin: null,
   rainedOut: false,
   flash: null,
+  replay: null,
   limitUsed: 0,
   limitArmed: false,
 });
@@ -2860,11 +2866,13 @@ export class BaseballEngine {
       RULES.diveMax,
     );
   }
-  /** Big callout for a fielding highlight: gold when our team made it, red for the rival. */
-  private highlight(text: string) {
-    this.callout(text, this.batting ? "red" : "gold");
-    this.log(text);
+  /** A fielding highlight: replayed in slow motion in the 3D view's small TV window. */
+  private highlight(l: LivePlay, text: string, at: number) {
+    this.replayId++;
+    this.state.replay = { text, fielder: l.fielder, at, id: this.replayId };
+    this.log(text + "!");
   }
+  private replayId = 0;
   /** Throw speed of the fielder holding the ball (the pitcher's pickoff throw is fixed). */
   private armOf(l: LivePlay) {
     return l.kind === "pickoff" ? l.throwSpeed : this.fielderStats(l.fielder, l).arm;
@@ -3076,7 +3084,7 @@ export class BaseballEngine {
             atCatch.x = lerp(atCatch.x, l.catchPoint.x, 0.85);
             atCatch.z = lerp(atCatch.z, l.catchPoint.z, 0.85);
             l.hold += RULES.diveGetUp;
-            this.highlight("다이빙 캐치!");
+            this.highlight(l, "다이빙 캐치", l.catchAt);
           } else {
             l.catchStyle = "dive";
             l.downUntil = l.catchAt + RULES.diveMissDown;
@@ -3092,7 +3100,7 @@ export class BaseballEngine {
             l.catchStyle = jump ? "jump" : "catch";
             if (jump) {
               l.catchMoment = l.catchAt;
-              this.highlight("점프 캐치!");
+              this.highlight(l, "점프 캐치", l.catchAt);
             }
           }
           l.caughtFly = true;
@@ -3176,7 +3184,7 @@ export class BaseballEngine {
             l.fielderPos.x = lerp(l.fielderPos.x, s.ball.x, 0.85);
             l.fielderPos.z = lerp(l.fielderPos.z, s.ball.z, 0.85);
             l.hold += RULES.diveGetUp;
-            this.highlight("호수비!");
+            this.highlight(l, "호수비", l.elapsed);
           } else {
             l.downUntil = l.elapsed + RULES.diveMissDown;
             l.fielderPos.x = lerp(l.fielderPos.x, s.ball.x, 0.5);

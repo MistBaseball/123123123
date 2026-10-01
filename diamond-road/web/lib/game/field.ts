@@ -3,6 +3,7 @@ import {
   BaseballEngine,
   BASES,
   BASE_PATH_LENGTH,
+  SWING_SWEET,
   DEFENSE,
   pitchData,
   playerLabel,
@@ -16,7 +17,7 @@ import {
   type Vec,
 } from "./engine";
 import * as tex from "./textures";
-import { Avatar, CLIP_KEYS, loadAvatarAssets, type AvatarAssets } from "./avatars";
+import { Avatar, CLIP_KEYS, loadAvatarAssets, type AvatarAssets, type ClipName } from "./avatars";
 /** White "[별호] 이름" text for a fielder's head: no box, a dark outline keeps it readable. */
 function nameTag(label: string) {
   const c = document.createElement("canvas"),
@@ -73,6 +74,23 @@ const curve = (keys: [number, number][], t: number) =>
 const smooth = (t: number) => t * t * (3 - 2 * t);
 /** Batter's swing: seconds from the start to the follow-through, and how long it is held. */
 const SWING_TIME = 0.42;
+/** Highlight replay: slow-motion speed and the window around the catch (s of play time). */
+/** Batter keeps swinging this long into the play before the runner takes over (s). */
+const BAT_FOLLOW = 0.34;
+const REPLAY_SLOW = 0.4,
+  REPLAY_BEFORE = 1.3,
+  REPLAY_AFTER = 1.1;
+type ReplayFrame = {
+  t: number;
+  i: number;
+  x: number;
+  z: number;
+  yaw: number;
+  clip: ClipName | null;
+  time: number;
+  ball: THREE.Vector3;
+  ballOn: boolean;
+};
 const SWING_HOLD = 0.45;
 /** Trail colour of the fastest pitches. */
 const HOT = new THREE.Color("#fff1c9");
@@ -117,6 +135,23 @@ export class BaseballField {
   private runnerSlide: number[] = [-1, -1, -1, -1];
   private lastAvatarPos = new Map<Figure, THREE.Vector3>();
   private diveSide = new Map<Figure, "diving_l" | "diving_r">();
+  /** Last few seconds of the chasing fielder (for the highlight replay). */
+  private tape: ReplayFrame[] = [];
+  private tapeLive: object | null = null;
+  private replaySrc: object | null = null;
+  private replay: { text: string; frames: ReplayFrame[]; startedAt: number; at: number } | null =
+    null;
+  private replayAvatar: Avatar | null = null;
+  private batSwing: { flight: object; press: number; contactAt: number; from: number } | null =
+    null;
+  private replayBall: THREE.Mesh | null = null;
+  private replayCam = new THREE.PerspectiveCamera(36, 16 / 9, 0.1, 500);
+  private tv: {
+    scene: THREE.Scene;
+    cam: THREE.OrthographicCamera;
+    canvas: HTMLCanvasElement;
+    tex: THREE.CanvasTexture;
+  } | null = null;
   /** Weather: lights and sky to dim, rain streaks, and wet-ground material settings. */
   private skyDome!: THREE.Mesh;
   private hemi!: THREE.HemisphereLight;
@@ -930,6 +965,13 @@ export class BaseballField {
       // Hide the drawn body; the root stays (positions, the name tag, the camera targets).
       for (const c of fig.root.children) if (!(c as THREE.Sprite).isSprite) c.visible = false;
     }
+    // The highlight replay's own player and ball (shown only while the TV window draws).
+    this.replayAvatar = new Avatar(assets);
+    this.replayAvatar.object.visible = false;
+    this.scene.add(this.replayAvatar.object);
+    this.replayBall = this.ball.clone();
+    this.replayBall.visible = false;
+    this.scene.add(this.replayBall);
   }
   /**
    * Picks and times each player's animation from the game state: the pitch and the swing are
@@ -1025,6 +1067,8 @@ export class BaseballField {
       a.setGlove(true, lefty);
       // Models face +Z; the drawn figures face their local -Z.
       place(fig, a, fig.root.rotation.y + Math.PI, !!l);
+      // The catcher's camera sits right behind him: he would fill the screen.
+      if (i === 1 && cam === "catcher") a.object.visible = false;
       if (fielding(i, a, fig, moved)) return;
       if (i === 0) {
         const clip = lefty ? "pitch_l" : "pitch_r";
@@ -1037,45 +1081,238 @@ export class BaseballField {
       } else if (i === 1) a.play("catcher_idle", { loop: true });
       else a.play("idle", { loop: true, offset: i * 1.7 });
     });
-    // --- batter: stance, swing (scrubbed on the swing clock), bunt
+    // --- batter: stance, stride on every pitch, swing timed so the bat meets the ball, bunt
+    const live = s.phase === "inplay" && l?.kind === "batted" ? l : null,
+      // He finishes the swing before he drops the bat and runs (the runner takes over).
+      following = !!live && live.elapsed < BAT_FOLLOW;
     {
       const fig = this.batter,
         a = this.avatars!.get(fig)!,
         lefty = this.engine.batter.hand === "L",
-        side = lefty ? "_l" : "_r";
+        side = lefty ? "_l" : "_r",
+        swingClip = `swing${side}` as "swing_r";
       a.setTeam(batting ? "home" : "away");
       a.setBat(true, lefty);
-      a.object.visible = fig.root.visible;
+      a.object.visible = fig.root.visible || following;
       a.object.position.set(lefty ? -0.82 : 0.82, 0, 0);
       a.object.rotation.set(0, 0, 0);
-      const since = this.swingFlight ? this.time - this.swingStart : Infinity,
-        bunt = s.swingStyle === "bunt" && batting;
-      if (since <= SWING_TIME + SWING_HOLD) {
-        if (bunt) a.play(`bunt${side}` as "bunt_r", { time: K.buntSquare });
-        else
-          a.play(`swing${side}` as "swing_r", {
-            time: Math.min(K.swingFinish, K.swingContact + (since - SWING_TIME * 0.5) * 1.5),
-            fade: 0.08,
-          });
-      } else if (bunt && (s.phase === "windup" || s.phase === "flight"))
+      const bunt = s.swingStyle === "bunt" && batting;
+      // A new swing: the user's bat reaches the hitting point when a perfectly timed swing
+      // would (the rules' sweet spot); the AI's swing is decided at the plate, so at once.
+      if (f && (f.swung || f.aiSwing) && this.batSwing?.flight !== f) {
+        const vd = f.visualDuration;
+        this.batSwing = {
+          flight: f,
+          press: this.time,
+          contactAt: this.time + (f.swung ? Math.max(0.05, (1 - SWING_SWEET) * vd) : 0.05),
+          from: a.clip === swingClip ? Math.min(a.clipTime, 0.8) : 0.72,
+        };
+      } else if (this.batSwing && (f ? this.batSwing.flight !== f : s.phase !== "inplay"))
+        this.batSwing = null;
+      const sw = this.batSwing,
+        since = sw ? this.time - sw.contactAt : Infinity;
+      if (bunt && (s.phase === "windup" || s.phase === "flight" || (sw && since < 0.9)))
         a.play(`bunt${side}` as "bunt_r", {
           time: s.phase === "windup" ? (1 - s.timer / 0.62) * K.buntSquare : K.buntSquare,
         });
-      else a.play(`idle_bat${side}` as "idle_bat_r", { loop: true, fade: 0.35 });
+      else if (sw && since < 0.9) {
+        const time =
+          since < 0
+            ? lerp(
+                sw.from,
+                K.swingContact,
+                clamp((this.time - sw.press) / (sw.contactAt - sw.press), 0, 1),
+              )
+            : Math.min(K.swingFinish, K.swingContact + since * 1.4);
+        a.play(swingClip, { time, fade: 0.06 });
+      } else if (s.phase === "flight" && f && !sw) {
+        // Stride and load while the ball comes in; a take goes back to the stance afterwards.
+        const u = clamp((f.elapsed / f.visualDuration - 0.2) / 0.65, 0, 1);
+        a.play(swingClip, { time: lerp(0.35, 0.72, u * u * (3 - 2 * u)), fade: 0.25 });
+      } else a.play(`idle_bat${side}` as "idle_bat_r", { loop: true, fade: 0.35 });
     }
     // --- runners
+    const batterSpot = this.avatars!.get(this.batter)!.object.position;
     this.runners.forEach((fig, i) => {
       const a = this.avatars!.get(fig)!;
       a.setTeam(batting ? "home" : "away");
       a.setGlove(false);
-      place(fig, a, fig.root.rotation.y + Math.PI);
+      // The batter-runner leaves from where the batter stood (eased, no pop).
+      const leaving = i === 0 && !!live && live.elapsed < BAT_FOLLOW + 0.6;
+      place(fig, a, fig.root.rotation.y + Math.PI, leaving);
+      if (i === 0 && following) {
+        a.object.visible = false;
+        a.object.position.set(batterSpot.x, 0, batterSpot.z);
+      }
       if (this.runnerSlide[i] >= 0)
         a.play("slide", { time: K.slideDown * this.runnerSlide[i] + 0.05 });
       else if (this.runnerMoving[i]) a.play("run", { loop: true, speed: 1.15, offset: i * 0.1 });
       else a.play("idle", { loop: true, offset: i * 2.3 });
     });
     for (const a of this.avatars!.values()) a.update(dt);
-    void cam;
+    this.recordReplay();
+  }
+  /** Records the chasing fielder each frame; starts the replay once a highlight has played out. */
+  private recordReplay() {
+    const s = this.engine.state,
+      l = s.live;
+    if (l && s.phase === "inplay" && l.kind === "batted") {
+      if (this.tapeLive !== l) {
+        this.tape = [];
+        this.tapeLive = l;
+      }
+      const a = this.avatars!.get(this.players[l.fielder])!;
+      this.tape.push({
+        t: l.elapsed,
+        i: l.fielder,
+        x: a.object.position.x,
+        z: a.object.position.z,
+        yaw: a.object.rotation.y,
+        clip: a.clip,
+        time: a.clipTime,
+        ball: this.ball.position.clone(),
+        ballOn: this.ball.visible,
+      });
+      while (this.tape.length && this.tape[0].t < l.elapsed - 4) this.tape.shift();
+    }
+    const r = s.replay;
+    if (!r || r === this.replaySrc) return;
+    const over =
+      !l || s.phase !== "inplay" || l !== this.tapeLive || l.elapsed >= r.at + REPLAY_AFTER;
+    if (!over) return;
+    this.replaySrc = r;
+    const frames = this.tape.filter(
+      (f) => f.i === r.fielder && f.t >= r.at - REPLAY_BEFORE && f.t <= r.at + REPLAY_AFTER,
+    );
+    if (frames.length < 10 || !this.replayAvatar) return;
+    this.replay = { text: r.text, frames, startedAt: this.time, at: r.at };
+    // Same uniform and glove hand as the fielder who made the play.
+    this.replayAvatar.setTeam(this.engine.batting ? "away" : "home");
+    this.replayAvatar.setGlove(true, this.engine.fielders[r.fielder]?.hand === "L");
+    this.drawTv(r.text);
+  }
+  private drawTv(text: string) {
+    if (!this.tv) {
+      const canvas = document.createElement("canvas");
+      canvas.width = 640;
+      canvas.height = 80;
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      const scene = new THREE.Scene(),
+        bar = new THREE.Mesh(
+          new THREE.PlaneGeometry(2, 0.3),
+          new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false }),
+        );
+      bar.position.y = 0.85;
+      scene.add(bar);
+      this.tv = { scene, cam: new THREE.OrthographicCamera(-1, 1, 1, -1, -1, 1), canvas, tex };
+    }
+    const g = this.tv.canvas.getContext("2d")!;
+    g.clearRect(0, 0, 640, 80);
+    g.fillStyle = "rgba(10, 16, 24, 0.72)";
+    g.fillRect(0, 0, 640, 80);
+    g.fillStyle = "#e5483d";
+    g.beginPath();
+    g.arc(30, 40, 10, 0, Math.PI * 2);
+    g.fill();
+    g.font = "800 34px Pretendard, 'Noto Sans KR', sans-serif";
+    g.textBaseline = "middle";
+    g.fillStyle = "#ffffff";
+    g.fillText("REPLAY", 52, 42);
+    g.fillStyle = "#f2c14e";
+    g.fillText(text, 206, 42);
+    g.font = "700 26px Pretendard, sans-serif";
+    g.fillStyle = "#cfd8e3";
+    g.textAlign = "right";
+    g.fillText(`SLOW ×${REPLAY_SLOW}`, 624, 42);
+    g.textAlign = "left";
+    this.tv.tex.needsUpdate = true;
+  }
+  /** The small TV window (bottom-left): the highlight again, in slow motion. */
+  private renderReplay() {
+    const R = this.replay,
+      av = this.replayAvatar,
+      ball = this.replayBall;
+    if (!R || !av || !ball || !this.tv) return;
+    const fr = R.frames,
+      t0 = fr[0].t,
+      t1 = fr[fr.length - 1].t,
+      real = this.time - R.startedAt;
+    // The replay plays once, holds the last frame a moment, then the window closes.
+    if (real > (t1 - t0) / REPLAY_SLOW + 1 || this.engine.state.phase === "windup") {
+      this.replay = null;
+      return;
+    }
+    const tt = Math.min(t1, t0 + real * REPLAY_SLOW);
+    let k = 0;
+    while (k < fr.length - 2 && fr[k + 1].t <= tt) k++;
+    const a = fr[k],
+      b = fr[k + 1] ?? a,
+      u = b.t > a.t ? clamp((tt - a.t) / (b.t - a.t), 0, 1) : 0;
+    av.object.position.set(lerp(a.x, b.x, u), 0, lerp(a.z, b.z, u));
+    av.object.rotation.set(0, a.yaw, 0);
+    if (a.clip)
+      av.pose(a.clip, a.clip === b.clip && b.time >= a.time ? lerp(a.time, b.time, u) : a.time);
+    ball.position.lerpVectors(a.ball, b.ball, u);
+    // Camera: side-on to the run (the side facing home plate), following the player.
+    const at = fr.find((f) => f.t >= R.at) ?? fr[fr.length - 1],
+      rx = at.x - fr[0].x,
+      rz = at.z - fr[0].z,
+      rl = Math.hypot(rx, rz);
+    let sx = rl > 0.5 ? -rz / rl : -at.x / (Math.hypot(at.x, at.z) || 1),
+      sz = rl > 0.5 ? rx / rl : -at.z / (Math.hypot(at.x, at.z) || 1);
+    if (sx * -at.x + sz * -at.z < 0) {
+      sx = -sx;
+      sz = -sz;
+    }
+    const p = av.object.position;
+    this.replayCam.position.set(p.x + sx * 5, 1.7, p.z + sz * 5);
+    this.replayCam.lookAt(p.x, 1.05, p.z);
+    // Hide what belongs to the live view: name tags, the live ball and the real fielder.
+    const hidden: [THREE.Object3D, boolean][] = [];
+    const hide = (o: THREE.Object3D) => {
+      hidden.push([o, o.visible]);
+      o.visible = false;
+    };
+    for (const [fig, live] of this.avatars!) {
+      hide(fig.root);
+      if (fig === this.players[a.i]) hide(live.object);
+    }
+    hide(this.ball);
+    hide(this.halo);
+    hide(this.trail);
+    av.object.visible = true;
+    ball.visible = a.ballOn;
+    const r = this.renderer,
+      size = r.getSize(new THREE.Vector2()),
+      w = Math.round(Math.min(size.x * 0.36, 440)),
+      h = Math.round((w * 9) / 16),
+      x = 12,
+      y = 12,
+      clear = r.getClearColor(new THREE.Color()),
+      alpha = r.getClearAlpha(),
+      shadows = r.shadowMap.autoUpdate;
+    r.setScissorTest(true);
+    r.setScissor(x - 3, y - 3, w + 6, h + 6);
+    r.setClearColor(0xf4f1e8, 1);
+    r.clear(true, true, false);
+    r.setViewport(x, y, w, h);
+    r.setScissor(x, y, w, h);
+    this.replayCam.aspect = w / h;
+    this.replayCam.updateProjectionMatrix();
+    r.shadowMap.autoUpdate = false;
+    r.render(this.scene, this.replayCam);
+    r.shadowMap.autoUpdate = shadows;
+    r.autoClear = false;
+    r.clearDepth();
+    r.render(this.tv.scene, this.tv.cam);
+    r.autoClear = true;
+    r.setScissorTest(false);
+    r.setViewport(0, 0, size.x, size.y);
+    r.setClearColor(clear, alpha);
+    av.object.visible = false;
+    ball.visible = false;
+    for (const [o, v] of hidden) o.visible = v;
   }
   /** A fielder holding the ball shows it in his glove (or throwing hand), not in mid-air. */
   private holdBall() {
@@ -1399,7 +1636,17 @@ export class BaseballField {
     const s = this.engine.state,
       f0 = s.flight;
     let cam = s.camera;
-    if (s.phase === "inplay" && s.autoCamera) cam = "ball";
+    // Auto camera follows the ball, after a short look at the bat meeting it (close views).
+    if (
+      s.phase === "inplay" &&
+      s.autoCamera &&
+      !(
+        s.live?.kind === "batted" &&
+        s.live.elapsed < BAT_FOLLOW - 0.04 &&
+        (cam === "catcher" || cam === "pitcher")
+      )
+    )
+      cam = "ball";
     const key = cam + this.host.clientWidth / this.host.clientHeight;
     const narrow = this.host.clientWidth < 600;
     let pos = new THREE.Vector3(),
@@ -1805,7 +2052,14 @@ export class BaseballField {
     // Pitch speed made visible: fast pitches leave a longer, brighter, white-hot trail,
     // slow ones a short faint one (0 at 120 km/h or below, 1 at 165 km/h and up).
     const heat = s.phase === "flight" && f ? Math.min(1, Math.max(0, (f.speed - 120) / 45)) : 0.4;
-    if (s.phase === "flight" || s.phase === "inplay") {
+    const lv = s.live,
+      held =
+        s.phase === "inplay" &&
+        !!lv &&
+        (lv.throw ? lv.throw.receivedAt !== null : lv.fieldedAt !== null);
+    // A held ball has no tail: the throw starts a fresh one (no kink from the pickup).
+    if (held) this.trailPositions = [];
+    else if (s.phase === "flight" || s.phase === "inplay") {
       this.trailPositions.push(this.ball.position.clone());
       const keep = s.phase === "flight" ? Math.round(12 + heat * 34) : 26;
       while (this.trailPositions.length > keep) this.trailPositions.shift();
@@ -1829,6 +2083,7 @@ export class BaseballField {
       this.time - this.swingStart > SWING_TIME + SWING_HOLD && this.time - this.swingStart < 2;
     this.smoothPose(this.batter, settling ? 1 - Math.exp(-dt * 7) : rate, restore);
     this.renderer.render(this.scene, this.camera);
+    this.renderReplay();
     // Restore the exact angles (Euler), not a quaternion: re-reading a turn past 90° as Euler
     // angles flips x and z, which made the batter shake on every swing.
     for (const [j, e] of restore) j.rotation.copy(e);

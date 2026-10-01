@@ -304,6 +304,23 @@ export class Avatar {
   get clip() {
     return this.current;
   }
+  /** Playback position of the current clip (s). */
+  get clipTime() {
+    return this.current ? (this.actions.get(this.current)?.time ?? 0) : 0;
+  }
+  /** Freezes on one exact frame (no blending): used to replay recorded frames. */
+  pose(name: ClipName, time: number) {
+    const a = this.actions.get(name);
+    if (!a) return;
+    this.mixer.stopAllAction();
+    a.reset().play();
+    a.setEffectiveWeight(1);
+    a.time = Math.min(Math.max(0, time), a.getClip().duration - 1e-3);
+    a.timeScale = 0;
+    this.current = name;
+    this.mixer.update(0);
+    this.placeBat();
+  }
   update(dt: number) {
     this.mixer.update(dt);
     this.placeBat();

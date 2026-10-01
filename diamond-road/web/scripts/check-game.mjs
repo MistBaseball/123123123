@@ -2362,7 +2362,7 @@ check(
   },
 );
 check(
-  "Diving, jumping and ground-ball catches: near misses get a dive, skill and rain decide",
+  "Diving, jumping and ground-ball catches: near misses get a dive, skill and rain decide; highlights are replayed",
   () => {
     const run = (rating, rain = false, n = 600) => {
       const o = {
@@ -2392,7 +2392,8 @@ check(
             downChecked = true;
           }
         }
-        if (g.state.flash) o.callouts.add(g.state.flash.text);
+        if (g.state.replay) o.callouts.add(g.state.replay.text);
+        assert(!g.state.flash || !/캐치|호수비/.test(g.state.flash.text), "highlights are replays, not callouts");
         if (l.diveTried && !l.ground) {
           o.dives++;
           if (l.downUntil === undefined) {
@@ -2415,7 +2416,7 @@ check(
     assert(avg.missedDown > 0, "a missed dive keeps the fielder down");
     assert(avg.ground > 50, "grounders are scooped up (ground-ball catch)");
     assert(avg.jump > 0, "liners and balls at the wall get jump catches");
-    assert(avg.callouts.has("다이빙 캐치!") && avg.callouts.has("점프 캐치!"));
+    assert(avg.callouts.has("다이빙 캐치") && avg.callouts.has("점프 캐치"));
     // Bunts and the catcher never dive.
     for (let i = 1; i <= 200; i++) {
       const g = new BaseballEngine(newCareer(), seed(i));
