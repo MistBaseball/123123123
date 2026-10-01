@@ -3864,17 +3864,8 @@ kbd {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.pp-actions .throw-button {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 .mg-tag {
   display: block;
-}
-@media (max-width: 1150px) {
-  .pp-actions .throw-button kbd {
-    display: none;
-  }
 }
 @media (max-width: 1150px) and (min-width: 681px) {
   .pp-pitches,
@@ -4300,6 +4291,9 @@ kbd {
 .tutorial-coach.floating {
   position: fixed;
   z-index: 70;
+  transition:
+    left 0.35s ease,
+    top 0.35s ease;
   width: min(400px, calc(100vw - 40px));
 }
 .tutorial-head {
@@ -4420,4 +4414,18 @@ kbd {
   .recap-breakdown {
     grid-template-columns: 1fr;
   }
+}
+.throw-hint {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #e8b65a1a;
+  font-size: 0.8125rem;
+  color: #f4d48c;
+}
+.throw-hint kbd {
+  font-size: 0.6875rem;
 }

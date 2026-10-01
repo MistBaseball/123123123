@@ -1839,8 +1839,8 @@ const TOURS: Record<TourTrack, TourStep[]> = {
     },
     {
       title: "직접 던져 보기",
-      body: "조준판을 클릭하거나, 노란 '던지기' 버튼 또는 Space를 누르면 던져요. 지금 한 구를 던져 보세요!",
-      target: ".throw-button",
+      body: "조준판(또는 3D 화면의 스트라이크 존)에서 노릴 곳을 클릭하면 바로 던져요. 마우스를 올려 둔 채 Space를 눌러도 돼요. 지금 한 구를 던져 보세요!",
+      target: ".aim-pad",
       wait: "throw",
     },
     {
@@ -1976,28 +1976,38 @@ function TutorialCoach({
   }, [t, track]);
   if (!t) return null;
   const last = step === steps.length - 1;
-  // Put the card in the first corner that does not cover the highlighted element.
+  // Card position: bottom-left as usual; if that would cover the highlight, sit right above or
+  // below it (then beside it, then a corner). Always left/top so it slides instead of jumping.
   const vw = typeof window === "undefined" ? 1280 : window.innerWidth,
     vh = typeof window === "undefined" ? 800 : window.innerHeight,
     cw = Math.min(400, vw - 40),
-    ch = 250,
-    corners: React.CSSProperties[] = [
-      { left: 20, bottom: 20 },
-      { right: 20, bottom: 20 },
-      { right: 20, top: 20 },
-      { left: 20, top: 20 },
+    ch = 240,
+    gap = 14,
+    fit = (x: number, y: number) => ({
+      left: clamp(x, 20, vw - cw - 20),
+      top: clamp(y, 20, vh - ch - 20),
+    }),
+    clear = (p: { left: number; top: number }) =>
+      !spot ||
+      p.left + cw < spot.x ||
+      spot.x + spot.w < p.left ||
+      p.top + ch < spot.y ||
+      spot.y + spot.h < p.top,
+    candidates = [
+      fit(20, vh - ch - 20),
+      ...(spot
+        ? [
+            fit(spot.x, spot.y - ch - gap),
+            fit(spot.x, spot.y + spot.h + gap),
+            fit(spot.x + spot.w + gap, spot.y),
+            fit(spot.x - cw - gap, spot.y),
+          ]
+        : []),
+      fit(vw - cw - 20, vh - ch - 20),
+      fit(vw - cw - 20, 20),
+      fit(20, 20),
     ],
-    box = (c: React.CSSProperties) => {
-      const x = c.left !== undefined ? 20 : vw - 20 - cw,
-        y = c.top !== undefined ? 20 : vh - 20 - ch;
-      return { x, y };
-    },
-    overlaps = (c: React.CSSProperties) => {
-      if (!spot) return false;
-      const { x, y } = box(c);
-      return !(x + cw < spot.x || spot.x + spot.w < x || y + ch < spot.y || spot.y + spot.h < y);
-    },
-    corner = corners.find((c) => !overlaps(c)) ?? corners[0];
+    corner: React.CSSProperties = candidates.find(clear) ?? candidates[0];
   return createPortal(
     <>
       {spot && (
@@ -2861,14 +2871,13 @@ export default function DiamondGame() {
                   <AimPad engine={engine} s={s} />
                 </div>
                 <div className="pp-actions">
-                  <button
-                    className="primary-button throw-button"
-                    disabled={!canPitch}
-                    onClick={() => engine.throwAt()}
-                  >
-                    <MousePointer2 size={16} />
-                    {pitch.name} 던지기
-                  </button>
+                  {/* No throw button: moving the mouse to it dragged the aim off the pad. */}
+                  <span className="throw-hint">
+                    <MousePointer2 size={15} />
+                    <span>
+                      조준판 클릭 또는 <kbd>Space</kbd> → {pitch.name} 던지기
+                    </span>
+                  </span>
                   <button
                     className="subtle-button"
                     disabled={!canPitch || s.mode !== "match"}
