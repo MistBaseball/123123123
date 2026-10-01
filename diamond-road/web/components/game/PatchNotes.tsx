@@ -17,6 +17,15 @@ type Patch = { version: string; date: string; title: string; items: string[] };
 
 export const PATCHES: Patch[] = [
   {
+    version: "v11.2",
+    date: "10/02",
+    title: "히든 힌트 · 서버 안내",
+    items: [
+      "게임 곳곳에 히든 요소의 힌트가 숨겨졌습니다. 화면 구석의 작은 글씨를 잘 읽어 보세요!",
+      "명예의 전당에 안내가 추가되었습니다: 일주일 이상 아무도 접속하지 않으면 명예의 전당이 자동으로 비활성화됩니다(게임은 정상, 다시 켜지면 기록 복구).",
+    ],
+  },
+  {
     version: "v11.1",
     date: "10/02",
     title: "명예의 전당 연결",
