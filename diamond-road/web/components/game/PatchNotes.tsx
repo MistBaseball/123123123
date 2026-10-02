@@ -17,6 +17,12 @@ type Patch = { version: string; date: string; title: string; items: string[] };
 
 export const PATCHES: Patch[] = [
   {
+    version: "v11.5",
+    date: "10/02",
+    title: "히든 선택지",
+    items: ["어떤 히든 요소는 받지 않고 거절할 수도 있습니다. 정정당당하게 갈지는 당신의 선택!"],
+  },
+  {
     version: "v11.4",
     date: "10/02",
     title: "훈련 상향 · 동작 다듬기 · 새 히든",
