@@ -3247,16 +3247,16 @@ export default function DiamondGame() {
                     className={`subtle-button steal-button ${s.stealCall ? "selected" : ""}`}
                     disabled={
                       !(canPitch || (s.phase === "result" && s.outs < 3 && !s.paused)) ||
-                      engine.stealTarget !== 2
+                      !engine.stealTarget
                     }
                     onClick={() => engine.steal()}
                     aria-pressed={s.stealCall}
                   >
-                    {s.stealCall
-                      ? "도루 사인 ON · 다음 투구에 2루로"
-                      : s.stealTrack
-                        ? "1루 주자 도루 중!"
-                        : "1루 주자 도루 사인"}{" "}
+                    {s.stealTrack
+                      ? `${s.stealTrack.from}루 주자 도루 중!`
+                      : s.stealCall
+                        ? `도루 사인 ON · 다음 투구에 ${engine.stealTarget || 2}루로`
+                        : `${Math.max(1, engine.stealTarget - 1)}루 주자 도루 사인`}{" "}
                     <kbd>E</kbd>
                   </button>
                 )}

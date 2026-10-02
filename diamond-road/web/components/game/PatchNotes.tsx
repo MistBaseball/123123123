@@ -17,6 +17,15 @@ type Patch = { version: string; date: string; title: string; items: string[] };
 
 export const PATCHES: Patch[] = [
   {
+    version: "v11.10",
+    date: "10/03",
+    title: "데드볼 반응 · 3루 도루",
+    items: [
+      "데드볼을 맞으면 머리·몸통·다리에 따라 다른 반응을 합니다. 결과가 뜨는 동안 타석에서만 보여 주고, 경기 흐름은 끊지 않습니다.",
+      "2루 주자도 3루로 도루할 수 있습니다(1루·2루에 주자가 있으면 2루 주자가 뜁니다, E 키).",
+    ],
+  },
+  {
     version: "v11.9",
     date: "10/03",
     title: "상대 도루 · 태그업",

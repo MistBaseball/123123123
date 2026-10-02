@@ -147,6 +147,9 @@ export class BaseballField {
   private runnerSlide: number[] = [-1, -1, -1, -1];
   /** Render time each runner's slide began (-1 = not sliding). */
   private slideStart: number[] = [-1, -1, -1, -1];
+  /** Hit by pitch: the reaction plays at the plate while the call is on screen. */
+  private hbpSeen = 0;
+  private hbpAt = -9;
   /** This slide is a tag dodge (trip into the bag, then the dive clip's get-up). */
   private slideDodge: boolean[] = [false, false, false, false];
   /** Each runner's live track this frame (turns, falls), or null. */
@@ -1217,7 +1220,26 @@ export class BaseballField {
         this.batSwing = null;
       const sw = this.batSwing,
         since = sw ? this.time - sw.contactAt : Infinity;
-      if (bunt && (s.phase === "windup" || s.phase === "flight" || (sw && since < 0.9)))
+      // Hit by pitch: he reacts where the ball got him (head, body or legs), only while the
+      // call is shown; then the next batter steps in as usual.
+      if (s.hbp && s.hbp.id !== this.hbpSeen) {
+        this.hbpSeen = s.hbp.id;
+        this.hbpAt = this.time;
+      }
+      const hbp = s.phase === "result" && !s.live && s.lastOutcome === "HitByPitch" ? s.hbp : null,
+        react = hbp
+          ? hbp.part === "머리"
+            ? { clip: "hit_high" as const, dur: K.hitHigh }
+            : hbp.part === "다리" || hbp.part === "발"
+              ? { clip: "hit_low" as const, dur: K.hitLow }
+              : { clip: "hit_mid" as const, dur: K.hitMid }
+          : null;
+      if (hbp && react && this.time - this.hbpAt < react.dur) {
+        a.setBat(false, lefty);
+        a.object.visible = true;
+        a.object.position.set(hbp.x < 0 ? -0.82 : 0.82, 0, 0);
+        a.play(react.clip, { time: this.time - this.hbpAt, fade: 0.08 });
+      } else if (bunt && (s.phase === "windup" || s.phase === "flight" || (sw && since < 0.9)))
         a.play(`bunt${side}` as "bunt_r", {
           time: s.phase === "windup" ? (1 - s.timer / 0.62) * K.buntSquare : K.buntSquare,
         });
@@ -2375,6 +2397,15 @@ export class BaseballField {
     });
     this.ball.position.set(s.ball.x, s.ball.y, s.ball.z);
     this.holdBall();
+    // Hit by pitch: the ball drops off the batter and rolls a little.
+    if (s.phase === "result" && !s.live && s.hbp && s.lastOutcome === "HitByPitch") {
+      const t = this.time - this.hbpAt;
+      this.ball.position.set(
+        s.hbp.x + Math.min(t, 1.2) * 0.4 * Math.sign(s.hbp.x),
+        Math.max(0.04, s.hbp.y - 4.9 * t * t),
+        s.hbp.z + Math.min(t, 1.2) * 0.6,
+      );
+    }
     this.hitboxes.update(dt, this.camera);
     // A knuckleball barely spins (that is why it flutters): only a slow tumble.
     if (s.phase === "flight" || s.phase === "inplay")

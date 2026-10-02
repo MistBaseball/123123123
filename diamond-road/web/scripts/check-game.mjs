@@ -1089,12 +1089,19 @@ check(
     f.foul();
     assert.equal(f.state.stealTrack, null);
     assert.deepEqual(f.state.bases, [true, false, false]);
-    // Second base occupied: no steal call for us (only the rival ever tries third).
+    // Second base occupied: the runner on second steals third; bases full: no steal.
     const o = new BaseballEngine();
     o.state.half = "bottom";
     o.state.bases = [true, true, false];
     assert.equal(o.stealTarget, 3);
-    assert(!o.steal());
+    assert(o.steal());
+    while (o.state.phase === "ready") o.tick(1 / 60);
+    assert.equal(o.state.stealTrack?.from, 2);
+    assert.equal(o.state.stealTrack?.target, 3);
+    const full = new BaseballEngine();
+    full.state.half = "bottom";
+    full.state.bases = [true, true, true];
+    assert(!full.steal());
     // The rival steals too (when we pitch), only with a runner who can make it.
     let tries = 0,
       made = 0;

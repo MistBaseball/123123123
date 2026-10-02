@@ -2483,7 +2483,7 @@ export class BaseballEngine {
         s.mode === "match" &&
         stealTo > 0 &&
         s.outs < 3 &&
-        (this.batting ? s.stealCall && stealTo === 2 : this.aiWantsToSteal(stealTo));
+        (this.batting ? s.stealCall : this.aiWantsToSteal(stealTo));
     if (go) {
       const from = stealTo - 1,
         pace = this.runnerPace(formOf(this.runnerOn(from)).speed);
@@ -5025,7 +5025,7 @@ export class BaseballEngine {
     if (!this.batting || s.mode !== "match" || (s.phase !== "ready" && !between) || s.paused)
       return false;
     const target = this.stealTarget;
-    if (target !== 2) return false;
+    if (!target) return false;
     s.stealCall = !s.stealCall;
     // Keep the result of the last play on screen; the steal button shows the sign.
     if (between) {
@@ -5097,7 +5097,7 @@ export class BaseballEngine {
     s.live = null;
     s.stealTrack = null;
     // A steal call only stands while there is still a runner on first and second is open.
-    if (!this.batting || this.stealTarget !== 2) s.stealCall = false;
+    if (!this.batting || !this.stealTarget) s.stealCall = false;
     s.timer = 1.6;
     s.ball = V(0.35, 1.85, 18.44);
     s.message = this.batting ? "다음 공을 기다리세요" : "다음 승부를 준비하세요";
