@@ -411,6 +411,8 @@ export const RULES = {
   diveLead: 0.35,
   /** An outfielder takes over a grounder through the infield if he gets there this much sooner (s). */
   backupMargin: 0.25,
+  /** Pine tar: chance per pitch that the umpire checks the ball and ejects the pitcher. */
+  pineTarCatch: 0.05,
   /** A throw and a runner this close at a base (s) make a slow-motion replay of the call. */
   closePlay: 0.35,
   groundDiveReach: 4.0,
@@ -627,6 +629,9 @@ export const SWING_STYLES: Record<
 export const batReach = (contact: number, style: SwingStyle) =>
   (0.12 + clamp(over(contact), 0, 150) * 0.001) * SWING_STYLES[style].reach;
 /** Experience points: in-match plays, match result and daily actions. */
+/** Training stat gain multiplier: easy mode doubles it, otherwise ×1.5 (v11.4). */
+export const trainMultiplier = (difficulty: "easy" | "normal" | "hard") =>
+  difficulty === "easy" ? 2 : 1.5;
 /** Experience (구종 상점). Raised ×1.5 in v11.3: friends found the first days slow. */
 export const XP = {
   strikeout: 8,
@@ -670,6 +675,20 @@ export const carryScale = (power: number) => 0.78 + over(power) / 240;
 export const runSpeed = (speed: number) => 6.2 + over(speed) * 0.02;
 /** Batted balls that travel farther than this (m) are home runs. */
 export const HOME_RUN_DISTANCE = 104;
+/** Outfield wall (field.ts draws it): radius from home plate and padding height (m). */
+export const WALL_DISTANCE = 108;
+export const WALL_HEIGHT = 3.2;
+/** A home run lands at least this far behind the wall. */
+export const HR_CLEARANCE = 7;
+/**
+ * Arc height of a home run landing `dist` m away, so that it passes the wall at least 2 m
+ * above the padding (the flight is start→land with a sine arc on top).
+ */
+export const homerArc = (dist: number) => {
+  const u = Math.min(0.99, WALL_DISTANCE / dist),
+    need = WALL_HEIGHT + 2 - lerp(0.8, 0.12, u);
+  return Math.max(25, need / Math.sin(Math.PI * u));
+};
 /**
  * How sharply the pitcher's pitches bite against AI batters (1 at a movement of 65): scales each
  * pitch's chase / whiff / weak-contact data and slightly lowers contact on every pitch.
@@ -1474,6 +1493,12 @@ export type Career = {
   proDay?: number;
   firstDay?: number;
   mlbDay?: number;
+  /** Training: fraction of a stat point carried to the next session (×1.5 gains). */
+  trainCarry?: number;
+  /** Hidden skill pine tar (V) is learned. */
+  pineTar?: boolean;
+  /** Caught with pine tar and ejected: hall-of-fame title 「불명예」 (never cleared). */
+  dishonor?: boolean;
   /** Hall-of-fame identity of this career: row id and the secret that lets it update its row. */
   hofId?: string;
   hofSecret?: string;
@@ -1494,6 +1519,9 @@ export const statCapOf = (
 export const LIMITLESS_CAP = 250;
 /** Limit break (G): every stat counts as this for one inning. */
 export const LIMIT_BREAK = 300;
+/** Hidden skill pine tar: pitching ratings bonus, and the penalty when the umpire finds it. */
+export const PINE_TAR_BOOST = 20;
+export const PINE_TAR_PENALTY = 20;
 /** Cheer (T): opponents' ratings drop by this for one inning. */
 export const CHEER_DROP = 15;
 /** Secret name: typing it on the creation screen starts a two-way legend. */
@@ -1743,11 +1771,15 @@ export type GameState = {
   /** Limit break: uses this match, and armed for the very next pitch. */
   limitUsed: number;
   limitArmed: boolean;
+  /** Hidden skill V: pine tar on the ball for the rest of this match (pitching +20). */
+  pineTar: boolean;
+  /** The umpire found the pine tar: ejected, the match is lost. */
+  ejected: boolean;
   /** Cheer (T) used in this match, and the inning it is active in (0 = none). */
   cheerUsed: boolean;
   cheerInning: number;
   /** A hidden condition just met: a hidden pitch, or the "legend" start (UI shows a reveal). */
-  hiddenUnlock: PitchId | "legend" | null;
+  hiddenUnlock: PitchId | "legend" | "pinetar" | null;
 };
 const initial = (career: Career, mode: Mode = "match", maxInnings = 3): GameState => ({
   mode,
@@ -1819,6 +1851,8 @@ const initial = (career: Career, mode: Mode = "match", maxInnings = 3): GameStat
   replayBusy: false,
   limitUsed: 0,
   limitArmed: false,
+  pineTar: false,
+  ejected: false,
 });
 export class BaseballEngine {
   private matchStrikeouts = 0;
@@ -2187,6 +2221,11 @@ export class BaseballEngine {
     )
       return false;
     this.setAim(x, y);
+    // Pine tar: every pitch the umpire may notice something odd and check the ball.
+    if (s.pineTar && s.mode === "match" && this.rng() < RULES.pineTarCatch) {
+      this.ejectForPineTar();
+      return true;
+    }
     this.launch(false);
     return true;
   }
@@ -2675,7 +2714,11 @@ export class BaseballEngine {
       range = bunt
         ? clamp(RULES.buntSweet + (this.rng() - 0.5) * 2 * miss * 5, RULES.buntMin, RULES.buntMax)
         : (8 + q * q * 115) * carryScale(formOf(this.batter).power),
-      land = V(Math.sin(angle) * range, 0.12, Math.cos(angle) * range);
+      // A home run (past HOME_RUN_DISTANCE) always flies over the outfield wall: it lands at
+      // least HR_CLEARANCE beyond it (never in front of the wall or through the padding).
+      flyTo =
+        range > HOME_RUN_DISTANCE && !bunt ? Math.max(range, WALL_DISTANCE + HR_CLEARANCE) : range,
+      land = V(Math.sin(angle) * flyTo, 0.12, Math.cos(angle) * flyTo);
     let fielder = 2,
       best = Infinity;
     DEFENSE.forEach((p, i) => {
@@ -2700,7 +2743,7 @@ export class BaseballEngine {
             : lineDrive
               ? clamp(range / 32, 1.1, 2.7)
               : clamp(HANG_BASE + range / HANG_DIV, 1.8, 4.2),
-      height = hr ? 25 : lineDrive ? 3.5 : q > 0.7 ? 17 : 9;
+      height = hr ? homerArc(Math.hypot(land.x, land.z)) : lineDrive ? 3.5 : q > 0.7 ? 17 : 9;
     // Find the descending, glove-height point of this exact flight.
     let lo = 0.5,
       hi = 1;
@@ -4076,20 +4119,23 @@ export class BaseballEngine {
   private finish() {
     const s = this.state;
     s.phase = "finished";
-    s.message = s.rainedOut
-      ? "우천취소"
-      : s.score[1] > s.score[0]
-        ? "VICTORY"
-        : s.score[1] === s.score[0]
-          ? "DRAW"
-          : "GAME OVER";
+    const ejected = s.ejected;
+    s.message = ejected
+      ? "퇴장"
+      : s.rainedOut
+        ? "우천취소"
+        : s.score[1] > s.score[0]
+          ? "VICTORY"
+          : s.score[1] === s.score[0]
+            ? "DRAW"
+            : "GAME OVER";
     const [away, home] = this.teams;
-    s.detail = `${s.rainedOut ? `${s.inning - (s.half === "bottom" ? 0 : 1)}회까지 · 현재 점수로 결과 처리 · ` : ""}${away} ${s.score[0]} : ${s.score[1]} ${home}`;
+    s.detail = `${ejected ? "파인타르 적발 · 몰수패 · 모든 능력치 −20 · " : ""}${s.rainedOut ? `${s.inning - (s.half === "bottom" ? 0 : 1)}회까지 · 현재 점수로 결과 처리 · ` : ""}${away} ${s.score[0]} : ${s.score[1]} ${home}`;
     if (!this.recorded) {
       this.recorded = true;
       const c = s.career;
       c.games++;
-      if (s.score[1] > s.score[0]) c.wins++;
+      if (!ejected && s.score[1] > s.score[0]) c.wins++;
       c.strikeouts += this.matchStrikeouts;
       c.hits += this.matchHits;
       c.runs += this.matchRuns;
@@ -4101,8 +4147,8 @@ export class BaseballEngine {
       c.form = clamp(c.form - 4, 0, 100);
       // Scout gauge: every reason as its own line; caps and the pro scale are lines too, so the
       // recap always adds up to the real gain.
-      const won = s.score[1] > s.score[0],
-        drew = s.score[1] === s.score[0],
+      const won = !ejected && s.score[1] > s.score[0],
+        drew = !ejected && s.score[1] === s.score[0],
         parts: RecapLine[] = [{ label: "경기 출전", value: 7 }];
       if (this.matchStrikeouts)
         parts.push({ label: `탈삼진 ${this.matchStrikeouts}개`, value: this.matchStrikeouts });
@@ -4241,8 +4287,14 @@ export class BaseballEngine {
       return { ok: false, message: "이미 최고 능력치입니다. 다른 훈련을 선택하세요." };
     const q = clamp(Number.isFinite(quality) ? quality : 0, 0, 1),
       grade = q >= 0.85 ? "완벽" : q >= 0.4 ? "좋음" : "아쉬움";
-    if (o.stat) o.gain = (q >= 0.85 ? 2 : q >= 0.4 ? 1 : 0) * this.stageRules.trainGain;
-    else if (kind === "study") o.gain = Math.round(2 + q * 4);
+    if (o.stat) {
+      // ×1.5 (×2 on easy) since v11.4. Stats stay whole numbers: the fraction is carried over
+      // to the next session (`trainCarry`), so on average nothing is lost.
+      const base = (q >= 0.85 ? 2 : q >= 0.4 ? 1 : 0) * this.stageRules.trainGain,
+        raw = base * trainMultiplier(s.difficulty) + (base > 0 ? (c.trainCarry ?? 0) : 0);
+      o.gain = Math.floor(raw + 1e-9);
+      if (base > 0) c.trainCarry = raw - o.gain;
+    } else if (kind === "study") o.gain = Math.round(2 + q * 4);
     c.energy = clamp(c.energy - o.cost, 0, 100);
     c.actions--;
     c.xp += kind === "rest" ? XP.rest : XP.training;
@@ -4459,7 +4511,18 @@ export class BaseballEngine {
   }
   /** The player's stats as the game uses them right now (300 across the board in a limit break). */
   get playerStats(): Career["stats"] {
-    const st = this.state.career.stats;
+    const s = this.state,
+      st0 = s.career.stats;
+    // Pine tar: grip and spin, every pitching rating +20 (skill V, this match).
+    const st =
+      s.pineTar && s.mode === "match"
+        ? {
+            ...st0,
+            velocity: st0.velocity + PINE_TAR_BOOST,
+            control: st0.control + PINE_TAR_BOOST,
+            movement: st0.movement + PINE_TAR_BOOST,
+          }
+        : st0;
     if (!this.limitActive) return st;
     return Object.fromEntries(Object.keys(st).map((k) => [k, LIMIT_BREAK])) as Career["stats"];
   }
@@ -4509,6 +4572,55 @@ export class BaseballEngine {
       `한계 돌파 ${s.limitUsed}회째${cost ? ` · 체력 −${cost}` : " · 무료"} · 다음 1구 모든 능력치 ${LIMIT_BREAK}`,
     );
     this.sound("hit");
+    this.emit();
+    return true;
+  }
+  /**
+   * Hidden skill V: pine tar for the rest of this match, velocity/control/movement +20. Every
+   * pitch then has a RULES.pineTarCatch chance that the umpire checks the ball (ejection).
+   */
+  applyPineTar() {
+    const s = this.state;
+    if (
+      !s.career.pineTar ||
+      s.mode !== "match" ||
+      s.pineTar ||
+      s.ejected ||
+      (s.phase !== "ready" && s.phase !== "between")
+    )
+      return false;
+    s.pineTar = true;
+    this.log(`파인타르를 몰래 발랐다 · 구속·구위·제구 +${PINE_TAR_BOOST} (심판 주의)`);
+    this.callout("파인타르", "gold");
+    this.emit();
+    return true;
+  }
+  /** The umpire finds the pine tar: ejected (match lost), every stat −20, title 「불명예」. */
+  private ejectForPineTar() {
+    const s = this.state,
+      c = s.career;
+    s.ejected = true;
+    s.pineTar = false;
+    for (const k of Object.keys(c.stats) as StatKey[])
+      c.stats[k] = Math.max(1, c.stats[k] - PINE_TAR_PENALTY);
+    c.dishonor = true;
+    c.history = [
+      `심판이 파인타르를 적발 · 퇴장 · 모든 능력치 −${PINE_TAR_PENALTY}`,
+      ...c.history,
+    ].slice(0, 12);
+    this.log("심판이 공을 검사했다 · 파인타르 적발 · 퇴장!");
+    this.callout("퇴장!", "red");
+    this.sound("out");
+    this.finish();
+  }
+  /** Hidden: three wrong developer passwords in a row teach the pine tar trick (once). */
+  grantPineTar() {
+    const c = this.state.career;
+    if (c.pineTar) return false;
+    c.pineTar = true;
+    this.state.hiddenUnlock = "pinetar";
+    c.history = ["누군가 몰래 파인타르 한 통을 건넸다", ...c.history].slice(0, 12);
+    this.persist();
     this.emit();
     return true;
   }

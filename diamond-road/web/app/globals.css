@@ -5473,3 +5473,24 @@ kbd {
     grid-template-columns: max-content 1fr;
   }
 }
+.skill-bar .skill.tar {
+  border-color: #7a5230;
+  color: #e7c79f;
+}
+.skill-bar .skill.tar.on {
+  background: #3a2614;
+  border-color: #c58a4a;
+  box-shadow: 0 0 0 1px #c58a4a inset;
+}
+.hof-dishonor {
+  font-style: normal;
+  font-size: 0.6875rem;
+  font-weight: 800;
+  color: #f0f0f0;
+  border: 1px solid #555;
+  background: #1a1a1a;
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-left: 6px;
+  white-space: nowrap;
+}

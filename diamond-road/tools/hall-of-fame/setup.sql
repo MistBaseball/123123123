@@ -1,6 +1,7 @@
 -- Diamond Road 명예의 전당 · Supabase SQL Editor에서 한 번만 실행하세요.
 -- 읽기: 누구나 (비밀값 열은 제외). 쓰기: submit_record 함수로만, 자기 기록의 비밀값을 알 때만.
 -- 비정상 수치는 CHECK 조건으로 거부됩니다.
+-- 다시 실행해도 안전합니다(기록은 지워지지 않음). 새 버전이 나오면 이 파일을 다시 Run 하세요.
 
 create table if not exists public.hall_of_fame (
   player_id uuid primary key,
@@ -21,8 +22,11 @@ create table if not exists public.hall_of_fame (
   first_day integer check (first_day between 1 and day),
   mlb_day integer check (mlb_day between 1 and day),
   dev boolean not null default false,
+  dishonor boolean not null default false,
   updated_at timestamptz not null default now()
 );
+-- v11.4: 파인타르 적발 칭호 「불명예」 (예전 표에 열 추가).
+alter table public.hall_of_fame add column if not exists dishonor boolean not null default false;
 
 alter table public.hall_of_fame enable row level security;
 drop policy if exists "hall of fame is public" on public.hall_of_fame;
@@ -32,7 +36,7 @@ create policy "hall of fame is public" on public.hall_of_fame
 -- 표를 직접 쓰는 권한은 없음. 읽기는 비밀값(secret_hash)을 뺀 열만.
 revoke all on public.hall_of_fame from anon, authenticated;
 grant select (player_id, nickname, tag, player_name, team, tier, tier_rank, day, games, wins,
-  strikeouts, hits, runs, pro_day, first_day, mlb_day, dev, updated_at)
+  strikeouts, hits, runs, pro_day, first_day, mlb_day, dev, dishonor, updated_at)
   on public.hall_of_fame to anon, authenticated;
 
 create or replace function public.submit_record(rec jsonb, secret text)
@@ -49,7 +53,7 @@ begin
   end if;
   insert into public.hall_of_fame as cur (
     player_id, secret_hash, nickname, tag, player_name, team, tier, tier_rank, day, games, wins,
-    strikeouts, hits, runs, pro_day, first_day, mlb_day, dev, updated_at
+    strikeouts, hits, runs, pro_day, first_day, mlb_day, dev, dishonor, updated_at
   ) values (
     (rec->>'player_id')::uuid,
     encode(sha256(convert_to(secret, 'UTF8')), 'hex'),
@@ -69,6 +73,7 @@ begin
     (rec->>'first_day')::int,
     (rec->>'mlb_day')::int,
     coalesce((rec->>'dev')::boolean, false),
+    coalesce((rec->>'dishonor')::boolean, false),
     now()
   )
   on conflict (player_id) do update set
@@ -89,6 +94,8 @@ begin
     mlb_day = excluded.mlb_day,
     -- 개발자 배지는 한 번 붙으면 지워지지 않는다.
     dev = cur.dev or excluded.dev,
+    -- 불명예도 한 번 붙으면 지워지지 않는다.
+    dishonor = cur.dishonor or excluded.dishonor,
     updated_at = now()
   where cur.secret_hash = excluded.secret_hash;
 end;

@@ -61,6 +61,12 @@ export const CLIP_KEYS = {
   jumpStart: 0.75,
   jumpEnd: 1.9,
   slideDown: 0.3,
+  /** Slide on a clock: starts at slideFrom, runs at slideRate (×clip speed); flat on the bag
+   * around 0.45–0.6, pushes up from slideGetUp, stands at slideEnd. */
+  slideFrom: 0.1,
+  slideRate: 1.15,
+  slideGetUp: 0.7,
+  slideEnd: 1.18,
 };
 
 export type AvatarAssets = {
@@ -202,6 +208,9 @@ export class Avatar {
   /** Grip points (base of the middle finger) of the bat's bottom and top hands. */
   private grip: [THREE.Object3D, THREE.Object3D] | null = null;
   private batDir = new THREE.Vector3(0, 1, 0);
+  /** Bat pose relative to the bottom hand, captured while both hands hold it. */
+  private batInHand = new THREE.Matrix4();
+  private batHeld = false;
   private throwHand: THREE.Object3D | null = null;
 
   constructor(private assets: AvatarAssets) {
@@ -272,13 +281,30 @@ export class Avatar {
     const lo = this.object.worldToLocal(this.grip[0].getWorldPosition(new THREE.Vector3())),
       hi = this.object.worldToLocal(this.grip[1].getWorldPosition(new THREE.Vector3())),
       d = hi.clone().sub(lo),
-      len = d.length();
-    // Hands apart (one-handed follow-through): keep the last direction from the top hand.
-    if (len > 0.03 && len < 0.3) this.batDir.copy(d.divideScalar(len));
-    const base = len < 0.3 ? lo : hi.clone().addScaledVector(this.batDir, -0.09);
-    this.bat.position.copy(base).addScaledVector(this.batDir, -0.04);
-    this.bat.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), this.batDir);
+      len = d.length(),
+      // The bottom hand (left for a right-handed batter) in this avatar's space.
+      hand = new THREE.Matrix4()
+        .copy(this.object.matrixWorld)
+        .invert()
+        .multiply(this.grip[0].matrixWorld);
+    if (len < 0.3) {
+      // Both hands on the handle: the bat runs from the bottom hand through the top hand.
+      if (len > 0.03) this.batDir.copy(d.divideScalar(len));
+      this.bat.position.copy(lo).addScaledVector(this.batDir, -0.04);
+      this.bat.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), this.batDir);
+      this.bat.scale.setScalar(1);
+      this.bat.updateMatrix();
+      // Remember how the bat sits in the bottom hand for the one-handed finish.
+      this.batInHand.copy(hand).invert().multiply(this.bat.matrix);
+      this.batHeld = true;
+    } else if (this.batHeld) {
+      // Top hand let go (follow-through): the bat stays in the bottom hand at that angle.
+      new THREE.Matrix4()
+        .multiplyMatrices(hand, this.batInHand)
+        .decompose(this.bat.position, this.bat.quaternion, this.bat.scale);
+    }
   }
+
   /**
    * Shows a clip. `time` scrubs it to an exact moment (synchronised moves such as the pitch
    * or the swing); without it the clip plays on its own (`loop` for run/idle). Changing clips

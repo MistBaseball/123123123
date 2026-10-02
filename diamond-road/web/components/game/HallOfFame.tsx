@@ -159,6 +159,7 @@ export function HallOfFameButton({ engine, career }: { engine: BaseballEngine; c
             <header>
               <strong>내 기록</strong>
               {me?.dev || career.devUsed ? <em className="hof-dev">개발자(버그 찾는 중)</em> : null}
+              {career.dishonor && <em className="hof-dishonor">불명예</em>}
             </header>
             <p>
               {career.name} · {TIER_LABEL[tier]} · {career.day}일차
@@ -228,6 +229,7 @@ export function HallOfFameButton({ engine, career }: { engine: BaseballEngine; c
                       <span className="hof-name">
                         {displayName(r)}
                         {r.dev && <em className="hof-dev">개발자(버그 찾는 중)</em>}
+                        {r.dishonor && <em className="hof-dishonor">불명예</em>}
                         <small>
                           {r.team} · {TIER_LABEL[r.tier]} · {r.games}경기
                         </small>

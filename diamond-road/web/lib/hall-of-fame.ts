@@ -24,6 +24,8 @@ export type HofRow = {
   first_day: number | null;
   mlb_day: number | null;
   dev: boolean;
+  /** Caught with pine tar (missing before the v11.4 server update). */
+  dishonor?: boolean;
 };
 
 const PROFILE_KEY = "diamond-road-hof-profile";
@@ -96,6 +98,7 @@ export function recordOf(c: Career, p: HofProfile) {
     mlb_day: c.mlbDay ?? null,
     // Badge only where the developer password was opened during this career.
     dev: !!(c.devUsed || c.devCap),
+    dishonor: !!c.dishonor,
   };
 }
 
@@ -179,7 +182,11 @@ export async function fetchBoard(board: Board, limit = 50): Promise<HofRow[]> {
   const url =
     `${HOF_URL}/rest/v1/hall_of_fame?select=${COLUMNS}&order=${board.order}&limit=${limit}` +
     (board.filter ? `&${board.filter}` : "");
-  const res = await fetch(url, { headers: headers() });
+  // Ask for the 「불명예」 column too; a server without it yet (old setup.sql) answers 400.
+  let res = await fetch(url.replace(`select=${COLUMNS}`, `select=${COLUMNS},dishonor`), {
+    headers: headers(),
+  });
+  if (res.status === 400) res = await fetch(url, { headers: headers() });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return (await res.json()) as HofRow[];
 }

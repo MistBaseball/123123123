@@ -4,6 +4,8 @@ import {
   BASES,
   BASE_PATH_LENGTH,
   SWING_SWEET,
+  WALL_DISTANCE,
+  WALL_HEIGHT,
   DEFENSE,
   pitchData,
   playerLabel,
@@ -139,6 +141,8 @@ export class BaseballField {
   private avatars: Map<Figure, Avatar> | null = null;
   private runnerMoving: boolean[] = [false, false, false, false];
   private runnerSlide: number[] = [-1, -1, -1, -1];
+  /** Render time each runner's slide began (-1 = not sliding). */
+  private slideStart: number[] = [-1, -1, -1, -1];
   private lastAvatarPos = new Map<Figure, THREE.Vector3>();
   private diveSide = new Map<Figure, "diving_l" | "diving_r">();
   /** Last few seconds of the chasing fielder (for the highlight replay). */
@@ -700,17 +704,35 @@ export class BaseballField {
       pad = tex.wallPadding();
     pad.repeat.set(70, 1);
     const wall = new THREE.Mesh(
-      new THREE.CylinderGeometry(108, 108, 3.2, 128, 1, true, fairStart, fairLength),
+      new THREE.CylinderGeometry(
+        WALL_DISTANCE,
+        WALL_DISTANCE,
+        WALL_HEIGHT,
+        128,
+        1,
+        true,
+        fairStart,
+        fairLength,
+      ),
       new THREE.MeshStandardMaterial({ map: pad, roughness: 0.75, side: THREE.DoubleSide }),
     );
-    wall.position.y = 1.6;
+    wall.position.y = WALL_HEIGHT / 2;
     wall.receiveShadow = true;
     this.scene.add(wall);
     const lineTop = new THREE.Mesh(
-      new THREE.CylinderGeometry(108.05, 108.05, 0.14, 128, 1, true, fairStart, fairLength),
+      new THREE.CylinderGeometry(
+        WALL_DISTANCE + 0.05,
+        WALL_DISTANCE + 0.05,
+        0.14,
+        128,
+        1,
+        true,
+        fairStart,
+        fairLength,
+      ),
       new THREE.MeshStandardMaterial({ color: "#f0c43c", roughness: 0.5, side: THREE.DoubleSide }),
     );
-    lineTop.position.y = 3.25;
+    lineTop.position.y = WALL_HEIGHT + 0.05;
     this.scene.add(lineTop);
     for (const side of [-1, 1]) {
       const pole = this.mesh(
@@ -1200,10 +1222,23 @@ export class BaseballField {
         a.object.visible = false;
         a.object.position.set(batterSpot.x, 0, batterSpot.z);
       }
-      if (this.runnerSlide[i] >= 0)
-        a.play("slide", { time: K.slideDown * this.runnerSlide[i] + 0.05 });
-      else if (this.runnerMoving[i]) a.play("run", { loop: true, speed: 1.15, offset: i * 0.1 });
-      else a.play("idle", { loop: true, offset: i * 2.3 });
+      // Slide on its own clock from the take-off: down onto the bag, then the clip's own
+      // get-up, and only then the stance (no snap from lying flat to standing).
+      if (this.runnerSlide[i] >= 0 && this.slideStart[i] < 0) this.slideStart[i] = this.time;
+      const slideT =
+        this.slideStart[i] >= 0 ? K.slideFrom + (this.time - this.slideStart[i]) * K.slideRate : -1;
+      if (
+        !fig.root.visible ||
+        (slideT > K.slideGetUp && this.runnerMoving[i] && this.runnerSlide[i] < 0)
+      )
+        this.slideStart[i] = -1;
+      if (this.slideStart[i] >= 0 && slideT < K.slideEnd)
+        a.play("slide", { time: slideT, fade: 0.1 });
+      else {
+        this.slideStart[i] = -1;
+        if (this.runnerMoving[i]) a.play("run", { loop: true, speed: 1.15, offset: i * 0.1 });
+        else a.play("idle", { loop: true, offset: i * 2.3, fade: 0.45 });
+      }
     });
     for (const a of this.avatars!.values()) a.update(dt);
     this.recordReplay();

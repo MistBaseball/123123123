@@ -87,6 +87,8 @@ import {
   mlbTeamOf,
   LIMITLESS_CAP,
   LIMIT_BREAK,
+  PINE_TAR_BOOST,
+  PINE_TAR_PENALTY,
   CHEER_DROP,
   RULES,
   isDecisive,
@@ -1974,9 +1976,11 @@ function Confetti() {
  */
 function HiddenDialog({ engine, s }: { engine: BaseballEngine; s: GameState }) {
   const legend = s.hiddenUnlock === "legend",
-    p = s.hiddenUnlock && !legend ? ALL_PITCHES.find((x) => x.id === s.hiddenUnlock) : null;
+    tar = s.hiddenUnlock === "pinetar",
+    p = s.hiddenUnlock && !legend && !tar ? ALL_PITCHES.find((x) => x.id === s.hiddenUnlock) : null;
   // Wait until creation and the starting roulette are out of the way.
-  const open = (legend || !!p) && s.career.created && !!s.career.team && s.career.blessing !== "";
+  const open =
+    (legend || tar || !!p) && s.career.created && !!s.career.team && s.career.blessing !== "";
   useEffect(() => {
     if (open) engine.fanfare();
   }, [open, engine]);
@@ -1993,10 +1997,36 @@ function HiddenDialog({ engine, s }: { engine: BaseballEngine; s: GameState }) {
             <DialogDescription>
               {legend
                 ? "그 이름을 듣는 순간, 모두가 숨을 멈췄습니다."
-                : "아무도 가르쳐 주지 않은 공이 손끝에서 깨어났습니다."}
+                : tar
+                  ? "비밀번호는 끝내 열리지 않았지만, 누군가 슬며시 작은 통 하나를 건넸습니다."
+                  : "아무도 가르쳐 주지 않은 공이 손끝에서 깨어났습니다."}
             </DialogDescription>
           </DialogHeader>
-          {legend ? (
+          {tar ? (
+            <div
+              className="hidden-pitch-card"
+              style={{ "--pitch-color": "#8a5a2b" } as React.CSSProperties}
+            >
+              <small>HIDDEN SKILL · PINE TAR</small>
+              <strong>파인타르</strong>
+              <p>
+                공에 몰래 바르는 끈적한 송진. 손끝이 공을 단단히 잡아 공이 살아납니다. 하지만 들키면
+                끝장입니다.
+              </p>
+              <ul>
+                <li className="good">이번 경기 동안 구속·구위·제구 +{PINE_TAR_BOOST}</li>
+                <li className="bad">
+                  공을 던질 때마다 {Math.round(RULES.pineTarCatch * 100)}% 확률로 심판 검사
+                </li>
+                <li className="bad">
+                  걸리면 퇴장(패배) · 모든 능력치 −{PINE_TAR_PENALTY} · 명예의 전당 「불명예」
+                </li>
+              </ul>
+              <span>
+                경기 중 <kbd>V</kbd> 키 또는 스킬 버튼으로 사용
+              </span>
+            </div>
+          ) : legend ? (
             <div
               className="hidden-pitch-card legend"
               style={{ "--pitch-color": "#e8b65a" } as React.CSSProperties}
@@ -2216,13 +2246,41 @@ const triggerLimit = (engine: BaseballEngine) => {
   else if (s.energy < cost)
     toast.error(`무료 ${RULES.limitBreakFree}회를 다 썼어요 · 체력 ${cost}이 필요해요`);
 };
-/** Skill buttons (T cheer, G limit break) with their current state. */
+const triggerPineTar = (engine: BaseballEngine) => {
+  const s = engine.state;
+  if (!s.career.pineTar) return;
+  if (engine.applyPineTar())
+    toast.warning(
+      `🫙 파인타르를 몰래 발랐다 · 구속·구위·제구 +${PINE_TAR_BOOST} · 공을 던질 때마다 ${Math.round(RULES.pineTarCatch * 100)}% 확률로 심판 검사`,
+    );
+  else if (s.mode !== "match") toast.error("파인타르는 시즌 경기에서만 쓸 수 있어요");
+  else if (s.pineTar) toast.error("이미 파인타르를 발랐어요");
+  else if (s.phase !== "ready" && s.phase !== "between")
+    toast.error("투구가 끝난 뒤, 다음 공을 기다릴 때 쓸 수 있어요");
+};
+/** Skill buttons (T cheer, G limit break, V pine tar) with their current state. */
 function SkillBar({ engine, s }: { engine: BaseballEngine; s: GameState }) {
   const cheerOpen = s.career.stage === "pro",
-    limitOpen = engine.canLimitBreak;
-  if (s.mode !== "match" || (!cheerOpen && !limitOpen)) return null;
+    limitOpen = engine.canLimitBreak,
+    tarOpen = !!s.career.pineTar;
+  if (s.mode !== "match" || (!cheerOpen && !limitOpen && !tarOpen)) return null;
   return (
     <div className="skill-bar" aria-label="스킬">
+      {tarOpen && (
+        <button
+          className={`skill tar ${s.pineTar ? "on" : ""}`}
+          disabled={s.pineTar || s.ejected}
+          onClick={() => triggerPineTar(engine)}
+          title={`이번 경기 동안 구속·구위·제구 +${PINE_TAR_BOOST}. 공을 던질 때마다 ${Math.round(RULES.pineTarCatch * 100)}% 확률로 심판이 검사 · 걸리면 퇴장(패배)·모든 능력치 −${PINE_TAR_PENALTY}·불명예`}
+        >
+          <kbd>V</kbd> 🫙 파인타르
+          <small>
+            {s.pineTar
+              ? `효과 중 · 검사 ${Math.round(RULES.pineTarCatch * 100)}%/구`
+              : `투구 +${PINE_TAR_BOOST} · 위험`}
+          </small>
+        </button>
+      )}
       {cheerOpen && (
         <button
           className={`skill ${engine.cheerActive ? "on" : ""}`}
@@ -2339,6 +2397,7 @@ export default function DiamondGame() {
     [coinSeen, setCoinSeen] = useState<GameState["coin"]>(null),
     [devUnlocked, setDevUnlocked] = useState(false),
     [devCode, setDevCode] = useState(""),
+    [devFails, setDevFails] = useState(0),
     [manualPause, setManualPause] = useState(false),
     [pending, setPending] = useState<Mode | null>(null),
     [guideNotice, setGuideNotice] = useState(false),
@@ -2532,6 +2591,7 @@ export default function DiamondGame() {
       if (k === "e") engine.steal();
       if (k === "t") triggerCheer(engine);
       if (k === "g") triggerLimit(engine);
+      if (k === "v") triggerPineTar(engine);
       // F: pickoff throw to the lowest occupied base.
       if (k === "f") engine.pickoff(engine.state.bases.findIndex(Boolean) + 1);
       if (k.startsWith("arrow")) {
@@ -3329,8 +3389,16 @@ export default function DiamondGame() {
                   e.preventDefault();
                   if (devCode === DEV_CODE) {
                     setDevUnlocked(true);
+                    setDevFails(0);
                     toast.success("개발자 모드를 열었습니다");
-                  } else toast.error("비밀번호가 틀렸습니다");
+                  } else {
+                    // Hidden: the 2nd wrong try is a warning, the 3rd teaches pine tar.
+                    const n = devFails + 1;
+                    setDevFails(n);
+                    if (n === 2) toast.error("[부정을 저지르려 하지 마세요]");
+                    else if (n >= 3 && engine.grantPineTar()) setSettings(false);
+                    else toast.error("비밀번호가 틀렸습니다");
+                  }
                   setDevCode("");
                 }}
               >
@@ -3450,7 +3518,7 @@ export default function DiamondGame() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="easy">쉬움 · 여유로운 타이밍</SelectItem>
+                <SelectItem value="easy">쉬움 · 여유로운 타이밍 · 훈련 2배</SelectItem>
                 <SelectItem value="normal">보통</SelectItem>
                 <SelectItem value="hard">어려움 · 빠른 승부</SelectItem>
               </SelectContent>

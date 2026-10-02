@@ -57,6 +57,10 @@ import {
   SWING_STYLES,
   pitchEnergyCost,
   TIER_BALANCE,
+  PINE_TAR_BOOST,
+  PINE_TAR_PENALTY,
+  WALL_DISTANCE,
+  WALL_HEIGHT,
   carryScale,
   HOME_RUN_DISTANCE,
 } from "../lib/game/engine.ts";
@@ -786,10 +790,12 @@ check("Creation spends exactly the stat budget; minigame quality sets the traini
   assert.equal(g.state.career.name, "김하늘");
   assert(g.state.career.created);
   assert.deepEqual(g.state.career.stats, even);
+  // ×1.5 since v11.4: 0 / 1.5 / 3 points, the half point carried to the next session.
   for (const [q, gain] of [
     [0.1, 0],
     [0.6, 1],
-    [0.95, 2],
+    [0.95, 3],
+    [0.6, 2],
   ]) {
     const before = g.state.career.stats.contact;
     g.state.career.energy = 100;
@@ -798,6 +804,34 @@ check("Creation spends exactly the stat budget; minigame quality sets the traini
     assert(r.ok);
     assert.equal(g.state.career.stats.contact - before, gain);
   }
+  // Easy mode doubles every session; over many sessions normal averages exactly ×1.5.
+  const total = (difficulty, n) => {
+    const e = new BaseballEngine();
+    e.createPlayer("평균", even);
+    e.state.difficulty = difficulty;
+    const before = e.state.career.stats.control;
+    for (let i = 0; i < n; i++) {
+      e.state.career.energy = 100;
+      e.state.career.actions = DAY_ACTIONS;
+      e.state.career.stats.control = Math.min(e.state.career.stats.control, 70);
+      const was = e.state.career.stats.control;
+      assert(e.train("bullpen", 0.6).ok);
+      if (difficulty === "easy") assert.equal(e.state.career.stats.control - was, 2);
+    }
+    return e;
+  };
+  total("easy", 3);
+  const normal = new BaseballEngine();
+  normal.createPlayer("평균", even);
+  let sum = 0;
+  for (let i = 0; i < 10; i++) {
+    normal.state.career.energy = 100;
+    normal.state.career.actions = DAY_ACTIONS;
+    const was = normal.state.career.stats.control;
+    normal.train("bullpen", 0.6);
+    sum += normal.state.career.stats.control - was;
+  }
+  assert.equal(sum, 15, "ten 'good' sessions = 15 points");
 });
 check("Dream club scout watches season matches; reaching 100 brings the contract", () => {
   const g = new BaseballEngine();
@@ -1474,7 +1508,7 @@ check("Stat caps: 100 in high school, 200 in the pros, where the fastball reache
   );
   const before = pro.state.career.stats.control;
   assert(pro.train("bullpen", 1).ok);
-  assert.equal(pro.state.career.stats.control, before + 4, "pro training gains are doubled");
+  assert.equal(pro.state.career.stats.control, before + 6, "pro training gains are doubled (×1.5 → 6)");
   pro.devSetStats(200);
   assert(Object.values(pro.state.career.stats).every((v) => v === 200));
   pro.state.effort = 100;
@@ -1822,7 +1856,7 @@ check(
       const before = g.ourRunner(1),
         avg = (c) => Object.values(c.stats).reduce((a, v) => a + v, 0) / 7,
         start = avg(g.state.career);
-      // Seven "perfect" sessions (+2 each) spread over a few days.
+      // Seven "perfect" sessions (+3 each since the ×1.5 training) spread over a few days.
       const kinds = ["batting", "power", "sprint", "bullpen", "weights", "breaking", "running"];
       for (const k of kinds) {
         g.state.career.actions = 5;
@@ -1833,7 +1867,7 @@ check(
       assert(Math.abs(g.state.career.teamBoost - rise * TEAM_GROWTH) < 1e-9);
       const after = g.ourRunner(1),
         boost = Math.floor(g.state.career.teamBoost);
-      assert.equal(boost, 1, "two points of average → +1 for every teammate");
+      assert.equal(boost, 2, "three points of average → +2 for every teammate");
       assert.equal(after.contact, before.contact + boost);
       assert.equal(after.speed, Math.min(100, before.speed + boost));
       // The player himself is never boosted, and 99-rated teammates stop at the cap of 100.
@@ -2012,7 +2046,7 @@ check(
       again.state.career.energy = 100;
       again.state.career.actions = 5;
       assert(again.train("bullpen", 1).ok, "training past 200 in the major league");
-      assert.equal(again.state.career.stats.control, 244);
+      assert.equal(again.state.career.stats.control, 246, "pro ×2 and ×1.5: +6");
     } finally {
       delete globalThis.localStorage;
     }
@@ -2566,4 +2600,81 @@ check(
     assert.equal(c.firstDay, firstDay);
   },
 );
+check("Hidden pine tar: +20 pitching, 5% umpire check per pitch, ejection = loss, −20, dishonor", () => {
+  const c = newCareer();
+  c.created = true;
+  c.team = TEAMS[0].id;
+  // A fixed "dice" we can steer: 0.99 = the umpire notices nothing.
+  let roll = 0.99;
+  const g = new BaseballEngine(c, () => roll);
+  g.start("match");
+  assert(!g.applyPineTar(), "not learned yet");
+  assert(g.grantPineTar());
+  assert.equal(g.state.hiddenUnlock, "pinetar");
+  assert(!g.grantPineTar(), "only once");
+  const base = { ...c.stats };
+  assert(g.applyPineTar());
+  assert(!g.applyPineTar(), "once a match");
+  assert.equal(g.playerStats.velocity, base.velocity + PINE_TAR_BOOST);
+  assert.equal(g.playerStats.control, base.control + PINE_TAR_BOOST);
+  assert.equal(g.playerStats.movement, base.movement + PINE_TAR_BOOST);
+  assert.equal(g.playerStats.contact, base.contact, "batting is untouched");
+  assert(g.throwAt(0, 0.9));
+  assert.notEqual(g.state.phase, "finished", "no check this time");
+  advance(g, 600);
+  while (g.state.phase !== "ready" && g.state.phase !== "finished") advance(g, 60);
+  if (g.state.phase === "ready" && !g.batting) {
+    const games = c.games,
+      wins = c.wins;
+    roll = 0.01;
+    g.state.score = [0, 5];
+    assert(g.throwAt(0, 0.9));
+    assert.equal(g.state.phase, "finished");
+    assert(g.state.ejected);
+    assert.equal(g.state.message, "퇴장");
+    assert.equal(c.games, games + 1);
+    assert.equal(c.wins, wins, "ejected even while leading: a loss");
+    for (const k of Object.keys(base)) assert.equal(c.stats[k], Math.max(1, base[k] - PINE_TAR_PENALTY));
+    assert(c.dishonor);
+  } else assert.fail("expected a new pitch");
+  // The next match starts clean (pine tar has to be applied again).
+  g.start("match");
+  assert(!g.state.pineTar && !g.state.ejected);
+  assert.equal(RULES.pineTarCatch, 0.05);
+});
+check("Home runs fly over the outfield wall, never through it or short of it", () => {
+  let homers = 0;
+  for (let i = 1; i <= 3000 && homers < 60; i++) {
+    const g = new BaseballEngine(newCareer(), seed(i));
+    g.contact(0.75 + seed(i * 3)() * 0.4, (seed(i * 5)() - 0.5) * 0.2);
+    const l = g.state.live;
+    if (l.resultBases !== 4) continue;
+    homers++;
+    const land = Math.hypot(l.land.x, l.land.z);
+    assert(land >= WALL_DISTANCE + 6.9, `lands behind the wall (${land.toFixed(1)} m)`);
+    // Find where the flight crosses the wall and check it is well above the padding.
+    let crossed = false;
+    for (let t = 0; t <= l.flightTime; t += 0.01) {
+      const p = g.liveBall(l, t);
+      if (Math.hypot(p.x, p.z) >= WALL_DISTANCE) {
+        assert(p.y > WALL_HEIGHT + 1.5, `clears the wall (${p.y.toFixed(2)} m)`);
+        crossed = true;
+        break;
+      }
+    }
+    assert(crossed);
+  }
+  assert(homers >= 20, `found ${homers} home runs`);
+  // Balls that are not home runs stop in front of the wall.
+  for (let i = 1; i <= 400; i++) {
+    const g = new BaseballEngine(newCareer(), seed(i + 9000));
+    g.contact(0.3 + seed(i)() * 0.7, 0);
+    const l = g.state.live;
+    if (l.resultBases === 4) continue;
+    for (let t = 0; t <= 12; t += 0.25) {
+      const p = g.liveBall(l, t);
+      assert(Math.hypot(p.x, p.z) < WALL_DISTANCE, "a non-homer stays inside the wall");
+    }
+  }
+});
 console.log(`\n${passed} gameplay checks passed.`);
