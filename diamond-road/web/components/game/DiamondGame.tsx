@@ -1334,7 +1334,7 @@ const PRESETS: { name: string; desc: string; add: Career["stats"] }[] = [
   {
     name: "투타 겸업",
     desc: "마운드와 타석 모두에서 빛나는 선수",
-    add: { velocity: 15, control: 14, movement: 14, stamina: 9, contact: 18, power: 18, speed: 12 },
+    add: { velocity: 15, control: 14, movement: 15, stamina: 8, contact: 18, power: 18, speed: 12 },
   },
 ];
 const statKeys = Object.keys(statNames) as (keyof Career["stats"])[];
