@@ -1089,14 +1089,11 @@ check(
     f.foul();
     assert.equal(f.state.stealTrack, null);
     assert.deepEqual(f.state.bases, [true, false, false]);
-    // Second base occupied: the runner on second can steal third; bases full: no steal.
+    // Second base occupied: no steal call for us (only the rival ever tries third).
     const o = new BaseballEngine();
     o.state.half = "bottom";
     o.state.bases = [true, true, false];
     assert.equal(o.stealTarget, 3);
-    assert(o.steal());
-    o.state.bases = [true, true, true];
-    o.state.stealCall = false;
     assert(!o.steal());
     // The rival steals too (when we pitch), only with a runner who can make it.
     let tries = 0,

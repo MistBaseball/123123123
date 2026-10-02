@@ -444,9 +444,6 @@ export const RULES = {
   runRead: 0.5,
   /** An outfielder's crow hop before throwing after a catch (s). */
   crowHop: 0.55,
-  /** Rounding a bag with the ball in the outfield: how often, and how long he commits (s). */
-  roundChance: 0.7,
-  roundCommit: 0.7,
   turnTime: 0.5,
   /**
    * A running runner trips and falls (per second of running): clear weather, rain. He is
@@ -1228,9 +1225,6 @@ export type RunnerTrack = {
   turned?: boolean;
   /** Play time he last turned around (turning takes RULES.turnTime: the animation's clock). */
   turnAt?: number;
-  /** Rounding: the bag he took a turn past, and until when he commits to the turn. */
-  roundedAt?: number;
-  roundUntil?: number;
   /** His misread of the ball this play (s, + = thinks it is slower than it is). */
   read?: number;
   /** Play time he tripped and fell (down until `delay`). */
@@ -2489,7 +2483,7 @@ export class BaseballEngine {
         s.mode === "match" &&
         stealTo > 0 &&
         s.outs < 3 &&
-        (this.batting ? s.stealCall : this.aiWantsToSteal(stealTo));
+        (this.batting ? s.stealCall && stealTo === 2 : this.aiWantsToSteal(stealTo));
     if (go) {
       const from = stealTo - 1,
         pace = this.runnerPace(formOf(this.runnerOn(from)).speed);
@@ -3840,29 +3834,8 @@ export class BaseballEngine {
         let pick = [...options].sort((a, b) => b.base - a.base).find((o) => o.p < go);
         if (cur && cur.p < RULES.runKeep && (!pick || pick.base < cur.base)) pick = cur;
         pick ??= [...options].sort((a, b) => a.p - b.p)[0];
-        // Rounding the bag: with the ball still in the outfield a runner who is tempted by
-        // the next base takes a hard turn past his bag before he settles for it (and can be
-        // caught off it by a throw behind him).
-        const nextUp = options.find((o) => o.base === r.target + 1),
-          far = Math.hypot(s.ball.x, s.ball.z) > 38 && (!l.throw || l.throw.receivedAt !== null);
-        if (
-          settled &&
-          pick.base === r.target &&
-          nextUp &&
-          r.roundedAt !== r.target &&
-          far &&
-          nextUp.p >= go &&
-          nextUp.p < 0.98 &&
-          this.rng() < RULES.roundChance
-        ) {
-          r.roundedAt = r.target;
-          r.roundUntil = now + RULES.roundCommit;
-          pick = nextUp;
-        }
-        // Just turned around (or taking his turn): give it a moment unless he is sure to be out.
-        const fresh =
-          ((r.turnAt !== undefined && now - r.turnAt < 0.6) || (r.roundUntil ?? 0) > now) &&
-          (cur?.p ?? 1) < 0.85;
+        // Just turned around: give it a moment unless he is sure to be out.
+        const fresh = r.turnAt !== undefined && now - r.turnAt < 0.6 && (cur?.p ?? 1) < 0.85;
         if (pick.base !== r.target && !fresh) {
           const turn = Math.sign(pick.base - r.progress);
           if (dir !== 0 && turn !== 0 && turn !== dir) {
@@ -3931,9 +3904,9 @@ export class BaseballEngine {
       })
       .sort((a, b) => a.d - b.d)[0];
     const { r, d, p } = near;
+    if (d > 40) return;
     // Caught between bases with the ball on him: a rundown (announced once per play).
     if (
-      d <= 40 &&
       r.turned &&
       (!l.rundown || l.rundown.end !== undefined) &&
       Math.abs(r.progress - Math.round(r.progress)) * BASE_PATH_LENGTH > 3
@@ -3954,7 +3927,6 @@ export class BaseballEngine {
     ) {
       const cover = l.defenders[this.receiver(b, l.fielder)],
         coverEta = Math.max(0, Math.hypot(cover.x - bag.x, cover.z - bag.z) - 0.9) / 8.2,
-        // (From the outfield too: a throw behind a runner who rounded his bag too far.)
         ball =
           ready + Math.max(this.throwRoute(l, pos, b, l.fielder).time, coverEta) + RULES.tagSweep,
         run = this.arriveTime(l, r, b);
@@ -3965,7 +3937,7 @@ export class BaseballEngine {
       }
     }
     // Run him down; a holder on the bag the runner is coming to waits there for him.
-    if (heading && d <= 40) this.moveFielder(pos, p, dt, this.fielderStats(l.fielder, l).speed);
+    if (heading) this.moveFielder(pos, p, dt, this.fielderStats(l.fielder, l).speed);
     s.detail = l.rundown ? "런다운! 주자가 베이스 사이에 갇혔습니다" : s.detail;
   }
   private retire(
@@ -5053,7 +5025,7 @@ export class BaseballEngine {
     if (!this.batting || s.mode !== "match" || (s.phase !== "ready" && !between) || s.paused)
       return false;
     const target = this.stealTarget;
-    if (!target) return false;
+    if (target !== 2) return false;
     s.stealCall = !s.stealCall;
     // Keep the result of the last play on screen; the steal button shows the sign.
     if (between) {
@@ -5125,7 +5097,7 @@ export class BaseballEngine {
     s.live = null;
     s.stealTrack = null;
     // A steal call only stands while there is still a runner on first and second is open.
-    if (!this.batting || !this.stealTarget) s.stealCall = false;
+    if (!this.batting || this.stealTarget !== 2) s.stealCall = false;
     s.timer = 1.6;
     s.ball = V(0.35, 1.85, 18.44);
     s.message = this.batting ? "다음 공을 기다리세요" : "다음 승부를 준비하세요";

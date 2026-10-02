@@ -1,7 +1,6 @@
 import * as THREE from "three";
 import {
   BaseballEngine,
-  runnerSettled,
   BASES,
   BASE_PATH_LENGTH,
   SWING_SWEET,
@@ -177,39 +176,6 @@ export class BaseballField {
     tvState: string;
   } | null = null;
   private replayAvatars: Avatar[] = [];
-  /**
-   * Players walking on their own after a play: a retired runner heading for the dugout, a
-   * runner who scored, the batter hit by a pitch reacting and jogging to first.
-   */
-  private walkers: {
-    a: Avatar;
-    to: THREE.Vector3;
-    age: number;
-    life: number;
-    clip: "walk" | "jog" | "sad_walk";
-    speed: number;
-    react?: { clip: ClipName; dur: number };
-    /** Becomes the runner drawn on this bag (0 = first) when he gets there. */
-    base?: number;
-    active: boolean;
-  }[] = [];
-  /** Track ids already sent walking this play. */
-  private walked = new Set<number>();
-  private walkedLive: unknown = null;
-  private hbpSeen = 0;
-  private hideBatterUntil = 0;
-  private hbpAt = -9;
-  /** Where each fielder is drawn (they jog back to their spots after a play). */
-  private fieldShown = DEFENSE.map((d) => new THREE.Vector3(d.x, 0, d.z));
-  /** After a play: the ball holder far out throws the ball back to the pitcher. */
-  private throwIn: {
-    live: unknown;
-    who: number;
-    start: number;
-    from: THREE.Vector3;
-    dur: number;
-  } | null = null;
-  private resultClock = 0;
   private batSwing: { flight: object; press: number; contactAt: number; from: number } | null =
     null;
   private replayBall: THREE.Mesh | null = null;
@@ -1057,20 +1023,6 @@ export class BaseballField {
       // Hide the drawn body; the root stays (positions, the name tag, the camera targets).
       for (const c of fig.root.children) if (!(c as THREE.Sprite).isSprite) c.visible = false;
     }
-    for (let k = 0; k < 4; k++) {
-      const a = new Avatar(assets);
-      a.object.visible = false;
-      this.scene.add(a.object);
-      this.walkers.push({
-        a,
-        to: new THREE.Vector3(),
-        age: 0,
-        life: 0,
-        clip: "walk",
-        speed: 1,
-        active: false,
-      });
-    }
     // The highlight replay's own player and ball (shown only while the TV window draws).
     for (let k = 0; k < 2; k++) {
       const a = new Avatar(assets);
@@ -1224,17 +1176,6 @@ export class BaseballField {
       // The catcher's camera sits right behind him: he would fill the screen.
       if (i === 1 && cam === "catcher") a.object.visible = false;
       if (fielding(i, a, fig, moved)) return;
-      // After the play: the ball goes back to the pitcher, then everyone jogs back.
-      const tin = this.throwIn;
-      if (tin?.who === i && this.time < tin.start + 0.9) {
-        a.play("throw", { time: K.throwStart + (this.time - tin.start), fade: 0.15 });
-        return;
-      }
-      const pace = moved / Math.max(dt, 1e-4);
-      if (pace > 0.4) {
-        a.play(pace > 3 ? "jog" : "walk", { loop: true, fade: 0.3, offset: i * 0.3 });
-        return;
-      }
       if (i === 0) {
         const clip = lefty ? "pitch_l" : "pitch_r";
         if (s.phase === "windup")
@@ -1258,7 +1199,7 @@ export class BaseballField {
         swingClip = `swing${side}` as "swing_r";
       a.setTeam(batting ? "home" : "away");
       a.setBat(true, lefty);
-      a.object.visible = (fig.root.visible || following) && this.time >= this.hideBatterUntil;
+      a.object.visible = fig.root.visible || following;
       a.object.position.set(lefty ? -0.82 : 0.82, 0, 0);
       a.object.rotation.set(0, 0, 0);
       const bunt = s.swingStyle === "bunt" && batting;
@@ -1368,152 +1309,8 @@ export class BaseballField {
         else a.play("idle", { loop: true, offset: i * 2.3, fade: 0.45 });
       }
     });
-    // Hit by pitch: the batter reacts where he was hit, then jogs to first.
-    if (s.hbp && s.hbp.id !== this.hbpSeen) {
-      this.hbpSeen = s.hbp.id;
-      const part = s.hbp.part,
-        react: { clip: ClipName; dur: number } =
-          part === "머리"
-            ? { clip: "hit_high", dur: K.hitHigh }
-            : part === "다리" || part === "발"
-              ? { clip: "hit_low", dur: K.hitLow }
-              : { clip: "hit_mid", dur: K.hitMid },
-        side = s.hbp.x < 0 ? -1 : 1;
-      this.spawnWalker(
-        new THREE.Vector3(side * 0.82, 0, 0),
-        new THREE.Vector3(BASES[0].x + 0.65, 0, BASES[0].z),
-        "jog",
-        14,
-        react,
-        0,
-        // Facing the pitcher as the ball hits him.
-        0,
-      );
-      this.hideBatterUntil = this.time + react.dur + 0.3;
-      this.hbpAt = this.time;
-    }
-    this.updateWalkers(dt);
     for (const a of this.avatars!.values()) a.update(dt);
     this.recordReplay();
-  }
-  /** The dugout of the team at bat: ours on the first-base side, the rival's on the third. */
-  private dugout() {
-    return this.engine.batting ? new THREE.Vector3(-27, 0, -4) : new THREE.Vector3(27, 0, -4);
-  }
-  private spawnWalker(
-    at: THREE.Vector3,
-    to: THREE.Vector3,
-    clip: "walk" | "jog" | "sad_walk",
-    life: number,
-    react?: { clip: ClipName; dur: number },
-    base?: number,
-    yaw?: number,
-  ) {
-    const w = this.walkers.find((x) => !x.active);
-    if (!w) return;
-    Object.assign(w, {
-      to: to.clone(),
-      age: 0,
-      life,
-      clip,
-      speed: clip === "jog" ? 5 : clip === "walk" ? 1.6 : 1.25,
-      react,
-      base,
-      active: true,
-    });
-    w.a.object.position.set(at.x, 0, at.z);
-    w.a.object.rotation.set(0, yaw ?? Math.atan2(to.x - at.x, to.z - at.z), 0);
-    w.a.object.visible = true;
-    w.a.setTeam(this.engine.batting ? "home" : "away");
-    w.a.setGlove(false);
-    w.a.setBat?.(false, false);
-  }
-  private updateWalkers(dt: number) {
-    for (const w of this.walkers) {
-      if (!w.active) continue;
-      w.age += dt;
-      const o = w.a.object;
-      if (w.react && w.age < w.react.dur) {
-        w.a.play(w.react.clip, { time: w.age, fade: 0.1 });
-      } else {
-        const dx = w.to.x - o.position.x,
-          dz = w.to.z - o.position.z,
-          d = Math.hypot(dx, dz);
-        if (d < 0.25 || w.age > w.life) {
-          w.active = false;
-          o.visible = false;
-          continue;
-        }
-        const step = Math.min(d, w.speed * dt);
-        o.position.x += (dx / d) * step;
-        o.position.z += (dz / d) * step;
-        o.rotation.y = Math.atan2(dx, dz);
-        w.a.play(w.clip, { loop: true, fade: 0.35 });
-      }
-      w.a.update(dt);
-    }
-  }
-  /**
-   * The ball after a play: in the hands of whoever holds it (they walk back with it); from deep
-   * in the outfield it is thrown back to the pitcher first.
-   */
-  private afterPlayBall() {
-    const s = this.engine.state,
-      l = s.live;
-    // Hit by pitch: the ball drops off him and rolls a little.
-    if (s.phase === "result" && !l && s.hbp && s.lastOutcome === "HitByPitch") {
-      const t = this.time - this.hbpAt,
-        y = s.hbp.y - 4.9 * t * t;
-      this.ball.position.set(
-        s.hbp.x + Math.min(t, 1.2) * 0.4 * Math.sign(s.hbp.x),
-        Math.max(0.04, y),
-        s.hbp.z + Math.min(t, 1.2) * 0.6,
-      );
-    }
-    if (s.phase !== "result" || !l || !this.avatars) {
-      if (s.phase !== "result") this.throwIn = null;
-      return;
-    }
-    const t = l.throw,
-      holder = l.fieldedAt !== null && (!t || t.receivedAt !== null) ? l.fielder : -1;
-    if (holder < 0) return;
-    const hand = (i: number) =>
-      this.avatars!.get(this.players[i])?.ballPoint(new THREE.Vector3()) ?? null;
-    if (!this.throwIn || this.throwIn.live !== l) {
-      const d = l.defenders[holder];
-      this.throwIn =
-        Math.hypot(d.x, d.z) > 40 && holder !== 0
-          ? {
-              live: l,
-              who: holder,
-              start: this.time,
-              from: new THREE.Vector3(),
-              dur: Math.max(0.6, Math.hypot(d.x - DEFENSE[0].x, d.z - DEFENSE[0].z) / 26),
-            }
-          : { live: l, who: -1, start: this.time, from: new THREE.Vector3(), dur: 0 };
-    }
-    const tin = this.throwIn;
-    if (tin.who < 0) {
-      const p = hand(holder);
-      if (p) this.ball.position.copy(p);
-      return;
-    }
-    const since = this.time - tin.start - 0.45;
-    if (since < 0) {
-      const p = hand(tin.who);
-      if (p) {
-        this.ball.position.copy(p);
-        tin.from.copy(p);
-      }
-      return;
-    }
-    const u = since / tin.dur,
-      to = hand(0) ?? new THREE.Vector3(DEFENSE[0].x, 1.2, DEFENSE[0].z);
-    if (u >= 1) this.ball.position.copy(to);
-    else {
-      this.ball.position.lerpVectors(tin.from, to, u);
-      this.ball.position.y += Math.sin(Math.PI * u) * Math.min(6, tin.dur * 3);
-    }
   }
   /** Records everyone each frame; starts the replay once the highlight has played out. */
   private recordReplay() {
@@ -2260,35 +2057,11 @@ export class BaseballField {
         !(cam === "catcher" && i === 1);
       t.sprite.scale.set(tagH * (t.sprite.userData.aspect ?? 4), tagH, 1);
     });
-    if (s.phase === "result") this.resultClock += dt;
-    else this.resultClock = 0;
     this.players.forEach((p, i) => {
-      const want = s.phase === "inplay" && s.live ? s.live.defenders[i] : DEFENSE[i],
-        shown = this.fieldShown[i],
-        // The battery has to be set for the pitch; during a play the rules place everyone.
-        snap =
-          s.phase === "inplay" ||
-          (i < 2 && (s.phase === "windup" || s.phase === "flight")) ||
-          !this.avatars,
-        // The fielder throwing the ball back in stays put until it is gone.
-        throwing = this.throwIn?.who === i && this.time < this.throwIn.start + 0.9;
-      let yaw = i === 1 ? Math.PI : 0;
-      if (snap) shown.set(want.x, 0, want.z);
-      else if (!throwing) {
-        // After the play he jogs back to his spot (no jump from where the play left him).
-        const dx = want.x - shown.x,
-          dz = want.z - shown.z,
-          d = Math.hypot(dx, dz);
-        if (d > 0.05) {
-          const step = Math.min(d, (d > 6 ? 6.5 : 2.2) * dt);
-          shown.x += (dx / d) * step;
-          shown.z += (dz / d) * step;
-          yaw = playerYaw(V(dx, 0, dz));
-        } else shown.set(want.x, 0, want.z);
-      }
-      p.root.position.set(shown.x, 0, shown.z);
+      const pos = s.phase === "inplay" && s.live ? s.live.defenders[i] : DEFENSE[i];
+      p.root.position.set(pos.x, 0, pos.z);
       p.root.visible = true;
-      p.root.rotation.set(0, yaw, 0);
+      p.root.rotation.set(0, i === 1 ? Math.PI : 0, 0);
       stand(p);
       // Ready position: glove out in front, throwing hand relaxed.
       this.hands(p, V(0.3, 1.0, -0.12), V(-0.27, 1.08, -0.24));
@@ -2534,8 +2307,17 @@ export class BaseballField {
       ) => {
         this.runnerMoving[i] = pose.moving;
         // The rules decide the slide (it moves where he touches the bag); the picture follows.
-        const slide = (track as RunnerTrack | undefined)?.slide;
-        if (track && slide && slide.base === track.target) this.runnerSlide[i] = 1;
+        // (Once: a runner standing on the bag after his slide does not slide again.)
+        const slide = (track as RunnerTrack | undefined)?.slide,
+          live = s.live;
+        if (
+          track &&
+          slide &&
+          slide.base === track.target &&
+          !!live &&
+          live.elapsed - slide.at < 0.5
+        )
+          this.runnerSlide[i] = 1;
         r.root.visible = pose.visible;
         r.root.position.set(pose.position.x, 0, pose.position.z);
         r.root.rotation.y = playerYaw(pose.facing);
@@ -2544,11 +2326,7 @@ export class BaseballField {
           runArms(r);
         }
       };
-      if (l && (s.phase === "inplay" || s.phase === "result")) {
-        if (this.walkedLive !== l) {
-          this.walkedLive = l;
-          this.walked.clear();
-        }
+      if (l && s.phase === "inplay") {
         const track = l.runners.find((r) => r.id === i);
         if (track) {
           this.runnerTracks[i] = track;
@@ -2584,35 +2362,19 @@ export class BaseballField {
               }
             }
           }
-          // The play is over: he steps off to his lead-off spot (where the next pitch finds him).
-          const k = Math.round(track.progress);
-          if (s.phase === "result" && !track.out && k >= 1 && k <= 3 && runnerSettled(track)) {
-            const u = clamp(this.resultClock / 0.8, 0, 1);
-            pose.position = V(lerp(BASES[k - 1].x, BASES[k - 1].x + 0.65, u), 0, BASES[k - 1].z);
-            pose.moving = false;
-          }
-          // Out (or home): he does not vanish, he walks (jogs) off to the dugout.
-          if (!pose.visible && (track.out || track.progress >= 4) && !this.walked.has(track.id)) {
-            this.walked.add(track.id);
-            const at = this.avatars?.get(r)?.object.position;
-            if (at && (at.x !== 0 || at.z !== 0))
-              this.spawnWalker(at, this.dugout(), track.out ? "sad_walk" : "jog", 9);
-          }
           show(pose, track);
         }
       } else if (s.stealTrack && i === s.stealTrack.from - 1) {
         // The E-steal runner breaks during the delivery.
         show({ ...runnerPose(s.stealTrack), visible: true, moving: true }, s.stealTrack);
       } else if (i < 3 && s.bases[i]) {
-        // (Hidden while the hit batter is still jogging there.)
-        r.root.visible = !this.walkers.some((w) => w.active && w.base === i);
+        r.root.visible = true;
         r.root.position.set(BASES[i].x + 0.65, 0, BASES[i].z);
         r.root.rotation.y = 0;
       }
     });
     this.ball.position.set(s.ball.x, s.ball.y, s.ball.z);
     this.holdBall();
-    this.afterPlayBall();
     this.hitboxes.update(dt, this.camera);
     // A knuckleball barely spins (that is why it flutters): only a slow tumble.
     if (s.phase === "flight" || s.phase === "inplay")
