@@ -23,6 +23,8 @@ import {
 import * as tex from "./textures";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { Avatar, CLIP_KEYS, loadAvatarAssets, type AvatarAssets, type ClipName } from "./avatars";
+import { HitboxView } from "./hitbox-view";
+import { touchDistance } from "./hitbox";
 /** White "[별호] 이름" text for a fielder's head: no box, a dark outline keeps it readable. */
 function nameTag(label: string) {
   const c = document.createElement("canvas"),
@@ -150,6 +152,8 @@ export class BaseballField {
   /** Each runner's live track this frame (turns, falls), or null. */
   private runnerTracks: (RunnerTrack | null)[] = [null, null, null, null];
   private lastAvatarPos = new Map<Figure, THREE.Vector3>();
+  /** Developer hitbox view and the hit-by-pitch marker. */
+  private hitboxes: HitboxView;
   private diveSide = new Map<Figure, "diving_l" | "diving_r">();
   /** Last few seconds of the chasing fielder (for the highlight replay). */
   private tape: ReplayFrame[] = [];
@@ -206,6 +210,7 @@ export class BaseballField {
     private host: HTMLElement,
     private engine: BaseballEngine,
   ) {
+    this.hitboxes = new HitboxView(this.scene, engine);
     this.renderer = new THREE.WebGLRenderer({
       antialias: true,
       alpha: false,
@@ -1279,19 +1284,8 @@ export class BaseballField {
       }
       if (this.runnerSlide[i] >= 0 && this.slideStart[i] < 0) {
         this.slideStart[i] = this.time;
-        // A tag waiting at the bag (or a rundown): he dives around it; otherwise mostly a slide.
-        const runnerAt = a.object.position,
-          holder =
-            !!l &&
-            l.fieldedAt !== null &&
-            (!l.throw || l.throw.receivedAt !== null) &&
-            !!track &&
-            (Math.hypot(
-              l.fielderPos.x - BASES[Math.min(3, track.target - 1)].x,
-              l.fielderPos.z - BASES[Math.min(3, track.target - 1)].z,
-            ) < 2.5 ||
-              Math.hypot(l.fielderPos.x - runnerAt.x, l.fielderPos.z - runnerAt.z) < 3.5);
-        this.slideDodge[i] = holder || l?.rundown?.runnerId === i || Math.random() < 0.3;
+        // Head first (around a tag, or back to the bag) or feet first: the rules chose.
+        this.slideDodge[i] = track?.slide?.kind === "dive";
       }
       const dodge = this.slideDodge[i],
         since = this.slideStart[i] >= 0 ? this.time - this.slideStart[i] : -1,
@@ -2314,27 +2308,9 @@ export class BaseballField {
         track?: { progress: number; target: number; stealing?: boolean },
       ) => {
         this.runnerMoving[i] = pose.moving;
-        // Sliding into a base a throw is going to (or on a steal): the last couple of metres.
-        if (track && pose.moving && track.target > track.progress) {
-          const left = (track.target - track.progress) * BASE_PATH_LENGTH,
-            live = s.live,
-            bag = BASES[Math.min(3, track.target - 1)],
-            // The ball is waiting at the bag in a fielder's hands (a tag play).
-            holding =
-              !!live && live.fieldedAt !== null && (!live.throw || live.throw.receivedAt !== null),
-            tagWaits =
-              holding && Math.hypot(live!.fielderPos.x - bag.x, live!.fielderPos.z - bag.z) < 2.5,
-            // The ball holder is right on top of him: he tries to dodge the tag.
-            tagNear =
-              holding &&
-              Math.hypot(
-                live!.fielderPos.x - pose.position.x,
-                live!.fielderPos.z - pose.position.z,
-              ) < 3.2;
-          if (left < 2.6 && (track.stealing || live?.throw?.base === track.target || tagWaits))
-            this.runnerSlide[i] = 1 - left / 2.6;
-          else if (tagNear) this.runnerSlide[i] = 0;
-        }
+        // The rules decide the slide (it moves where he touches the bag); the picture follows.
+        const slide = (track as RunnerTrack | undefined)?.slide;
+        if (track && slide && slide.base === track.target) this.runnerSlide[i] = 1;
         r.root.visible = pose.visible;
         r.root.position.set(pose.position.x, 0, pose.position.z);
         r.root.rotation.y = playerYaw(pose.facing);
@@ -2359,6 +2335,26 @@ export class BaseballField {
             pose.visible = true;
             pose.moving = false;
           }
+          // Sliding: his body stops where his foot (hand) meets the bag, not on top of it,
+          // until he gets up.
+          const sl = track.slide;
+          if (sl && sl.base === track.target) {
+            const up =
+                sl.kind === "dive"
+                  ? 2.15
+                  : (CLIP_KEYS.slideEnd - CLIP_KEYS.slideFrom) / CLIP_KEYS.slideRate,
+              d = touchDistance(sl.kind) / BASE_PATH_LENGTH;
+            if (l.elapsed - sl.at < up) {
+              const back = track.progress > sl.base,
+                hold = back
+                  ? Math.max(track.progress, sl.base + d)
+                  : Math.min(track.progress, sl.base - d);
+              if (hold !== track.progress) {
+                const held = runnerPose({ ...track, progress: hold });
+                pose.position = held.position;
+              }
+            }
+          }
           show(pose, track);
         }
       } else if (i === 0 && s.stealTrack) {
@@ -2372,6 +2368,7 @@ export class BaseballField {
     });
     this.ball.position.set(s.ball.x, s.ball.y, s.ball.z);
     this.holdBall();
+    this.hitboxes.update(dt, this.camera);
     // A knuckleball barely spins (that is why it flutters): only a slow tumble.
     if (s.phase === "flight" || s.phase === "inplay")
       this.ball.rotation.x +=
@@ -2443,6 +2440,7 @@ export class BaseballField {
   }
   dispose() {
     this.disposed = true;
+    this.hitboxes.dispose();
     this.resize.disconnect();
     this.renderer.domElement.removeEventListener("pointermove", this.pointerMove);
     this.renderer.domElement.removeEventListener("pointerdown", this.pointerDown);

@@ -3522,6 +3522,21 @@ export default function DiamondGame() {
                 >
                   모든 구종 열기
                 </button>
+                <button
+                  className="subtle-button"
+                  aria-pressed={s.showHitboxes}
+                  onClick={() => {
+                    engine.state.showHitboxes = !engine.state.showHitboxes;
+                    engine.emit();
+                    toast.success(
+                      engine.state.showHitboxes
+                        ? "히트박스를 보여 줍니다 (주자 · 베이스 · 베이스 근처 수비수 · 타자)"
+                        : "히트박스를 숨겼습니다",
+                    );
+                  }}
+                >
+                  {s.showHitboxes ? "히트박스 숨기기" : "히트박스 보기"}
+                </button>
                 <HofResetForm />
               </div>
             )}

@@ -1,3 +1,4 @@
+import { ballHitsBody, touchDistance, tagReaches, type RunnerPose } from "./hitbox.ts";
 export type Vec = { x: number; y: number; z: number };
 export type Mode = "match" | "bullpen" | "batting";
 export type Camera = "pitcher" | "catcher" | "broadcast" | "ball" | "top";
@@ -450,11 +451,10 @@ export const RULES = {
   fallRain: 0.007,
   fallTime: 2.6,
   /**
-   * Ball holder AI (a runner caught off his base): tag him within `tagChase` m, throw to the
+   * Ball holder AI (a runner caught off his base): the glove tags him (hitbox.ts), throw to the
    * base he is running to when the ball beats him there by `chaseMargin` s (release takes
    * `chaseRelease` s), otherwise run him down. At most `maxThrows` throws in one play.
    */
-  tagChase: 1.1,
   /**
    * Rundown presentation: when the holder closes within `tagSlowRange` m of the trapped runner
    * the game runs at `tagSlow` × speed (slow motion, the camera zooms on the glove); after the
@@ -463,7 +463,7 @@ export const RULES = {
   tagSlowRange: 4,
   tagSlow: 0.3,
   tagHold: 0.5,
-  chaseMargin: 0.12,
+  chaseMargin: 0,
   chaseRelease: 0.25,
   maxThrows: 6,
   /**
@@ -517,12 +517,8 @@ export const RULES = {
   rainWildPitch: 2.2,
   rainCatcherTransfer: 0.18,
   rainCatcherArm: 0.85,
-  /** Hit by pitch: the ball at the plate is inside the batter's body box (m from plate center). */
-  hbpInnerEdge: 0.7,
-  hbpLow: 0.25,
-  hbpHigh: 1.8,
   /** Runners' lead off the bag when a pitch or pickoff starts (m). */
-  runnerLead: 3.2,
+  runnerLead: 4.2,
   /** Extra random lead an AI runner gambles with (m, 0..this). First pickoff ≈ 28% out. */
   runnerLeadGamble: 2.3,
   /** Runner reaction before going back on a pickoff / breaking on a wild pitch (s). */
@@ -537,17 +533,24 @@ export const RULES = {
   /** A pickoff throw costs this share of one pitch's energy. */
   pickoffEnergy: 0.6,
   /** Stealing runner: lead and first-step delay after the pitcher's first move (s). */
-  stealLead: 3.6,
+  stealLead: 3.2,
   stealJump: 0.12,
   /** How much later (s, 0..this) a runner may read the pitcher's first move. */
   stealJumpGamble: 0.2,
   /** How much slower (s, 0..this) the catcher's exchange may be on a given throw. */
   catcherTransferGamble: 0.22,
   /** Pitcher's pickoff move before the ball leaves the hand (s) and its throw speed (m/s). */
-  pickoffMove: 0.28,
+  pickoffMove: 0.2,
   pickoffThrowSpeed: 30,
-  /** How far before the bag a tag reaches a sliding runner (m). */
-  tagReach: 0.4,
+  /**
+   * Tags and slides with hitboxes (lib/game/hitbox.ts): after a catch the glove needs
+   * `tagSweep` s to come down on the runner; a runner who touches the bag first is safe.
+   * Runners slide (feet first, or head first `slideDive` of the time; more when the tag is
+   * already waiting) from `slideStart` m before a bag a throw or the ball is going to.
+   */
+  tagSweep: 0.1,
+  slideStart: 3.6,
+  slideDive: 0.25,
   /** A runner takes an extra base on a wild pitch only with this much time to spare (s). */
   advanceMargin: 0.25,
   /** Bunt: a slow roller that stops between these distances (m) at this speed (m/s). */
@@ -615,7 +618,7 @@ export const STAGES: Record<
     fielderSpeed: 5.6,
     fielderReaction: 0.4,
     throwSpeed: 29,
-    catcherTransfer: 0.78,
+    catcherTransfer: 0.6,
     catcherArm: 30,
     leadGamble: 1,
     gaugeGain: 1,
@@ -635,7 +638,7 @@ export const STAGES: Record<
     fielderSpeed: 6,
     fielderReaction: 0.34,
     throwSpeed: 31,
-    catcherTransfer: 0.72,
+    catcherTransfer: 0.54,
     catcherArm: 31,
     leadGamble: 0.85,
     gaugeGain: 0.75,
@@ -660,8 +663,15 @@ export const wildPitchChance = (energy: number, pitchWild = 1) =>
     RULES.wildPitchMax,
   );
 /** True when a pitch crossing the plate at (x, y) strikes a batter standing on `hand`'s side. */
+/**
+ * Would a pitch crossing the plate at p (straight in, at that height) touch the batter's body
+ * hitbox? The game itself checks the pitch's real curved path (`pitchHit`).
+ */
 export const hitsBatter = (p: { x: number; y: number }, hand: "R" | "L") =>
-  (hand === "L" ? -p.x : p.x) >= RULES.hbpInnerEdge && p.y >= RULES.hbpLow && p.y <= RULES.hbpHigh;
+  !!ballHitsBody(
+    Array.from({ length: 28 }, (_, i) => V(p.x, p.y, 0.75 - i * 0.05)),
+    hand,
+  );
 /** Clear result type of a single pitch. */
 export type PitchOutcome = "Strike" | "Ball" | "HitByPitch" | "Foul" | "InPlay" | "WildPitch";
 /** Readable runner state, derived from the RunnerTrack fields (no second copy of the state). */
@@ -1011,12 +1021,12 @@ export const TIER_RATINGS: Record<Exclude<Tier, "high">, { mean: number; spread:
  * The timing window (shown on screen) stays in STAGES.swingWindow.
  */
 export const TIER_BALANCE: Record<Tier, { aiPower: number; batBoost: number }> = {
-  // Measured with the runner AI and errors (normal-player bot, 40 careers, 3 innings):
-  // win 55 / 51 / 46 / 44%, all 47% (before the last nudge to high and mlb).
-  high: { aiPower: 1.32, batBoost: -0.03 },
+  // Measured with hitbox tags/slides, the runner AI and errors (normal-player bot, 40 careers,
+  // 3 innings): win 51 / 52 / 48 / 46%, all 49%.
+  high: { aiPower: 1.32, batBoost: -0.05 },
   farm: { aiPower: 1.42, batBoost: 0.07 },
-  first: { aiPower: 1.32, batBoost: 0.03 },
-  mlb: { aiPower: 1.27, batBoost: 0.032 },
+  first: { aiPower: 1.32, batBoost: 0.015 },
+  mlb: { aiPower: 1.27, batBoost: 0.02 },
 };
 const NEUTRAL_BALANCE = { aiPower: 1, batBoost: 0 };
 /** What the career gauge measures in this tier. */
@@ -1208,6 +1218,8 @@ export type RunnerTrack = {
   read?: number;
   /** Play time he tripped and fell (down until `delay`). */
   fellAt?: number;
+  /** Sliding into `base` since play time `at`: feet first ("slide") or head first ("dive"). */
+  slide?: { base: number; at: number; kind: "slide" | "dive" };
 };
 /** A runner is at rest when standing on the base it is heading to (or out). */
 export const runnerSettled = (r: RunnerTrack) =>
@@ -1871,6 +1883,10 @@ export type GameState = {
   } | null;
   /** The 3D view is still showing a replay: the next batter/inning waits for it. */
   replayBusy: boolean;
+  /** Hit by pitch: where the ball touched the batter's body and which part (new `id` each time). */
+  hbp: { x: number; y: number; z: number; part: string; id: number } | null;
+  /** Developer view: draw the hitboxes (runners, bags, fielders at the bags, the batter). */
+  showHitboxes: boolean;
   /** Settings: rain may fall (off = always clear). Kept in this browser. */
   rainOn: boolean;
   /** The match was called off by rain. */
@@ -1956,6 +1972,8 @@ const initial = (career: Career, mode: Mode = "match", maxInnings = 3): GameStat
   flash: null,
   replay: null,
   replayBusy: false,
+  hbp: null,
+  showHitboxes: false,
   limitUsed: 0,
   limitArmed: false,
   pineTar: false,
@@ -2592,9 +2610,9 @@ export class BaseballEngine {
     }
     const stage = this.stageRules,
       data = pitchData(f.pitch),
-      // Hit by pitch: decided by where this ball actually crossed the plate (control error,
-      // pitch movement and the batter's side), not by a separate dice roll.
-      hbp = hitsBatter(f.target, this.batter.hand);
+      // Hit by pitch: the ball's real path (control error, movement) touches the batter's
+      // body hitbox, not a separate dice roll.
+      hbp = this.pitchHit();
     if (this.batting) {
       if (f.swung) {
         const timing = f.swingTime / f.visualDuration - SWING_SWEET,
@@ -2746,19 +2764,41 @@ export class BaseballEngine {
     } else this.settlePitch("BALL", "스트라이크 존 바깥", this.batting ? "gold" : "neutral");
   }
   /** Hit by pitch: the batter takes first and forced runners move up one base. */
+  /** Where the current pitch first touches the batter's body hitbox (or null). */
+  pitchHit() {
+    const f = this.state.flight;
+    if (!f) return null;
+    // From a metre in front of the plate to just behind it (the batter stands beside it).
+    // (Anchored on the plate-crossing point the rules use for this pitch.)
+    const end = this.pitchPosition(1),
+      dx = f.target.x - end.x,
+      dy = f.target.y - end.y,
+      path = Array.from({ length: 60 }, (_, i) => {
+        const q = this.pitchPosition(0.94 + i * 0.0015);
+        return V(q.x + dx, q.y + dy, q.z);
+      });
+    return ballHitsBody(path, this.batter.hand);
+  }
   hitByPitch() {
     const s = this.state;
     s.lastOutcome = "HitByPitch";
     s.stealTrack = null;
     if (s.history[0]) s.history[0].kind = "ball";
+    const hit = this.pitchHit();
+    if (hit) {
+      this.hbpId++;
+      s.hbp = { ...hit.point, part: hit.part, id: this.hbpId };
+      s.ball = { ...hit.point };
+    }
     this.walk();
     if (this.batting) this.earn(XP.walk, "볼넷·사구");
     this.result(
       "HIT BY PITCH",
-      "몸에 맞는 공 · 타자 1루, 밀려난 주자 진루",
+      `몸에 맞는 공${hit ? ` · ${hit.part}에 맞음` : ""} · 타자 1루, 밀려난 주자 진루`,
       this.batting ? "gold" : "red",
     );
   }
+  private hbpId = 0;
   /**
    * After a ball/strike call: a wild pitch or a running steal turns into a live base play;
    * otherwise the call is announced as usual.
@@ -3457,8 +3497,8 @@ export class BaseballEngine {
       out = r.out;
     if (r.touched?.base === t.base) margin = t.receivedAt - r.touched.at;
     else if (r.progress < t.base - 1e-8 && r.target >= t.base) {
-      // Still on his way: a non-forced runner is tagged as he arrives, a forced one is out.
-      margin = (t.base - r.progress) / r.pace;
+      // Still on his way: forced out.
+      margin = (this.touchLine(r, t.base) - r.progress) / r.pace;
       out = true;
     } else return;
     if (margin > RULES.closePlay) return;
@@ -3498,9 +3538,9 @@ export class BaseballEngine {
       const forced = this.forcedRunner(l, base),
         r = forced ?? (!forceOnly ? this.candidateRunner(l, base) : null);
       if (!r) continue;
-      const travel = this.throwTime(l, base),
-        wait = Math.max(0, r.delay - l.elapsed),
-        arrival = Math.abs(base - r.progress) / r.pace + wait;
+      // A tag needs the glove to come down after the catch; a force only the foot on the bag.
+      const travel = this.throwTime(l, base) + (forced ? 0 : RULES.tagSweep),
+        arrival = this.arriveTime(l, r, base);
       if (travel + 0.08 < arrival)
         options.push({
           base,
@@ -3556,7 +3596,7 @@ export class BaseballEngine {
     const duration = this.throwTime(l, base),
       near = Math.hypot(bag.x - l.fielderPos.x, bag.z - l.fielderPos.z),
       // A soft flip only to a teammate a few steps away and with time to spare.
-      arrival = r ? Math.abs(base - r.progress) / r.pace + Math.max(0, r.delay - l.elapsed) : 9,
+      arrival = r ? this.arriveTime(l, r, base) : 9,
       tossTime = Math.max(0.25, near / RULES.tossSpeed),
       toss =
         l.kind === "batted" &&
@@ -3678,13 +3718,15 @@ export class BaseballEngine {
         if (b >= limit && b < 4) continue;
         if (b <= trail) continue;
         if (settled && b < r.target) continue;
-        const away = Math.abs(b - r.progress),
-          turn = dir !== 0 && Math.sign(b - r.progress) !== 0 && Math.sign(b - r.progress) !== dir,
-          runT = away / full + (turn ? RULES.turnTime : 0),
+        const turn =
+            dir !== 0 && Math.sign(b - r.progress) !== 0 && Math.sign(b - r.progress) !== dir,
+          runT = this.arriveTime(l, r, b, full) + (turn ? RULES.turnTime : 0),
+          // A force needs only the ball on the bag; a tag also the glove coming down.
+          ball = eta(b) + (b === forcedTo ? 0 : RULES.tagSweep),
           p =
             onBag && Math.round(r.progress) === b && b >= forcedTo
               ? 0
-              : 1 / (1 + Math.exp(-(runT - eta(b) - misread - 0.05) / RULES.runSpread));
+              : 1 / (1 + Math.exp(-(runT - ball - misread - 0.05) / RULES.runSpread));
         options.push({ base: b, p });
       }
       if (options.length) {
@@ -3762,11 +3804,6 @@ export class BaseballEngine {
       })
       .sort((a, b) => a.d - b.d)[0];
     const { r, d, p } = near;
-    if (d <= RULES.tagChase) {
-      const base = r.target > r.progress ? Math.ceil(r.progress) : Math.floor(r.progress);
-      this.retire(l, r, Math.max(1, base), "tag");
-      return;
-    }
     if (d > 40) return;
     // Caught between bases with the ball on him: a rundown (announced once per play).
     if (
@@ -3790,8 +3827,9 @@ export class BaseballEngine {
     ) {
       const cover = l.defenders[this.receiver(b, l.fielder)],
         coverEta = Math.max(0, Math.hypot(cover.x - bag.x, cover.z - bag.z) - 0.9) / 8.2,
-        ball = ready + Math.max(this.throwSeconds(pos, bag, this.armOf(l)), coverEta),
-        run = Math.abs(b - r.progress) / r.pace + Math.max(0, r.delay - l.elapsed);
+        ball =
+          ready + Math.max(this.throwSeconds(pos, bag, this.armOf(l)), coverEta) + RULES.tagSweep,
+        run = this.arriveTime(l, r, b);
       if (ball + RULES.chaseMargin < run) {
         if (ready > 0) return; // gets set to throw
         this.beginThrow(l, b, r);
@@ -3844,35 +3882,154 @@ export class BaseballEngine {
       }
       if (r.progress >= r.target) continue;
       const before = r.progress;
-      let next = Math.min(r.target, before + r.pace * usable);
-      const t = l.throw;
-      // A non-forced runner must actually be tagged BEFORE touching the base.
-      if (
-        t?.receivedAt != null &&
-        t.runnerId === r.id &&
-        before < t.base - 1e-8 &&
-        !this.forcedRunner(l, t.base)
-      ) {
-        const tagLine = t.base - RULES.tagReach / BASE_PATH_LENGTH;
-        if (next >= tagLine) {
-          r.progress = Math.max(before, tagLine);
-          this.retire(
-            l,
-            r,
-            t.base,
-            "tag",
-            previousTime + remainingDelay + Math.max(0, tagLine - before) / r.pace,
-          );
-          continue;
-        }
+      const next = Math.min(r.target, before + r.pace * usable);
+      // He touches the next bag when his lead foot (or hand) reaches it, before his body
+      // is over it: that moment decides force plays, tags and when a run scores.
+      const ahead = Math.floor(before + 1e-9) + 1,
+        line = this.touchLine(r, ahead);
+      if (ahead <= 4 && before < line - 1e-12 && next >= line - 1e-12) {
+        const at = previousTime + remainingDelay + Math.max(0, line - before) / r.pace;
+        r.touched = { base: ahead, at };
+        if (ahead === 4 && r.scoredAt === null) r.scoredAt = at;
+        this.touchCall(l, r, ahead, at);
       }
-      const reach = Math.floor(next + 1e-9);
-      if (reach > Math.floor(before + 1e-9))
-        r.touched = { base: reach, at: previousTime + remainingDelay + (reach - before) / r.pace };
       r.progress = next;
       if (next >= 4 && r.scoredAt === null)
         r.scoredAt = previousTime + remainingDelay + (4 - before) / r.pace;
     }
+  }
+  /**
+   * Seconds until runner r touches `base` (from now, at `pace` bases/s): a batter runs through
+   * first; otherwise a runner going for a bag with a play on it slides (back to a bag: dives).
+   */
+  arriveTime(l: LivePlay, r: RunnerTrack, base: number, pace = r.pace) {
+    const pose: RunnerPose =
+      r.slide?.base === base
+        ? r.slide.kind
+        : r.progress > base
+          ? "dive"
+          : r.id === 0 && base === 1
+            ? "run"
+            : "slide";
+    const gap = Math.abs(base - r.progress) * BASE_PATH_LENGTH - touchDistance(pose);
+    return Math.max(0, r.delay - l.elapsed) + Math.max(0, gap) / (pace * BASE_PATH_LENGTH);
+  }
+  /** How he would touch `base` now: running through, or sliding / diving if he is. */
+  runnerPoseFor(r: RunnerTrack, base: number): RunnerPose {
+    return r.slide?.base === base ? r.slide.kind : "run";
+  }
+  /** Progress at which the runner touches `base` (his lead foot/hand reaches the bag). */
+  touchLine(r: RunnerTrack, base: number) {
+    const d = touchDistance(this.runnerPoseFor(r, base)) / BASE_PATH_LENGTH;
+    return r.progress > base ? base + d : base - d;
+  }
+  /** Is the runner touching a bag right now (safe from a tag there)? */
+  private touchingBag(l: LivePlay, r: RunnerTrack) {
+    if (r.scoredAt !== null) return true;
+    const n = Math.round(r.progress);
+    if (n < 1 || n > 4) return false;
+    // A forced runner gets no protection from the bag he was forced off.
+    const forcedTo = [1, 2, 3, 4].find((b) => this.forcedRunner(l, b) === r) ?? 0;
+    if (forcedTo && n < forcedTo) return false;
+    return (
+      Math.abs(r.progress - n) * BASE_PATH_LENGTH <= touchDistance(this.runnerPoseFor(r, n)) + 1e-9
+    );
+  }
+  /** Direction the runner moves (unit, ground plane), or zero when standing. */
+  private runnerHeading(r: RunnerTrack) {
+    if (runnerSettled(r)) return V();
+    const pose = runnerPose(r);
+    const n = Math.hypot(pose.facing.x, pose.facing.z) || 1;
+    return V(pose.facing.x / n, 0, pose.facing.z / n);
+  }
+  /**
+   * Runners slide (or dive head first) into a bag the play is going to: a throw on its way
+   * there, the ball already waiting there, or a steal. A runner diving back to his bag on a
+   * pickoff or a caught fly goes in head first.
+   */
+  private updateSlides(l: LivePlay) {
+    const t = l.throw,
+      holding = l.fieldedAt !== null && (!t || t.receivedAt !== null);
+    for (const r of l.runners) {
+      if (r.out || runnerSettled(r)) continue;
+      const b = r.target,
+        back = r.progress > b;
+      if (r.slide && r.slide.base !== b) r.slide = undefined;
+      if (r.slide || b < 1 || (r.id === 0 && b === 1 && !back)) continue;
+      const left = Math.abs(b - r.progress) * BASE_PATH_LENGTH;
+      if (left > RULES.slideStart || left <= touchDistance("run")) continue;
+      const bag = BASES[b - 1],
+        waiting = holding && Math.hypot(l.fielderPos.x - bag.x, l.fielderPos.z - bag.z) < 2.5,
+        coming = !!t && t.receivedAt === null && (t.base === b || t.relayTo === b);
+      if (!(waiting || coming || r.stealing)) continue;
+      const dive = back || this.rng() < (waiting ? 0.5 : RULES.slideDive);
+      r.slide = { base: b, at: l.elapsed, kind: dive ? "dive" : "slide" };
+    }
+  }
+  /**
+   * The ball holder on a bag a runner is coming to steps to the runner's side of it, so his
+   * glove is between the runner and the bag.
+   */
+  private straddleBag(l: LivePlay, dt: number) {
+    const t = l.throw;
+    if (l.fieldedAt === null || (t && t.receivedAt === null)) return;
+    const pos = l.fielderPos;
+    for (let b = 1; b <= 4; b++) {
+      const bag = BASES[b - 1];
+      if (Math.hypot(pos.x - bag.x, pos.z - bag.z) > 2) continue;
+      const r = l.runners
+        .filter((x) => !x.out && x.target === b && !runnerSettled(x) && x.scoredAt === null)
+        .sort((x, y) => Math.abs(x.progress - b) - Math.abs(y.progress - b))[0];
+      if (!r) return;
+      const at = runnerPose(r).position,
+        dx = at.x - bag.x,
+        dz = at.z - bag.z,
+        n = Math.hypot(dx, dz) || 1;
+      this.moveFielder(pos, V(bag.x + (dx / n) * 0.3, 0, bag.z + (dz / n) * 0.3), dt);
+      return;
+    }
+  }
+  /**
+   * Tags with hitboxes: the ball holder's glove (once it is down, RULES.tagSweep after the
+   * catch) touching a runner who is off his bag is an out.
+   */
+  private applyTags(l: LivePlay) {
+    const s = this.state,
+      t = l.throw;
+    if (s.outs >= 3 || l.fieldedAt === null || (t && t.receivedAt === null)) return;
+    const got = t?.receivedAt ?? l.fieldedAt;
+    if (l.elapsed + 1e-9 < got + RULES.tagSweep) return;
+    for (const r of l.runners) {
+      if (r.out || r.progress >= 4 || this.touchingBag(l, r)) continue;
+      // The batter who just overran first may walk back untouched.
+      if (r.id === 0 && r.progress > 1 && r.target === 1 && !r.turned && !l.caughtFly) continue;
+      const at = runnerPose(r).position,
+        dir = this.runnerHeading(r),
+        pose = this.runnerPoseFor(r, r.target);
+      if (!tagReaches(l.fielderPos, at, dir, pose)) continue;
+      // How close it was: time until he would have touched the bag.
+      const margin = Math.abs(this.touchLine(r, r.target) - r.progress) / r.pace;
+      this.retire(l, r, Math.max(1, r.target), "tag");
+      if (margin <= RULES.closePlay) this.closeCall(l, r, r.target, true, l.fielder);
+      if (s.outs >= 3) return;
+    }
+  }
+  /** A runner just touched `base`: a close call if the tag came a moment too late. */
+  private touchCall(l: LivePlay, r: RunnerTrack, base: number, at: number) {
+    const t = l.throw;
+    if (!t || t.base !== base || this.forcedRunner(l, base) === r) return;
+    const ready = (t.receivedAt ?? t.startedAt + t.duration) + RULES.tagSweep;
+    if (ready >= at && ready - at <= RULES.closePlay) this.closeCall(l, r, base, false, t.receiver);
+  }
+  private closeCall(l: LivePlay, r: RunnerTrack, base: number, out: boolean, fielder: number) {
+    this.replayId++;
+    this.state.replay = {
+      text: out ? "아웃" : "세이프",
+      fielder,
+      at: l.elapsed,
+      id: this.replayId,
+      base: { runner: r.id, base, out },
+    };
   }
   private tickLivePlay(dt: number) {
     // Split at ball events so a 30/60 fps boundary cannot change a close play.
@@ -3882,6 +4039,7 @@ export class BaseballEngine {
         events = [l.flightTime, l.catchAt];
       if (l.fieldedAt !== null) events.push(l.fieldedAt + l.hold);
       if (l.throw) events.push(l.throw.startedAt + l.throw.duration);
+      if (l.throw?.receivedAt != null) events.push(l.throw.receivedAt + RULES.tagSweep);
       const next = events.filter((t) => t > l.elapsed + 1e-8).sort((a, b) => a - b)[0];
       const step = next === undefined ? remaining : Math.min(remaining, next - l.elapsed);
       this.stepLivePlay(step);
@@ -3893,8 +4051,8 @@ export class BaseballEngine {
     for (let base = 3; base >= 1; base--) {
       const r = this.returningRunner(l, base);
       if (!r) continue;
-      const wait = Math.max(0, r.delay - l.elapsed);
-      if (this.throwTime(l, base) + 0.08 < (r.progress - base) / r.pace + wait) return base;
+      if (this.throwTime(l, base) + RULES.tagSweep + 0.08 < this.arriveTime(l, r, base))
+        return base;
     }
     return 0;
   }
@@ -4301,15 +4459,20 @@ export class BaseballEngine {
           l.fielder = t.receiver;
           l.fielderPos = l.defenders[t.receiver];
           const forced = this.forcedRunner(l, t.base),
-            back = this.returningRunner(l, t.base);
-          if (forced && t.runnerId === forced.id) this.retire(l, forced, t.base, "force");
-          else if (back && back.progress > t.base + RULES.tagReach / BASE_PATH_LENGTH)
-            // The ball beat the runner back to the bag: tagged before he could touch it.
-            this.retire(l, back, t.base, "tag");
+            target = l.runners.find((x) => x.id === t.runnerId);
+          // Force: the fielder's foot is on the bag with the ball before the runner's foot.
+          if (
+            forced &&
+            t.runnerId === forced.id &&
+            forced.progress < this.touchLine(forced, t.base) - 1e-12
+          )
+            this.retire(l, forced, t.base, "force");
+          else if (target && !target.out && !this.touchingBag(l, target) && !forced)
+            s.detail = (t.base === 4 ? "홈" : t.base + "루") + " 포구 · 태그!";
           else
             s.detail =
               (t.base === 4 ? "홈" : t.base + "루") + " 포구 · 베이스에 도착한 주자는 세이프";
-          this.closePlay(l, t);
+          if (forced && t.runnerId === forced.id) this.closePlay(l, t);
           if (
             forced?.out &&
             s.outs < 3 &&
@@ -4331,6 +4494,9 @@ export class BaseballEngine {
       }
     }
     if (this.runnersThink(l)) this.chaseRunners(l, dt);
+    this.updateSlides(l);
+    this.straddleBag(l, dt);
+    this.applyTags(l);
     // A rundown tag: a moment to see it before the verdict.
     const rd = l.rundown;
     if (rd?.tagAt !== undefined && l.elapsed < rd.tagAt + RULES.tagHold) return;

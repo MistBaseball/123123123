@@ -8,6 +8,7 @@ import {
   PITCHES,
   distance,
   BASES,
+  BASE_PATH_LENGTH,
   runnerPose,
   playerYaw,
   pitchMovement,
@@ -64,6 +65,14 @@ import {
   carryScale,
   HOME_RUN_DISTANCE,
 } from "../lib/game/engine.ts";
+import {
+  touchDistance,
+  ballHitsBody,
+  batterBody,
+  tagReaches,
+  BAG_HALF,
+  LEAD,
+} from "../lib/game/hitbox.ts";
 
 let passed = 0;
 const check = (name, fn) => {
@@ -427,7 +436,9 @@ check("Close force plays agree at 30, 60 and 144 fps; simultaneous arrival is sa
       l.state = "포구";
       Object.assign(l.fielderPos, BASES[0]);
       Object.assign(l.defenders[2], BASES[0]);
-      l.runners[0].progress = 1 - l.runners[0].pace * (0.22 + offset);
+      // The batter's foot reaches the bag (hitbox) a stride before his body is over it.
+      l.runners[0].progress =
+        1 - touchDistance("run") / BASE_PATH_LENGTH - l.runners[0].pace * (0.22 + offset);
       g.beginThrow(l, 1);
       finishPlay(g, dt);
       assert.equal(g.state.outs, offset > 0 ? 1 : 0);
@@ -995,8 +1006,10 @@ check(
     // Bases loaded, ball far to the backstop: everyone moves up and the run scores.
     const b = new BaseballEngine(newCareer(), () => 0.5);
     b.state.bases = [true, true, true];
-    b.throwAt(0.6, 0.2);
-    Object.assign(b.state.flight, { wild: true, target: V(0.6, 0.09, 0) });
+    // Away from the batter's side (a ball in the dirt at his feet would hit him).
+    const away = b.batter.hand === "L" ? 0.6 : -0.6;
+    b.throwAt(away, 0.2);
+    Object.assign(b.state.flight, { wild: true, target: V(away, 0.09, 0) });
     settle(b);
     assert.equal(b.state.score[0], 1);
     assert.deepEqual(b.state.bases, [false, true, true], "the batter is still at the plate");
@@ -2906,4 +2919,92 @@ check("Runners trip now and then (more in the rain) and stay down before running
   }
   assert(RULES.fallRain > RULES.fallClear * 5 && RULES.fallClear < 0.002);
 });
+check(
+  "Hitboxes: a pitch touching any part of the batter's body is a hit by pitch, and the part is named",
+  () => {
+    for (const hand of ["R", "L"]) {
+      const side = hand === "L" ? -1 : 1;
+      const part = (x, y) =>
+        ballHitsBody(
+          Array.from({ length: 28 }, (_, i) => V(x * side, y, 0.75 - i * 0.05)),
+          hand,
+        )?.part;
+      assert.equal(part(0.58, 1.6), "머리");
+      assert.equal(part(0.8, 1.05), "몸통");
+      assert.equal(part(0.56, 1.37), "팔", "the front arm shields the hands");
+      assert.equal(part(0.68, 0.5), "다리");
+      assert.equal(part(0.25, 1.0), undefined, "over the inside corner misses him");
+      assert.equal(part(-0.6, 1.0), undefined, "the far side never hits him");
+      assert.equal(part(0.9, 2.2), undefined, "over his head");
+      assert(
+        batterBody(hand).every((c) => c.a.x * side > 0.4 && c.b.x * side > 0.4),
+        "he stands beside the plate",
+      );
+    }
+    // In a game: the call names the part and marks where the ball touched him.
+    const g = new BaseballEngine(newCareer(), () => 0.5);
+    const side = g.batter.hand === "L" ? -1 : 1;
+    assert(g.throwAt(0.58 * side, 1.6));
+    g.state.flight.target = V(0.58 * side, 1.6, 0);
+    g.state.flight.wild = false;
+    settle(g);
+    assert.equal(g.state.lastOutcome, "HitByPitch");
+    assert.match(g.state.detail, /머리에 맞음/);
+    assert(g.state.hbp && g.state.hbp.part === "머리" && g.state.hbp.y > 1.3);
+    assert.equal(
+      g.state.showHitboxes,
+      false,
+      "the hitbox view is off unless the developer turns it on",
+    );
+  },
+);
+check(
+  "Hitboxes: a slide touches the bag a leg's length early; the glove must come down first",
+  () => {
+    assert(
+      touchDistance("slide") > touchDistance("run") + 0.5 &&
+        touchDistance("dive") > touchDistance("slide"),
+    );
+    assert(Math.abs(touchDistance("run") - (BAG_HALF + LEAD.run)) < 1e-9);
+    const play = (delta) => {
+      const g = new BaseballEngine(newCareer(), () => 0.5);
+      g.state.autoField = false;
+      g.state.bases = [true, false, false];
+      g.contact(0.3);
+      const l = g.state.live;
+      Object.assign(l, { elapsed: 1, flightTime: 0.1, fieldedAt: 0.5, state: "포구", fielder: 4 });
+      l.fielderPos = l.defenders[4];
+      Object.assign(l.fielderPos, V(9, 0, 28));
+      Object.assign(l.defenders[3], BASES[1]);
+      l.runners[0].out = true;
+      g.state.outs = 1;
+      const r = l.runners[1];
+      r.target = 2;
+      g.beginThrow(l, 2);
+      // The glove comes down RULES.tagSweep after the catch; his lead foot reaches the bag
+      // `delta` s after that (he slides: the foot is a leg's length ahead of his body).
+      const ready = l.throw.startedAt + l.throw.duration + RULES.tagSweep,
+        line = 2 - touchDistance("slide") / BASE_PATH_LENGTH;
+      r.progress = line - r.pace * (ready - l.elapsed + delta);
+      let touchedAt = null;
+      finishPlay(g);
+      touchedAt = r.touched?.base === 2 ? r.touched : null;
+      return { g, l, r, touchedAt };
+    };
+    const late = play(0.05);
+    assert.equal(late.g.state.outs, 2);
+    assert(late.r.out && late.l.outs[0].kind === "tag", "the glove was down first: tagged");
+    assert(late.l.outs[0].time >= late.l.throw.receivedAt + RULES.tagSweep - 1e-9);
+    const early = play(-0.05);
+    assert(!early.r.out, "his foot reached the bag first: safe");
+    assert.equal(early.r.slide?.kind, "slide", "he slid in");
+    assert(early.touchedAt, "the touch is recorded");
+    assert.deepEqual(early.g.state.bases, [false, true, false]);
+    // The tag needs reach: a holder on the bag reaches a runner's lead foot, not one 3 m away.
+    const holder = V(0, 0, 38.8),
+      dir = V(-0.7071, 0, 0.7071);
+    assert(tagReaches(holder, V(1.1, 0, 37.7), dir, "slide"));
+    assert(!tagReaches(holder, V(2.5, 0, 36.3), dir, "slide"));
+  },
+);
 console.log(`\n${passed} gameplay checks passed.`);

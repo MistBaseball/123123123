@@ -27,7 +27,7 @@ npm run typecheck
 npm run build
 ```
 
-Node.js 24 기준. `npm test`는 81개 게임 규칙 검사다. 잠금 파일을 유지한다.
+Node.js 24 기준. `npm test`는 83개 게임 규칙 검사다. 잠금 파일을 유지한다.
 규칙 변경은 관련 회귀 테스트를 추가/수정하고 검증한다. 문구 수정에 대규모 테스트를 추가하지 않는다.
 
 ## 코드 위치
@@ -40,6 +40,7 @@ Node.js 24 기준. `npm test`는 81개 게임 규칙 검사다. 잠금 파일을
 | WebGL 없는 환경의 렌더링 | `web/lib/game/software-field.ts` |
 | 조작·조준판·메뉴·훈련 UI | `web/components/game/DiamondGame.tsx` |
 | 화면 스타일 | `web/app/globals.css` |
+| 히트박스(데드볼·슬라이딩·태그) | `web/lib/game/hitbox.ts`, 표시는 `hitbox-view.ts` |
 | 규칙 회귀 검사 | `web/scripts/check-game.mjs` |
 | Unity 설치·참조 연결 | `docs/UNITY_KIT.md`, 패키지의 `README_KO.md` |
 
