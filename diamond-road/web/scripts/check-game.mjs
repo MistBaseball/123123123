@@ -76,9 +76,11 @@ import {
 
 let passed = 0;
 const check = (name, fn) => {
+  const t0 = performance.now();
   fn();
   passed++;
-  console.log(`PASS ${name}`);
+  const ms = performance.now() - t0;
+  console.log(`PASS ${name}${process.env.TIMING ? ` (${(ms / 1000).toFixed(1)} s)` : ""}`);
 };
 const seed = (n) => () => {
   n = (Math.imul(1664525, n) + 1013904223) >>> 0;
@@ -1087,11 +1089,36 @@ check(
     f.foul();
     assert.equal(f.state.stealTrack, null);
     assert.deepEqual(f.state.bases, [true, false, false]);
-    // Second base occupied: no steal call.
+    // Second base occupied: the runner on second can steal third; bases full: no steal.
     const o = new BaseballEngine();
     o.state.half = "bottom";
     o.state.bases = [true, true, false];
+    assert.equal(o.stealTarget, 3);
+    assert(o.steal());
+    o.state.bases = [true, true, true];
+    o.state.stealCall = false;
     assert(!o.steal());
+    // The rival steals too (when we pitch), only with a runner who can make it.
+    let tries = 0,
+      made = 0;
+    for (let i = 1; i <= 1500; i++) {
+      const a = new BaseballEngine(newCareer(), seed(i));
+      a.start("match");
+      a.state.half = "top";
+      a.state.bases = [true, false, false];
+      a.state.order[0] = i % 9;
+      a.state.phase = "ready";
+      a.throwAt(0, 0.9);
+      if (!a.state.stealTrack) continue;
+      assert.equal(a.state.stealTrack.target, 2);
+      assert.equal(a.state.message, "주자 도루!");
+      tries++;
+      let k = 0;
+      while (a.state.phase !== "result" && k++ < 6000) a.tick(1 / 60);
+      if (a.state.message === "STOLEN BASE") made++;
+    }
+    assert(tries > 10 && tries < 150, `rival steal tries ${tries}`);
+    assert(made > 0 && made < tries, `rival steals ${made}/${tries}`);
   },
 );
 check("G–H Caught fly: batter out, runners RETURN; a throw beating one back retires him", () => {

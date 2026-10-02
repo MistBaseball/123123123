@@ -1,7 +1,7 @@
 /**
  * Mixamo player model + baseball animations for the 3D field.
  *
- * Assets (public/models): player.glb (one skinned character, "Ch06") and anims.glb (21 clips
+ * Assets (public/models): player.glb (one skinned character, "Ch06") and anims.glb (28 clips
  * on the same skeleton, named after the source files: pitch_r, swing_l, run, diving_r, ...).
  * Each on-field player gets a clone with its own AnimationMixer. The game never reads the
  * animations back: it only shows them, so rules and timings stay in engine.ts.
@@ -32,7 +32,14 @@ export type ClipName =
   | "swing_r"
   | "turn180"
   | "trip"
-  | "fall_flat";
+  | "fall_flat"
+  | "run_turn"
+  | "walk"
+  | "jog"
+  | "sad_walk"
+  | "hit_high"
+  | "hit_mid"
+  | "hit_low";
 
 /**
  * Key moments of each clip (seconds), measured from the files (dev-avatar.html):
@@ -70,10 +77,14 @@ export const CLIP_KEYS = {
   slideRate: 1.15,
   slideGetUp: 0.7,
   slideEnd: 1.18,
-  /** Runner turning back (rundown): the plant and first half of the spin (turnFrom → turnTo).
-   *  The clip goes upside down after ~0.95 s, so the rest of the turn blends into the run. */
-  turnFrom: 0.55,
-  turnTo: 0.92,
+  /** Runner turning back (rundown, run_turn): plant, low spin, first strides the other way. */
+  turnFrom: 0.2,
+  turnTo: 1.05,
+  /** Hit by pitch: how long each reaction plays before he jogs to first (high = head: before
+   *  the fall; mid = body: doubled over; low = legs: the hop). */
+  hitHigh: 1.0,
+  hitMid: 1.35,
+  hitLow: 1.6,
   /** Dodging a tag into the bag (trip): take-off at dodgeFrom, flat on the ground at dodgeDown;
    *  then the dive clip's get-up (diveDown → diveUp). */
   dodgeFrom: 0.1,

@@ -409,7 +409,7 @@ export class SoftwareField {
       if (l.fieldedAt === null) this.circle(V(l.land.x, 0.1, l.land.z), 2, "#f7d387", true);
     } else
       s.bases.forEach((has, i) => {
-        const steal = i === 0 ? s.stealTrack : null;
+        const steal = s.stealTrack && i === s.stealTrack.from - 1 ? s.stealTrack : null;
         if (steal) {
           const pose = runnerPose(steal);
           this.drawPlayer(
