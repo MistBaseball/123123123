@@ -1229,16 +1229,22 @@ export class BaseballField {
       const hbp = s.phase === "result" && !s.live && s.lastOutcome === "HitByPitch" ? s.hbp : null,
         react = hbp
           ? hbp.part === "머리"
-            ? { clip: "hit_high" as const, dur: K.hitHigh }
+            ? { clip: "hit_high" as const, from: K.hitHighFrom, to: K.hitHigh }
             : hbp.part === "다리" || hbp.part === "발"
-              ? { clip: "hit_low" as const, dur: K.hitLow }
-              : { clip: "hit_mid" as const, dur: K.hitMid }
+              ? { clip: "hit_low" as const, from: K.hitLowFrom, to: K.hitLow }
+              : { clip: "hit_mid" as const, from: K.hitMidFrom, to: K.hitMid }
           : null;
-      if (hbp && react && this.time - this.hbpAt < react.dur) {
-        a.setBat(false, lefty);
+      if (hbp && react && this.time - this.hbpAt < react.to - react.from) {
+        // Straight into the reaction from his stance (no idle lead-in), still facing the
+        // plate as he stood, blended over a few frames instead of snapping.
+        a.setBat(false, hbp.x < 0);
         a.object.visible = true;
         a.object.position.set(hbp.x < 0 ? -0.82 : 0.82, 0, 0);
-        a.play(react.clip, { time: this.time - this.hbpAt, fade: 0.08 });
+        // (The stance clip already turns him to the plate; the reaction clip faces ahead, so the
+        // body turns while one blends into the other.)
+        const turn = Math.min(1, (this.time - this.hbpAt) / 0.12);
+        a.object.rotation.set(0, (hbp.x < 0 ? Math.PI / 2 : -Math.PI / 2) * turn, 0);
+        a.play(react.clip, { time: react.from + (this.time - this.hbpAt), fade: 0.12 });
       } else if (bunt && (s.phase === "windup" || s.phase === "flight" || (sw && since < 0.9)))
         a.play(`bunt${side}` as "bunt_r", {
           time: s.phase === "windup" ? (1 - s.timer / 0.62) * K.buntSquare : K.buntSquare,

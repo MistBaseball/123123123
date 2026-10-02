@@ -77,10 +77,14 @@ export const CLIP_KEYS = {
   /** Runner turning back (rundown, run_turn): plant, low spin, first strides the other way. */
   turnFrom: 0.2,
   turnTo: 1.05,
-  /** Hit by pitch, at the plate while the call is shown: head (until just before the fall),
-   *  body (doubled over), legs (the hop). */
-  hitHigh: 1.0,
+  /** Hit by pitch, at the plate while the call is shown: each clip from the moment the ball
+   *  lands (its idle lead-in skipped) to the end of the reaction (head: just before the fall;
+   *  body: doubled over; legs: the hop). */
+  hitHighFrom: 0.3,
+  hitHigh: 0.98,
+  hitMidFrom: 0.2,
   hitMid: 1.35,
+  hitLowFrom: 0.1,
   hitLow: 1.6,
   /** Dodging a tag into the bag (trip): take-off at dodgeFrom, flat on the ground at dodgeDown;
    *  then the dive clip's get-up (diveDown → diveUp). */
