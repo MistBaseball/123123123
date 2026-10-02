@@ -1,7 +1,7 @@
 /**
  * Mixamo player model + baseball animations for the 3D field.
  *
- * Assets (public/models): player.glb (one skinned character, "Ch06") and anims.glb (18 clips
+ * Assets (public/models): player.glb (one skinned character, "Ch06") and anims.glb (21 clips
  * on the same skeleton, named after the source files: pitch_r, swing_l, run, diving_r, ...).
  * Each on-field player gets a clone with its own AnimationMixer. The game never reads the
  * animations back: it only shows them, so rules and timings stay in engine.ts.
@@ -29,7 +29,10 @@ export type ClipName =
   | "run"
   | "slide"
   | "swing_l"
-  | "swing_r";
+  | "swing_r"
+  | "turn180"
+  | "trip"
+  | "fall_flat";
 
 /**
  * Key moments of each clip (seconds), measured from the files (dev-avatar.html):
@@ -67,6 +70,17 @@ export const CLIP_KEYS = {
   slideRate: 1.15,
   slideGetUp: 0.7,
   slideEnd: 1.18,
+  /** Runner turning back (rundown): the plant and first half of the spin (turnFrom → turnTo).
+   *  The clip goes upside down after ~0.95 s, so the rest of the turn blends into the run. */
+  turnFrom: 0.55,
+  turnTo: 0.92,
+  /** Dodging a tag into the bag (trip): take-off at dodgeFrom, flat on the ground at dodgeDown;
+   *  then the dive clip's get-up (diveDown → diveUp). */
+  dodgeFrom: 0.1,
+  dodgeDown: 0.75,
+  /** Runner tripping: stumble at fallFrom, flat on his face at fallDown. */
+  fallFrom: 0.45,
+  fallDown: 1.5,
 };
 
 export type AvatarAssets = {

@@ -140,7 +140,7 @@ function match() {
   real += T.matchRecap;
   const st = s(),
     tier = g.state.career.stage === "high" ? "high" : tierOf(g.state.career),
-    agg = (tiers[tier] ??= { n: 0, w: 0, d: 0, l: 0, rf: 0, ra: 0, h: 0, oh: 0, k: 0 });
+    agg = (tiers[tier] ??= { n: 0, w: 0, d: 0, l: 0, rf: 0, ra: 0, h: 0, oh: 0, k: 0, e: 0 });
   agg.n++;
   if (st.score[1] > st.score[0]) agg.w++;
   else if (st.score[1] === st.score[0]) agg.d++;
@@ -150,6 +150,7 @@ function match() {
   agg.h += st.hits[1];
   agg.oh += st.hits[0];
   agg.k += g.matchStrikeouts ?? 0;
+  agg.e += st.errors[0] + st.errors[1];
   stats.matches++;
   if (st.score[1] > st.score[0]) stats.wins++;
   stats.k += g.matchStrikeouts ?? 0;

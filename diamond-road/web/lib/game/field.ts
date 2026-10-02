@@ -16,6 +16,8 @@ import {
   lerp,
   runnerPose,
   playerYaw,
+  RULES,
+  type RunnerTrack,
   type Vec,
 } from "./engine";
 import * as tex from "./textures";
@@ -143,6 +145,10 @@ export class BaseballField {
   private runnerSlide: number[] = [-1, -1, -1, -1];
   /** Render time each runner's slide began (-1 = not sliding). */
   private slideStart: number[] = [-1, -1, -1, -1];
+  /** This slide is a tag dodge (trip into the bag, then the dive clip's get-up). */
+  private slideDodge: boolean[] = [false, false, false, false];
+  /** Each runner's live track this frame (turns, falls), or null. */
+  private runnerTracks: (RunnerTrack | null)[] = [null, null, null, null];
   private lastAvatarPos = new Map<Figure, THREE.Vector3>();
   private diveSide = new Map<Figure, "diving_l" | "diving_r">();
   /** Last few seconds of the chasing fielder (for the highlight replay). */
@@ -1100,7 +1106,24 @@ export class BaseballField {
           return true;
         }
       }
+      // Rundown, tag about to land (slow motion): he turns to the runner and puts the glove down.
+      const rd = l.rundown;
+      if (i === l.fielder && rd && this.engine.timeScale < 1) {
+        const rr = l.runners.find((x) => x.id === rd.runnerId);
+        if (rr) {
+          const p = runnerPose(rr).position;
+          a.object.rotation.y =
+            playerYaw(V(p.x - l.fielderPos.x, 0, p.z - l.fielderPos.z)) + Math.PI;
+          a.play("ground_catch", { time: K.groundPickup, fade: 0.15 });
+          return true;
+        }
+      }
       if (l.fielder !== i) {
+        // The one who just threw finishes his follow-through.
+        if (t && t.thrower === i && e < t.startedAt + (K.throwEnd - K.throwRelease)) {
+          a.play("throw", { time: K.throwRelease + (e - t.startedAt) });
+          return true;
+        }
         // Receiver: glove up as the throw arrives.
         const arrive = t && t.receiver === i ? t.startedAt + t.duration : null;
         if (arrive !== null && e > arrive - 0.45 && e < arrive + 0.7)
@@ -1125,7 +1148,10 @@ export class BaseballField {
         else if (l.catchStyle === "ground")
           a.play("ground_catch", { time: K.groundPickup + (e - moment) });
         else a.play("catch", { time: K.catchMoment + (e - moment) });
-      } else if (t && t.receivedAt !== null && e < t.receivedAt + 0.5)
+      } else if (t && t.receivedAt !== null && t.receiver === i && e < t.receivedAt + 0.4)
+        // He just caught the throw (and may now chase a runner).
+        a.play("catch", { time: K.catchMoment + (e - t.receivedAt) });
+      else if (t && t.receivedAt !== null && t.receiver !== i && e < t.receivedAt + 0.5)
         a.play("throw", { time: Math.min(K.throwEnd, K.throwRelease + (e - t.startedAt)) });
       else running(a, moved, 0);
       return true;
@@ -1224,15 +1250,66 @@ export class BaseballField {
       }
       // Slide on its own clock from the take-off: down onto the bag, then the clip's own
       // get-up, and only then the stance (no snap from lying flat to standing).
-      if (this.runnerSlide[i] >= 0 && this.slideStart[i] < 0) this.slideStart[i] = this.time;
-      const slideT =
-        this.slideStart[i] >= 0 ? K.slideFrom + (this.time - this.slideStart[i]) * K.slideRate : -1;
+      const track = this.runnerTracks[i],
+        e = l?.elapsed ?? 0;
+      // Tripped: stumble, flat on his face, then up again (the dive clip's get-up).
+      if (track && track.fellAt !== undefined && e >= track.fellAt && e < track.delay) {
+        const u = e - track.fellAt,
+          up = K.diveUp - K.diveDown;
+        if (u < K.fallDown - K.fallFrom) a.play("fall_flat", { time: K.fallFrom + u, fade: 0.1 });
+        else if (e < track.delay - up) a.play("fall_flat", { time: K.fallDown });
+        else a.play("diving_r", { time: K.diveUp - (track.delay - e), fade: 0.3 });
+        this.slideStart[i] = -1;
+        return;
+      }
+      // Turning back between bases: plant and spin (he still faces the old way at first).
+      if (
+        track &&
+        track.turnAt !== undefined &&
+        e >= track.turnAt &&
+        e < track.turnAt + RULES.turnTime
+      ) {
+        const u = (e - track.turnAt) / (RULES.turnTime * 0.6);
+        if (u < 1) {
+          a.object.rotation.y += Math.PI;
+          a.play("turn180", { time: lerp(K.turnFrom, K.turnTo, u), fade: 0.08 });
+        } else a.play("run", { loop: true, speed: 1.15, fade: 0.2 });
+        this.slideStart[i] = -1;
+        return;
+      }
+      if (this.runnerSlide[i] >= 0 && this.slideStart[i] < 0) {
+        this.slideStart[i] = this.time;
+        // A tag waiting at the bag (or a rundown): he dives around it; otherwise mostly a slide.
+        const runnerAt = a.object.position,
+          holder =
+            !!l &&
+            l.fieldedAt !== null &&
+            (!l.throw || l.throw.receivedAt !== null) &&
+            !!track &&
+            (Math.hypot(
+              l.fielderPos.x - BASES[Math.min(3, track.target - 1)].x,
+              l.fielderPos.z - BASES[Math.min(3, track.target - 1)].z,
+            ) < 2.5 ||
+              Math.hypot(l.fielderPos.x - runnerAt.x, l.fielderPos.z - runnerAt.z) < 3.5);
+        this.slideDodge[i] = holder || l?.rundown?.runnerId === i || Math.random() < 0.3;
+      }
+      const dodge = this.slideDodge[i],
+        since = this.slideStart[i] >= 0 ? this.time - this.slideStart[i] : -1,
+        slideT = since >= 0 ? K.slideFrom + since * K.slideRate : -1,
+        dodgeIn = K.dodgeDown - K.dodgeFrom,
+        dodgeEnd = dodgeIn + 0.25 + (K.diveUp - K.diveDown);
       if (
         !fig.root.visible ||
-        (slideT > K.slideGetUp && this.runnerMoving[i] && this.runnerSlide[i] < 0)
+        ((dodge ? since > dodgeIn : slideT > K.slideGetUp) &&
+          this.runnerMoving[i] &&
+          this.runnerSlide[i] < 0)
       )
         this.slideStart[i] = -1;
-      if (this.slideStart[i] >= 0 && slideT < K.slideEnd)
+      if (this.slideStart[i] >= 0 && dodge && since < dodgeEnd) {
+        if (since < dodgeIn) a.play("trip", { time: K.dodgeFrom + since, fade: 0.08 });
+        else if (since < dodgeIn + 0.25) a.play("trip", { time: K.dodgeDown });
+        else a.play("diving_r", { time: K.diveDown + (since - dodgeIn - 0.25), fade: 0.3 });
+      } else if (this.slideStart[i] >= 0 && !dodge && slideT < K.slideEnd)
         a.play("slide", { time: slideT, fade: 0.1 });
       else {
         this.slideStart[i] = -1;
@@ -1860,7 +1937,40 @@ export class BaseballField {
     let pos = new THREE.Vector3(),
       look = new THREE.Vector3(),
       fov = 32;
-    if (cam === "pitcher") {
+    // Rundown (auto camera): close on the runner and the ball; slow motion → on the glove.
+    const lv = s.live,
+      rd = s.phase === "inplay" && s.autoCamera ? lv?.rundown : undefined,
+      rdRunner = rd && lv ? lv.runners.find((r) => r.id === rd.runnerId) : undefined,
+      rundownCam =
+        !!rd &&
+        !!lv &&
+        !!rdRunner &&
+        (rd.end === undefined || (rd.tagAt !== undefined && lv.elapsed < rd.tagAt + RULES.tagHold)),
+      slow = this.engine.timeScale < 1;
+    if (rundownCam && lv && rdRunner) {
+      const rp = runnerPose(rdRunner).position,
+        b = s.ball,
+        mid = V((rp.x + b.x) / 2, 0, (rp.z + b.z) / 2),
+        spread = Math.hypot(rp.x - b.x, rp.z - b.z),
+        // From the infield side (toward the mound), looking out at the base path.
+        ix = 0 - mid.x,
+        iz = 19 - mid.z,
+        n = Math.hypot(ix, iz) || 1;
+      const glove = slow
+        ? this.avatars?.get(this.players[lv.fielder])?.ballPoint(new THREE.Vector3())
+        : null;
+      if (glove) {
+        const back = 3.6;
+        pos.set(glove.x + (ix / n) * back, glove.y + 1.1, glove.z + (iz / n) * back);
+        look.set((glove.x + rp.x) / 2, Math.max(0.6, glove.y - 0.2), (glove.z + rp.z) / 2);
+        fov = 36;
+      } else {
+        const back = Math.max(9, spread * 0.8 + 6);
+        pos.set(mid.x + (ix / n) * back, 3.5 + spread * 0.12, mid.z + (iz / n) * back);
+        look.set(mid.x, 1, mid.z);
+        fov = 42;
+      }
+    } else if (cam === "pitcher") {
       pos.set(-1.4, 2.75, 24.4);
       look.set(0, 1, 0);
       fov = narrow ? 36 : 27;
@@ -1894,7 +2004,11 @@ export class BaseballField {
       look.set(devCam[3], devCam[4], devCam[5]);
       fov = devCam[6];
     }
-    const k = this.cameraKey !== key || devCam ? 1 : Math.min(1, dt * 5);
+    // (dt is slowed down in slow motion; the camera still moves at its own pace.)
+    const k =
+      this.cameraKey !== key || devCam
+        ? 1
+        : Math.min(1, (dt / Math.max(0.05, this.engine.timeScale)) * (rundownCam ? 3.5 : 5));
     this.camera.position.lerp(pos, k);
     this.camera.lookAt(look);
     if (this.camera.fov !== fov) {
@@ -2194,6 +2308,7 @@ export class BaseballField {
       const l = s.live;
       this.runnerMoving[i] = false;
       this.runnerSlide[i] = -1;
+      this.runnerTracks[i] = null;
       const show = (
         pose: ReturnType<typeof runnerPose>,
         track?: { progress: number; target: number; stealing?: boolean },
@@ -2201,9 +2316,24 @@ export class BaseballField {
         this.runnerMoving[i] = pose.moving;
         // Sliding into a base a throw is going to (or on a steal): the last couple of metres.
         if (track && pose.moving && track.target > track.progress) {
-          const left = (track.target - track.progress) * BASE_PATH_LENGTH;
-          if (left < 2.6 && (track.stealing || s.live?.throw?.base === track.target))
+          const left = (track.target - track.progress) * BASE_PATH_LENGTH,
+            live = s.live,
+            bag = BASES[Math.min(3, track.target - 1)],
+            // The ball is waiting at the bag in a fielder's hands (a tag play).
+            holding =
+              !!live && live.fieldedAt !== null && (!live.throw || live.throw.receivedAt !== null),
+            tagWaits =
+              holding && Math.hypot(live!.fielderPos.x - bag.x, live!.fielderPos.z - bag.z) < 2.5,
+            // The ball holder is right on top of him: he tries to dodge the tag.
+            tagNear =
+              holding &&
+              Math.hypot(
+                live!.fielderPos.x - pose.position.x,
+                live!.fielderPos.z - pose.position.z,
+              ) < 3.2;
+          if (left < 2.6 && (track.stealing || live?.throw?.base === track.target || tagWaits))
             this.runnerSlide[i] = 1 - left / 2.6;
+          else if (tagNear) this.runnerSlide[i] = 0;
         }
         r.root.visible = pose.visible;
         r.root.position.set(pose.position.x, 0, pose.position.z);
@@ -2215,7 +2345,22 @@ export class BaseballField {
       };
       if (l && s.phase === "inplay") {
         const track = l.runners.find((r) => r.id === i);
-        if (track) show(runnerPose(track), track);
+        if (track) {
+          this.runnerTracks[i] = track;
+          const pose = runnerPose(track),
+            rd = l.rundown;
+          // Tagged at the end of a rundown: he stays in the picture while it sinks in.
+          if (
+            track.out &&
+            rd?.runnerId === track.id &&
+            rd.tagAt !== undefined &&
+            l.elapsed < rd.tagAt + RULES.tagHold + 0.05
+          ) {
+            pose.visible = true;
+            pose.moving = false;
+          }
+          show(pose, track);
+        }
       } else if (i === 0 && s.stealTrack) {
         // The E-steal runner breaks during the delivery.
         show({ ...runnerPose(s.stealTrack), visible: true, moving: true }, s.stealTrack);
@@ -2260,11 +2405,11 @@ export class BaseballField {
     // Pitch speed made visible: fast pitches leave a longer, brighter, white-hot trail,
     // slow ones a short faint one (0 at 120 km/h or below, 1 at 165 km/h and up).
     const heat = s.phase === "flight" && f ? Math.min(1, Math.max(0, (f.speed - 120) / 45)) : 0.4;
-    const lv = s.live,
+    const lh = s.live,
       held =
         s.phase === "inplay" &&
-        !!lv &&
-        (lv.throw ? lv.throw.receivedAt !== null : lv.fieldedAt !== null);
+        !!lh &&
+        (lh.throw ? lh.throw.receivedAt !== null : lh.fieldedAt !== null);
     // A held ball has no tail: the throw starts a fresh one (no kink from the pickup).
     if (held) this.trailPositions = [];
     else if (s.phase === "flight" || s.phase === "inplay") {

@@ -267,9 +267,12 @@ check("A batter already on second cannot be retired by a late throw to first", (
     l.resultBases = 2;
     l.runners[0].progress = 2;
     l.runners[0].target = 2;
-    // Hand-made roll (very fast): only the late throw is tested here, not an outfield backup.
+    // The fielder has the ball in shallow center: only the late throw is tested here (a ball
+    // still rolling away would let the runner AI take more bases).
     l.backedUp = true;
     Object.assign(l.fielderPos, l.land);
+    l.fieldedAt = 1;
+    l.state = "포구";
     if (!auto) assert(g.selectThrowBase(1));
     finishPlay(g);
     assert.equal(g.state.outs, 0);
@@ -367,7 +370,8 @@ check("Missed air catch lands safely; a ground pickup cannot become a fly out", 
   while (l.runners.some((r) => r.progress < r.target) && g.state.phase === "inplay") g.tick(1 / 60);
   finishPlay(g);
   assert.equal(g.state.outs, 0);
-  assert.equal(g.state.message, "DOUBLE");
+  // Nobody fields it (the player's fielder stays put): the runner AI takes what it can.
+  assert(["DOUBLE", "TRIPLE", "HOME RUN"].includes(g.state.message), g.state.message);
 });
 check("Deep fly tag-up starts only after catch; third-out fly cancels all runs", () => {
   for (const outs of [0, 2]) {
@@ -2463,10 +2467,10 @@ check(
       }
       return o;
     };
-    const avg = run(65),
-      good = run(95),
-      wet = run(65, true);
-    assert(avg.dives > 10 && avg.dives < 90, `dives ${avg.dives} of 600`);
+    const avg = run(65, false, 1500),
+      good = run(95, false, 1500),
+      wet = run(65, true, 1500);
+    assert(avg.dives > 25 && avg.dives < 225, `dives ${avg.dives} of 1500`);
     assert(avg.made > 0 && avg.made < avg.dives, "some dives work, some do not");
     assert(good.made / good.dives > avg.made / avg.dives, "better fielders dive better");
     assert(wet.made / Math.max(1, wet.dives) < avg.made / avg.dives, "rain makes it harder");
@@ -2545,7 +2549,7 @@ check("A grounder through the infield is taken by an outfielder; runners read th
       // Nobody from the infield chases a ball out to the outfield grass.
       assert(l.fielder >= 6, `outfielder fields a ball at ${deep.toFixed(0)} m (seed ${i})`);
     }
-    if (l.backedUp) {
+    if (l.backedUp && !l.miscues) {
       backups++;
       assert(first < 6 && l.fielder >= 6);
       if (l.runners.some((x) => x.target > x.from + 1)) extra++;
@@ -2573,7 +2577,7 @@ check("Tier balance applies in season matches only; AI homers stay realistic", (
   };
   assert(homerShare(1) > 0.08 && homerShare(TIER_BALANCE.high.aiPower) < homerShare(1) * 0.85);
   for (const t of Object.values(TIER_BALANCE)) {
-    assert(t.aiPower >= 1 && t.aiPower <= 2 && t.batBoost >= 0 && t.batBoost <= 0.2);
+    assert(t.aiPower >= 1 && t.aiPower <= 2 && t.batBoost >= -0.1 && t.batBoost <= 0.2);
   }
 });
 check(
@@ -2747,4 +2751,159 @@ check(
     if (process.env.SHOW) console.log(o);
   },
 );
+check(
+  "Runner AI: a runner caught between bases turns back and is run down (callout, throws, slow-motion tag)",
+  () => {
+    const trap = (start) => {
+      const g = new BaseballEngine(newCareer(), seed(5));
+      g.state.bases = [false, true, false];
+      g.contact(0.3, 0);
+      const l = g.state.live;
+      l.flightTime = 0.01;
+      l.bounced = true;
+      l.ground = true;
+      // The third baseman has the ball on his bag; the runner from second is 2/3 of the way.
+      l.fielder = 5;
+      l.fielderPos = l.defenders[5];
+      Object.assign(l.fielderPos, { x: BASES[2].x, z: BASES[2].z });
+      l.fieldedAt = 0;
+      l.state = "보유";
+      l.elapsed = 1;
+      Object.assign(l.runners[0], { progress: 1, target: 1 });
+      Object.assign(l.runners[1], { progress: start, target: 3 });
+      let slow = false,
+        n = 0;
+      while (g.state.phase === "inplay" && n++ < 4000) {
+        if (g.timeScale < 1) slow = true;
+        g.tick(1 / 60);
+      }
+      assert.equal(g.state.phase, "result");
+      return { g, l, slow };
+    };
+    const { g, l, slow } = trap(2.5);
+    assert(l.runners[1].turned, "he turns back when the ball is waiting ahead");
+    assert(l.rundown, "a rundown");
+    assert.equal(g.state.flash?.text, "런다운");
+    assert(l.throws >= 1, "they throw him back and forth");
+    assert.equal(g.state.outs, 1);
+    assert(l.runners[1].out && l.outs[0].kind === "tag");
+    assert(slow, "slow motion as the tag lands");
+    assert.equal(g.state.message, "RUNDOWN OUT");
+    assert(!l.runners[0].out, "the batter is safe at first");
+    // Every rundown ends: the runner is tagged or back on a bag, never stuck between bases.
+    for (const start of [2.15, 2.3, 2.45, 2.6, 2.75, 2.9]) {
+      const { l: p } = trap(start),
+        r = p.runners[1];
+      assert(r.out || Math.abs(r.progress - Math.round(r.progress)) < 1e-9, `start ${start}`);
+    }
+  },
+);
+check(
+  "Runner AI on live balls: every play settles cleanly, nobody shares a bag, forced runners never retreat",
+  () => {
+    let turned = 0;
+    for (let i = 1; i <= 800; i++) {
+      const g = evenDefense(new BaseballEngine(newCareer(), seed(i * 3 + 1)));
+      const r = seed(i * 11 + 5);
+      g.state.bases = [r() < 0.45, r() < 0.3, r() < 0.2];
+      g.state.outs = Math.floor(r() * 3);
+      const before = [...g.state.bases];
+      g.contact(0.21 + r() * 0.75, (r() - 0.5) * 0.2);
+      const l = g.state.live,
+        forcedFirst = before[0] ? l.runners.find((x) => x.from === 1) : null;
+      let n = 0,
+        minFirst = 9;
+      while (g.state.phase === "inplay" && n++ < 6000) {
+        g.tick(1 / 60);
+        // While the batter runs to first, a forced runner from first never heads back to it.
+        if (
+          forcedFirst &&
+          !forcedFirst.out &&
+          !l.runners[0].out &&
+          l.runners[0].progress < 1 &&
+          !l.caughtFly
+        )
+          minFirst = Math.min(minFirst, forcedFirst.target);
+      }
+      assert.equal(g.state.phase, "result", `seed ${i} settles`);
+      assert(l.elapsed < 40);
+      if (forcedFirst) assert(minFirst >= 2, `seed ${i}: forced runner retreated`);
+      const on = l.runners.filter((x) => !x.out && x.progress < 4);
+      for (const x of on) assert(Number.isInteger(x.progress) || g.state.outs >= 3, `seed ${i}`);
+      if (g.state.outs < 3)
+        assert.equal(
+          on.length,
+          g.state.bases.filter(Boolean).length,
+          `seed ${i}: one runner per bag`,
+        );
+      if (l.runners.some((x) => x.turned)) turned++;
+    }
+    assert(turned > 15, `runners turned back ${turned}`);
+  },
+);
+check(
+  "Errors: fumbles, dropped flies and wild throws about every other match; worse fielders and rain make more",
+  () => {
+    const run = (rating, rain = false, n = 800) => {
+      let errors = 0,
+        kinds = new Set(),
+        loose = 0;
+      for (let i = 1; i <= n; i++) {
+        const g = evenDefense(new BaseballEngine(newCareer(), seed(i * 5 + 2)), rating);
+        if (rain) Object.defineProperty(g, "raining", { get: () => true });
+        const r = seed(i * 13 + 7);
+        g.state.bases = [r() < 0.4, r() < 0.25, false];
+        g.contact(0.21 + r() * 0.75, (r() - 0.5) * 0.2);
+        const l = g.state.live,
+          e0 = g.state.errors[0] + g.state.errors[1];
+        let k = 0;
+        while (g.state.phase === "inplay" && k++ < 6000) g.tick(1 / 60);
+        assert.equal(g.state.phase, "result");
+        if (l.miscues) {
+          errors += l.miscues;
+          kinds.add(l.errorKind);
+          if (l.loose) loose++;
+          assert.equal(
+            g.state.errors[0] + g.state.errors[1] - e0,
+            l.miscues,
+            "counted on the board",
+          );
+          if (l.errorKind === "drop") assert(!l.caughtFly, "a dropped fly is no out");
+        }
+      }
+      return { errors, kinds, loose };
+    };
+    const avg = run(65),
+      bad = run(35),
+      wet = run(65, true);
+    // About 15 balls in play a match: 1.5–7% a play ≈ 0.25–1 error a match.
+    assert(avg.errors > 12 && avg.errors < 56, `errors ${avg.errors} of 800`);
+    assert(avg.kinds.size >= 2, [...avg.kinds].join());
+    assert(avg.loose === avg.errors || avg.loose > 0);
+    assert(bad.errors > avg.errors, "worse fielders make more errors");
+    assert(wet.errors > avg.errors, "rain makes more errors");
+    if (process.env.SHOW) console.log({ avg: avg.errors, bad: bad.errors, wet: wet.errors });
+  },
+);
+check("Runners trip now and then (more in the rain) and stay down before running on", () => {
+  const clear = RULES.fallClear;
+  RULES.fallClear = 0.5; // make it happen for the test
+  try {
+    const g = new BaseballEngine(newCareer(), seed(77));
+    g.contact(0.3, 0);
+    const l = g.state.live,
+      b = l.runners[0];
+    let k = 0,
+      held = null;
+    while (g.state.phase === "inplay" && k++ < 3000) {
+      g.tick(1 / 60);
+      if (b.fellAt !== undefined && held === null) held = b.progress;
+      if (held !== null && l.elapsed < b.delay - 0.02) assert.equal(b.progress, held, "down");
+    }
+    assert(b.fellAt !== undefined, "he fell");
+  } finally {
+    RULES.fallClear = clear;
+  }
+  assert(RULES.fallRain > RULES.fallClear * 5 && RULES.fallClear < 0.002);
+});
 console.log(`\n${passed} gameplay checks passed.`);

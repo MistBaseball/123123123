@@ -251,7 +251,8 @@ function Field({ engine }: { engine: BaseballEngine }) {
     };
     void setup().catch(() => setError("야구장을 불러오지 못했습니다. 새로고침해 주세요."));
     const tick = (now: number) => {
-      const dt = Math.min((now - last) / 1000, 0.05);
+      // Slow motion (a rundown tag about to land) slows the rules and the picture alike.
+      const dt = Math.min((now - last) / 1000, 0.05) * engine.timeScale;
       last = now;
       engine.tick(dt);
       field?.update(dt);
