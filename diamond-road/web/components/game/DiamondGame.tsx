@@ -11,7 +11,6 @@ import {
   Volume2,
   VolumeX,
   Settings2,
-  CircleHelp,
   ChevronRight,
   ArrowUpRight,
   RotateCcw,
@@ -2731,9 +2730,6 @@ export default function DiamondGame() {
           <span className="prototype-tag">
             플레이 테스트 <b>05</b>
           </span>
-          <button className="icon-button" onClick={() => setHelp(true)} aria-label="조작법">
-            <CircleHelp size={20} />
-          </button>
           <button className="icon-button" onClick={() => setSettings(true)} aria-label="설정">
             <Settings2 size={20} />
           </button>

@@ -5380,3 +5380,96 @@ kbd {
   border-radius: 6px;
   padding: 8px 10px;
 }
+
+/* 조작법 (guide) window. */
+.guide-dialog {
+  max-width: min(760px, calc(100vw - 32px)) !important;
+  max-height: 88vh;
+  overflow: auto;
+}
+.guide-tabs {
+  margin: 4px 0 2px;
+}
+.guide-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.guide-body section,
+.guide-common {
+  border: 1px solid #2c3b43;
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: #15232b;
+}
+.guide-body h3 {
+  margin: 0 0 6px;
+  font-size: 0.94rem;
+  color: #e3c186;
+}
+.guide-body ul,
+.guide-body ol {
+  margin: 0;
+  padding-left: 20px;
+  color: #c3cfd3;
+  font-size: 0.8125rem;
+  line-height: 1.75;
+}
+.guide-body ul {
+  list-style: disc;
+}
+.guide-body ol {
+  list-style: decimal;
+}
+.guide-body b {
+  color: #f2f0df;
+}
+.guide-keys {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 14px;
+  margin: 0;
+  align-items: center;
+}
+.guide-keys > div {
+  display: contents;
+}
+.guide-keys dt {
+  display: flex;
+  gap: 3px;
+  justify-content: flex-end;
+}
+.guide-keys dd {
+  margin: 0;
+  color: #c3cfd3;
+  font-size: 0.8125rem;
+}
+.guide-common .guide-keys {
+  grid-template-columns: max-content 1fr max-content 1fr max-content 1fr;
+}
+.guide-dialog kbd,
+.guide-notice kbd {
+  display: inline-block;
+  min-width: 22px;
+  padding: 1px 6px;
+  border: 1px solid #4a5c65;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: #0f1c23;
+  color: #f2f0df;
+  font-size: 0.75rem;
+  text-align: center;
+  font-family: inherit;
+}
+.guide-notice-actions {
+  display: flex;
+  gap: 8px;
+}
+.guide-notice-actions button {
+  flex: 1;
+}
+@media (max-width: 600px) {
+  .guide-common .guide-keys {
+    grid-template-columns: max-content 1fr;
+  }
+}
