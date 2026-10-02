@@ -289,7 +289,7 @@ Unity 최종 게임에 앞서 전체 흐름을 시험하는 웹 버전을 만들
 
 ## 주소 이전
 
-- 저장소를 조직 MistBaseball로 옮기고 이름을 `mist-baseball.github.io`로 변경. 게임 주소: https://mist-baseball.github.io/ (루트가 `game/`으로 바로 연결).
+- 저장소를 조직 MistBaseball로 옮기고 이름을 `mistbaseball.github.io`로 변경. 게임 주소: https://mistbaseball.github.io/ (루트가 `game/`으로 바로 연결).
 
 ## v11.4 — 서버 일시정지 안내 · 히든 힌트
 
