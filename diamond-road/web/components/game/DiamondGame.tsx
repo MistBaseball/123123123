@@ -2071,9 +2071,26 @@ function HiddenDialog({ engine, s }: { engine: BaseballEngine; s: GameState }) {
               </div>
             )
           )}
-          <button className="primary-button" onClick={() => engine.clearHiddenUnlock()}>
-            받아들이기 <Play size={16} />
-          </button>
+          {tar ? (
+            <div className="guide-notice-actions">
+              <button className="primary-button" onClick={() => engine.clearHiddenUnlock()}>
+                받아들이기 <Play size={16} />
+              </button>
+              <button
+                className="subtle-button"
+                onClick={() => {
+                  engine.declinePineTar();
+                  toast.success("파인타르를 돌려줬습니다 · 정정당당하게 던집니다");
+                }}
+              >
+                거절하기
+              </button>
+            </div>
+          ) : (
+            <button className="primary-button" onClick={() => engine.clearHiddenUnlock()}>
+              받아들이기 <Play size={16} />
+            </button>
+          )}
         </DialogContent>
       </Dialog>
     </>
@@ -3395,8 +3412,8 @@ export default function DiamondGame() {
                     // Hidden: the 2nd wrong try is a warning, the 3rd teaches pine tar.
                     const n = devFails + 1;
                     setDevFails(n);
-                    if (n === 2) toast.error("[부정을 저지르려 하지 마세요]");
-                    else if (n >= 3 && engine.grantPineTar()) setSettings(false);
+                    if (n % 3 === 2) toast.error("[부정을 저지르려 하지 마세요]");
+                    else if (n % 3 === 0 && engine.grantPineTar()) setSettings(false);
                     else toast.error("비밀번호가 틀렸습니다");
                   }
                   setDevCode("");

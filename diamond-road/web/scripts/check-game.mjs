@@ -2612,6 +2612,12 @@ check("Hidden pine tar: +20 pitching, 5% umpire check per pitch, ejection = loss
   assert(g.grantPineTar());
   assert.equal(g.state.hiddenUnlock, "pinetar");
   assert(!g.grantPineTar(), "only once");
+  // Turning it down leaves no skill; it can be offered again.
+  assert(g.declinePineTar());
+  assert(!c.pineTar && g.state.hiddenUnlock === null);
+  assert(!g.applyPineTar(), "declined: no skill");
+  assert(g.grantPineTar());
+  g.clearHiddenUnlock();
   const base = { ...c.stats };
   assert(g.applyPineTar());
   assert(!g.applyPineTar(), "once a match");

@@ -4624,6 +4624,17 @@ export class BaseballEngine {
     this.emit();
     return true;
   }
+  /** Turned the pine tar down: no skill (three more wrong passwords offer it again). */
+  declinePineTar() {
+    const c = this.state.career;
+    if (this.state.hiddenUnlock !== "pinetar") return false;
+    c.pineTar = false;
+    this.state.hiddenUnlock = null;
+    c.history = ["건네받은 파인타르를 돌려줬다 · 정정당당하게", ...c.history].slice(0, 12);
+    this.persist();
+    this.emit();
+    return true;
+  }
   /** MLB clubs whose scout has reached 100 (contract offers on the table). */
   get mlbOffers() {
     const c = this.state.career;
