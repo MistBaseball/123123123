@@ -2171,7 +2171,7 @@ export class BaseballField {
     if (s.live && s.phase === "inplay") {
       const l = s.live,
         p = this.players[l.fielder],
-        target = l.throw ? BASES[l.throw.base - 1] : l.bounced ? l.land : l.catchPoint;
+        target = l.throw ? l.throw.to : l.bounced ? l.land : l.catchPoint;
       p.root.rotation.set(
         0,
         playerYaw(V(target.x - l.fielderPos.x, 0, target.z - l.fielderPos.z)),

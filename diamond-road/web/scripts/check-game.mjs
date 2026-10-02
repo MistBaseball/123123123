@@ -1508,7 +1508,11 @@ check("Stat caps: 100 in high school, 200 in the pros, where the fastball reache
   );
   const before = pro.state.career.stats.control;
   assert(pro.train("bullpen", 1).ok);
-  assert.equal(pro.state.career.stats.control, before + 6, "pro training gains are doubled (×1.5 → 6)");
+  assert.equal(
+    pro.state.career.stats.control,
+    before + 6,
+    "pro training gains are doubled (×1.5 → 6)",
+  );
   pro.devSetStats(200);
   assert(Object.values(pro.state.career.stats).every((v) => v === 200));
   pro.state.effort = 100;
@@ -2600,54 +2604,58 @@ check(
     assert.equal(c.firstDay, firstDay);
   },
 );
-check("Hidden pine tar: +20 pitching, 5% umpire check per pitch, ejection = loss, −20, dishonor", () => {
-  const c = newCareer();
-  c.created = true;
-  c.team = TEAMS[0].id;
-  // A fixed "dice" we can steer: 0.99 = the umpire notices nothing.
-  let roll = 0.99;
-  const g = new BaseballEngine(c, () => roll);
-  g.start("match");
-  assert(!g.applyPineTar(), "not learned yet");
-  assert(g.grantPineTar());
-  assert.equal(g.state.hiddenUnlock, "pinetar");
-  assert(!g.grantPineTar(), "only once");
-  // Turning it down leaves no skill; it can be offered again.
-  assert(g.declinePineTar());
-  assert(!c.pineTar && g.state.hiddenUnlock === null);
-  assert(!g.applyPineTar(), "declined: no skill");
-  assert(g.grantPineTar());
-  g.clearHiddenUnlock();
-  const base = { ...c.stats };
-  assert(g.applyPineTar());
-  assert(!g.applyPineTar(), "once a match");
-  assert.equal(g.playerStats.velocity, base.velocity + PINE_TAR_BOOST);
-  assert.equal(g.playerStats.control, base.control + PINE_TAR_BOOST);
-  assert.equal(g.playerStats.movement, base.movement + PINE_TAR_BOOST);
-  assert.equal(g.playerStats.contact, base.contact, "batting is untouched");
-  assert(g.throwAt(0, 0.9));
-  assert.notEqual(g.state.phase, "finished", "no check this time");
-  advance(g, 600);
-  while (g.state.phase !== "ready" && g.state.phase !== "finished") advance(g, 60);
-  if (g.state.phase === "ready" && !g.batting) {
-    const games = c.games,
-      wins = c.wins;
-    roll = 0.01;
-    g.state.score = [0, 5];
+check(
+  "Hidden pine tar: +20 pitching, 5% umpire check per pitch, ejection = loss, −20, dishonor",
+  () => {
+    const c = newCareer();
+    c.created = true;
+    c.team = TEAMS[0].id;
+    // A fixed "dice" we can steer: 0.99 = the umpire notices nothing.
+    let roll = 0.99;
+    const g = new BaseballEngine(c, () => roll);
+    g.start("match");
+    assert(!g.applyPineTar(), "not learned yet");
+    assert(g.grantPineTar());
+    assert.equal(g.state.hiddenUnlock, "pinetar");
+    assert(!g.grantPineTar(), "only once");
+    // Turning it down leaves no skill; it can be offered again.
+    assert(g.declinePineTar());
+    assert(!c.pineTar && g.state.hiddenUnlock === null);
+    assert(!g.applyPineTar(), "declined: no skill");
+    assert(g.grantPineTar());
+    g.clearHiddenUnlock();
+    const base = { ...c.stats };
+    assert(g.applyPineTar());
+    assert(!g.applyPineTar(), "once a match");
+    assert.equal(g.playerStats.velocity, base.velocity + PINE_TAR_BOOST);
+    assert.equal(g.playerStats.control, base.control + PINE_TAR_BOOST);
+    assert.equal(g.playerStats.movement, base.movement + PINE_TAR_BOOST);
+    assert.equal(g.playerStats.contact, base.contact, "batting is untouched");
     assert(g.throwAt(0, 0.9));
-    assert.equal(g.state.phase, "finished");
-    assert(g.state.ejected);
-    assert.equal(g.state.message, "퇴장");
-    assert.equal(c.games, games + 1);
-    assert.equal(c.wins, wins, "ejected even while leading: a loss");
-    for (const k of Object.keys(base)) assert.equal(c.stats[k], Math.max(1, base[k] - PINE_TAR_PENALTY));
-    assert(c.dishonor);
-  } else assert.fail("expected a new pitch");
-  // The next match starts clean (pine tar has to be applied again).
-  g.start("match");
-  assert(!g.state.pineTar && !g.state.ejected);
-  assert.equal(RULES.pineTarCatch, 0.05);
-});
+    assert.notEqual(g.state.phase, "finished", "no check this time");
+    advance(g, 600);
+    while (g.state.phase !== "ready" && g.state.phase !== "finished") advance(g, 60);
+    if (g.state.phase === "ready" && !g.batting) {
+      const games = c.games,
+        wins = c.wins;
+      roll = 0.01;
+      g.state.score = [0, 5];
+      assert(g.throwAt(0, 0.9));
+      assert.equal(g.state.phase, "finished");
+      assert(g.state.ejected);
+      assert.equal(g.state.message, "퇴장");
+      assert.equal(c.games, games + 1);
+      assert.equal(c.wins, wins, "ejected even while leading: a loss");
+      for (const k of Object.keys(base))
+        assert.equal(c.stats[k], Math.max(1, base[k] - PINE_TAR_PENALTY));
+      assert(c.dishonor);
+    } else assert.fail("expected a new pitch");
+    // The next match starts clean (pine tar has to be applied again).
+    g.start("match");
+    assert(!g.state.pineTar && !g.state.ejected);
+    assert.equal(RULES.pineTarCatch, 0.05);
+  },
+);
 check("Home runs fly over the outfield wall, never through it or short of it", () => {
   let homers = 0;
   for (let i = 1; i <= 3000 && homers < 60; i++) {
@@ -2683,4 +2691,60 @@ check("Home runs fly over the outfield wall, never through it or short of it", (
     }
   }
 });
+check(
+  "Fielder AI: ranges and handoffs, relays through the cutoff man, tosses, smart throws",
+  () => {
+    const o = { relay: 0, relayDone: 0, toss: 0, handoffs: 0, pitcherDeep: 0, plays: 0 };
+    for (let i = 1; i <= 1500; i++) {
+      const g = evenDefense(new BaseballEngine(newCareer(), seed(i)), 65);
+      const r = seed(i * 7 + 3);
+      g.state.bases = [r() < 0.4, r() < 0.25, r() < 0.15];
+      g.contact(0.21 + r() * 0.75, (r() - 0.5) * 0.2);
+      const l = g.state.live;
+      if (l.bunt) continue;
+      o.plays++;
+      let k = 0,
+        relayLeg = null;
+      while (g.state.phase === "inplay" && k++ < 4000) {
+        g.tick(1 / 60);
+        const t = l.throw;
+        if (t?.base === 0 && !relayLeg) {
+          relayLeg = t;
+          o.relay++;
+          // Only an outfielder relays, through a middle infielder, toward a real base.
+          assert(t.receiver === 3 || t.receiver === 4, "cutoff man is 2B or SS");
+          assert(t.relayTo >= 1 && t.relayTo <= 4);
+        }
+        if (relayLeg && relayLeg.receivedAt !== null && !relayLeg.done) {
+          relayLeg.done = true;
+          o.relayDone++;
+        }
+        if (t?.kind === "toss") {
+          o.toss++;
+          assert(
+            Math.hypot(t.to.x - t.from.x, t.to.z - t.from.z) < RULES.tossRange + 1e-9,
+            "a toss is short",
+          );
+          t.kind = "counted";
+        }
+      }
+      assert((l.handoffs ?? 0) <= 2, "a play changes hands at most twice");
+      if (l.handoffs) o.handoffs++;
+      if (
+        l.fieldedAt !== null &&
+        l.fielder === 0 &&
+        Math.hypot(l.fielderPos.x, l.fielderPos.z) > 30
+      )
+        o.pitcherDeep++;
+    }
+    assert.equal(o.pitcherDeep, 0, "the pitcher never chases a ball into the outfield");
+    assert(o.relay > 20 && o.relayDone > 10, `relays ${o.relay}, completed ${o.relayDone}`);
+    assert(o.toss > 10, `tosses ${o.toss}`);
+    assert(o.handoffs > 30, `handoffs ${o.handoffs}`);
+    // Out chance grows with the runner's margin.
+    const g = new BaseballEngine();
+    assert(g.outChance(0.5, 1.2) > 0.95 && g.outChance(1, 0.9) < 0.2);
+    if (process.env.SHOW) console.log(o);
+  },
+);
 console.log(`\n${passed} gameplay checks passed.`);

@@ -409,6 +409,22 @@ export const RULES = {
   planLead: 0.9,
   /** A dive leaves the ground this long before the glove meets the ball (s). */
   diveLead: 0.35,
+  /** A ball outside a fielder's range counts this much later for him (s): ranges overlap softly. */
+  zonePenalty: 0.4,
+  /** Fly balls: an outfielder who can make the catch calls off an infielder (head start, s). */
+  outfieldPriority: 0.35,
+  /** Throws longer than this (m) lose speed (arc, bounce): time × (1 + longThrowSlow per m). */
+  longThrow: 55,
+  longThrowSlow: 0.012,
+  /** Relay: the cutoff man stands this share of the way out from the base, holds it this long. */
+  relayShare: 0.42,
+  relayHold: 0.3,
+  /** Toss: under this distance (m) and with this much time to spare (s), a soft flip. */
+  tossRange: 9,
+  tossSpare: 0.6,
+  tossSpeed: 15,
+  /** Spread of a throw-vs-runner race (s): out chance = logistic(margin / outSpread). */
+  outSpread: 0.12,
   /** An outfielder takes over a grounder through the infield if he gets there this much sooner (s). */
   backupMargin: 0.25,
   /** Pine tar: chance per pitch that the umpire checks the ball and ejects the pitcher. */
@@ -1057,6 +1073,13 @@ export const DEFENSE = [
   V(-34, 0, 62),
 ];
 export const BASE_PATH_LENGTH = Math.hypot(19.4, 19.4);
+/**
+ * Fielding range of each position (m around its spot in DEFENSE): the chase goes to a fielder
+ * whose range holds the place he would field the ball. Neighbours overlap (2B/SS up the
+ * middle, infield/outfield in the shallow grass, CF with both corners); in an overlap the
+ * one who gets there first takes it, outfielders calling off infielders on fly balls.
+ */
+export const FIELD_ZONES = [9, 7, 15, 17, 17, 15, 30, 34, 30];
 /** Fielder chase speed (m/s), first-step reaction (s) and glove reach (m) for batted balls. */
 // Tuned so roughly a third of balls in play fall for hits (see scripts/check-game.mjs).
 export const FIELDER_SPEED = STAGES.high.fielderSpeed;
@@ -1152,7 +1175,13 @@ export function runnerPose(r: RunnerTrack) {
 export const playerYaw = (direction: Vec) => Math.atan2(-direction.x, -direction.z);
 type FieldThrow = {
   from: Vec;
+  /** Where the ball goes: a bag, or the cutoff man's relay spot. */
+  to: Vec;
+  /** Base it is thrown to (0 = to the cutoff man, who relays it to `relayTo`). */
   base: number;
+  relayTo?: number;
+  /** "toss": a short underhand flip to a teammate (only when there is time to spare). */
+  kind?: "throw" | "toss";
   receiver: number;
   startedAt: number;
   duration: number;
@@ -1678,6 +1707,11 @@ export type LivePlay = {
   };
   /** An outfielder took over a grounder that got through the infield. */
   backedUp?: boolean;
+  /** Relay planned or under way: the cutoff man, his spot and the base it goes on to. */
+  relay?: { who: number; spot: Vec; base: number };
+  /** How many times the chase was handed to another fielder (zones), and when last. */
+  handoffs?: number;
+  handoffAt?: number;
   /** Low, hard liner (the fielder may have to leap for it). */
   lineDrive?: boolean;
 };
@@ -2827,19 +2861,14 @@ export class BaseballEngine {
       error: false,
       sacrifice: false,
     };
-    if (ground) {
-      // Grounders are chased by whoever can cut the rolling ball off first.
-      const l = s.live;
-      let soonest = Infinity;
-      DEFENSE.forEach((p, i) => {
-        if (i === 1 && !bunt) return;
-        const t = this.interceptTime(l, p, i);
-        if (t < soonest) {
-          soonest = t;
-          l.fielder = i;
-        }
-      });
-      l.fielderPos = l.defenders[l.fielder];
+    if (!hr) {
+      // The fielder whose range holds the ball and who gets there first takes it.
+      const l = s.live,
+        { best } = this.chaseChoice(l);
+      if (best) {
+        l.fielder = best.i;
+        l.fielderPos = l.defenders[best.i];
+      }
     }
     s.phase = "inplay";
     // In-play text only describes the ball; the verdict comes when the fielder acts.
@@ -3037,34 +3066,122 @@ export class BaseballEngine {
     }
     return Infinity;
   }
+  /** Flight time of a throw (s): long throws arc and bounce, so they lose speed. */
+  private throwSeconds(from: Vec, to: Vec, arm: number) {
+    const d = Math.hypot(to.x - from.x, to.z - from.z);
+    return Math.max(0.22, (d / arm) * (1 + RULES.longThrowSlow * Math.max(0, d - RULES.longThrow)));
+  }
+  /** The infielder who cuts off a long throw from `from` to `base`. */
+  private cutoffFor(from: Vec, base: number) {
+    // Right side (world −X): the second baseman, unless he has to take the throw at second.
+    return from.x < -8 && base !== 2 ? 3 : 4;
+  }
   /**
-   * A grounder that got past the infielder chasing it (through the hole, or past a missed
-   * dive): the outfielder who gets there first takes over, and the runners read the new
-   * play — each takes the next base if he beats the pickup and throw there.
+   * Best way to get the ball from fielder `who` at `from` to `base`: straight, or through the
+   * cutoff man when that is quicker. `time` = release to arrival (s).
    */
-  private backUp(l: LivePlay) {
-    if (l.kind !== "batted" || !l.ground || l.bunt || l.backedUp || l.fielder >= 6) return;
-    // He is about to dive for it: let the dive decide first.
-    if (l.plan?.style === "dive" && !l.diveTried) return;
-    const ball = this.state.ball,
-      past = Math.hypot(ball.x, ball.z) > Math.hypot(l.fielderPos.x, l.fielderPos.z) + 1.5;
-    if (!past && !(l.diver === l.fielder && l.elapsed < (l.downUntil ?? 0))) return;
-    let best = l.fielder,
-      soonest = this.interceptFrom(l, l.fielder) - RULES.backupMargin;
-    for (const i of [6, 7, 8]) {
-      const t = this.interceptFrom(l, i);
-      if (t < soonest) {
-        soonest = t;
-        best = i;
+  private throwRoute(l: LivePlay, from: Vec, base: number, who: number) {
+    const bag = BASES[base - 1],
+      arm = this.fielderStats(who, l).arm,
+      direct = this.throwSeconds(from, bag, arm);
+    if (
+      l.kind !== "batted" ||
+      who < 6 ||
+      Math.hypot(bag.x - from.x, bag.z - from.z) <= RULES.longThrow
+    )
+      return { time: direct };
+    const cut = this.cutoffFor(from, base),
+      spot = V(lerp(bag.x, from.x, RULES.relayShare), 0, lerp(bag.z, from.z, RULES.relayShare)),
+      cutPos = l.defenders[cut],
+      // He runs there while the first throw is in the air.
+      cutReady = Math.hypot(spot.x - cutPos.x, spot.z - cutPos.z) / 8.2,
+      relay =
+        Math.max(this.throwSeconds(from, spot, arm), cutReady) +
+        RULES.relayHold +
+        this.throwSeconds(spot, bag, this.fielderStats(cut, l).arm);
+    return relay < direct ? { time: relay, relay: { who: cut, spot, base } } : { time: direct };
+  }
+  /** Chance a throw arriving `travel` s from now beats a runner arriving in `arrival` s. */
+  private outChance(travel: number, arrival: number) {
+    return 1 / (1 + Math.exp(-(arrival - travel - 0.08) / RULES.outSpread));
+  }
+  /**
+   * Who should chase this ball: every fielder works out where and when he would field it;
+   * among those whose range (FIELD_ZONES) holds that spot, the quickest takes it (fly balls:
+   * an outfielder who can make the catch calls the infielders off).
+   */
+  private chaseChoice(l: LivePlay) {
+    const fly = !l.ground && !l.bounced,
+      out: { i: number; score: number; inZone: boolean }[] = [];
+    for (let i = 0; i < 9; i++) {
+      if (i === 1 && !l.bunt) continue;
+      const { speed, reaction } = this.fielderStats(i, l),
+        from = l.defenders[i],
+        down = i === l.diver ? (l.downUntil ?? 0) : 0;
+      let t: number, at: Vec;
+      if (fly) {
+        at = l.catchPoint;
+        t = Math.max(l.elapsed, reaction, down) + Math.hypot(at.x - from.x, at.z - from.z) / speed;
+      } else {
+        t = this.interceptFrom(l, i);
+        at = this.liveBall(l, Math.min(t, l.elapsed + 12));
       }
+      const home = DEFENSE[i],
+        inZone = Math.hypot(at.x - home.x, at.z - home.z) <= FIELD_ZONES[i];
+      // Outside his range he still goes for a ball he clearly gets to first.
+      let score = t + (inZone ? 0 : RULES.zonePenalty);
+      if (fly && i >= 6 && t <= l.catchAt + 0.05)
+        score -= RULES.outfieldPriority + (i === 7 ? 0.1 : 0);
+      out.push({ i, score, inZone });
     }
-    if (best === l.fielder) return;
-    l.backedUp = true;
-    l.fielder = best;
-    l.fielderPos = l.defenders[best];
-    this.state.detail = "공이 내야를 빠져나갔습니다 · 외야수가 처리";
-    // Runners re-read the play (lead runner first; nobody passes the runner ahead).
-    const pickup = soonest + l.hold;
+    return { best: [...out].sort((a, b) => a.score - b.score)[0], all: out };
+  }
+  /** Hand the chase over when the ball leaves his range or a teammate clearly gets there first. */
+  private assignChaser(l: LivePlay) {
+    // A bunt is charged at once by whoever was picked (no second thoughts), and an
+    // outfielder who took over a grounder keeps it.
+    if (l.kind !== "batted" || l.bunt || l.backedUp || l.fieldedAt !== null || l.resultBases === 4)
+      return;
+    const auto = this.state.autoField || this.batting,
+      fly = !l.ground && !l.bounced,
+      diverDown = l.diver === l.fielder && l.elapsed < (l.downUntil ?? 0);
+    // Committed: about to catch, mid-dive, or (manual fielding) the player steers the chaser.
+    // A new chaser also keeps it for a moment, and a play changes hands at most twice.
+    if (!diverDown) {
+      if ((l.handoffs ?? 0) >= 2 || l.elapsed < (l.handoffAt ?? -9) + 0.6) return;
+      if (l.plan && l.plan.style !== "none") return;
+      if (fly && (!auto || l.elapsed > l.catchAt - RULES.planLead)) return;
+    }
+    const { best, all } = this.chaseChoice(l),
+      cur = all.find((o) => o.i === l.fielder);
+    if (!best || best.i === l.fielder) return;
+    // Manual fielding: the player steers his fielder; only a grounder that already got past
+    // the infield (or a fielder down after a missed dive) goes to an outfielder.
+    const ball = this.state.ball,
+      past = Math.hypot(ball.x, ball.z) > Math.hypot(l.fielderPos.x, l.fielderPos.z) + 1.5,
+      // Grounders change hands only when they get through (the infielders stay on their
+      // covering jobs); fly balls can be called off while the ball is still in the air.
+      // (to whoever is next in line: a middle infielder behind the pitcher, or an outfielder)
+      through = diverDown || ((l.ground || l.bounced) && past && l.fielder < 6),
+      switchIt =
+        auto && fly
+          ? !cur || best.score + RULES.backupMargin < cur.score
+          : through && best.score + RULES.backupMargin < (cur?.score ?? Infinity);
+    if (!switchIt) return;
+    const old = l.fielder;
+    l.fielder = best.i;
+    l.fielderPos = l.defenders[best.i];
+    l.handoffs = (l.handoffs ?? 0) + 1;
+    l.handoffAt = l.elapsed;
+    // A grounder through the infield: the runners read the new play.
+    if (l.ground && !l.bunt && old < 6 && best.i >= 6 && !l.backedUp) {
+      l.backedUp = true;
+      this.state.detail = "공이 내야를 빠져나갔습니다 · 외야수가 처리";
+      this.rereadRunners(l, this.interceptFrom(l, best.i) + l.hold);
+    }
+  }
+  /** Runners re-read the play (lead runner first; nobody passes the runner ahead). */
+  private rereadRunners(l: LivePlay, pickup: number) {
     let ahead = 5;
     for (const r of [...l.runners].filter((x) => !x.out).sort((a, b) => b.progress - a.progress)) {
       if (r.progress <= r.target + 1e-9)
@@ -3179,14 +3296,20 @@ export class BaseballEngine {
   private throwTime(l: LivePlay, base: number) {
     const bag = BASES[base - 1],
       cover = l.defenders[this.receiver(base, l.fielder)],
-      eta = Math.max(0, Math.hypot(cover.x - bag.x, cover.z - bag.z) - 0.9) / 8.2;
-    return Math.max(0.22, distance(l.fielderPos, bag) / this.armOf(l), eta + 0.02);
+      eta = Math.max(0, Math.hypot(cover.x - bag.x, cover.z - bag.z) - 0.9) / 8.2,
+      flight =
+        l.kind === "pickoff"
+          ? Math.max(0.22, distance(l.fielderPos, bag) / this.armOf(l))
+          : this.throwRoute(l, l.fielderPos, base, l.fielder).time;
+    return Math.max(flight, eta + 0.02);
   }
   /**
    * Picks the base to throw to. forceOnly: only a force out (relay). sureOnly: only a throw
    * that beats its runner (after a caught fly, nobody throws just to hold runners).
    */
   private chooseThrow(l: LivePlay, forceOnly = false, sureOnly = false) {
+    // Every base with a runner to get: how likely the throw beats him there, weighted by
+    // how much that out is worth (a force, and the lead runner, count more).
     const options: { base: number; priority: number }[] = [];
     for (let base = 1; base <= 4; base++) {
       const forced = this.forcedRunner(l, base),
@@ -3195,7 +3318,11 @@ export class BaseballEngine {
       const travel = this.throwTime(l, base),
         wait = Math.max(0, r.delay - l.elapsed),
         arrival = Math.abs(base - r.progress) / r.pace + wait;
-      if (travel + 0.08 < arrival) options.push({ base, priority: (forced ? 10 : 0) + base });
+      if (travel + 0.08 < arrival)
+        options.push({
+          base,
+          priority: this.outChance(travel, arrival) * (forced ? 1.3 : 1) * (1 + 0.1 * base),
+        });
     }
     const best = options.sort((a, b) => b.priority - a.priority)[0]?.base;
     if (best || forceOnly || sureOnly) return best ?? 0;
@@ -3212,20 +3339,60 @@ export class BaseballEngine {
       this.state.detail = "주자가 모두 베이스에 도착 · 공을 내야로 돌려보냅니다";
       return;
     }
-    const r = this.candidateRunner(l, base);
+    const r = this.candidateRunner(l, base),
+      bag = BASES[base - 1],
+      where = base === 4 ? "홈" : base + "루",
+      route =
+        l.kind === "pickoff" ? { time: 0 } : this.throwRoute(l, l.fielderPos, base, l.fielder);
+    if ("relay" in route && route.relay) {
+      // Long throw: to the cutoff man first; he turns and relays it (re-deciding the base).
+      const { who, spot } = route.relay;
+      l.relay = route.relay;
+      l.throw = {
+        from: { ...l.fielderPos, y: 1.2 },
+        to: { ...spot },
+        base: 0,
+        relayTo: base,
+        kind: "throw",
+        receiver: who,
+        startedAt: l.elapsed,
+        duration: Math.max(
+          this.throwSeconds(l.fielderPos, spot, this.armOf(l)),
+          Math.hypot(spot.x - l.defenders[who].x, spot.z - l.defenders[who].z) / 8.2,
+        ),
+        receivedAt: null,
+        runnerId: r?.id ?? null,
+      };
+      l.throws++;
+      l.throwBase = base;
+      l.state = "송구";
+      this.state.detail = `중계 플레이 · ${where} 방향`;
+      return;
+    }
+    const duration = this.throwTime(l, base),
+      near = Math.hypot(bag.x - l.fielderPos.x, bag.z - l.fielderPos.z),
+      // A soft flip only to a teammate a few steps away and with time to spare.
+      arrival = r ? Math.abs(base - r.progress) / r.pace + Math.max(0, r.delay - l.elapsed) : 9,
+      tossTime = Math.max(0.25, near / RULES.tossSpeed),
+      toss =
+        l.kind === "batted" &&
+        near < RULES.tossRange &&
+        arrival - Math.max(tossTime, duration) > RULES.tossSpare;
     l.throw = {
       from: { ...l.fielderPos, y: 1.2 },
+      to: { ...bag },
       base,
+      kind: toss ? "toss" : "throw",
       receiver: this.receiver(base, l.fielder),
       startedAt: l.elapsed,
-      duration: this.throwTime(l, base),
+      duration: toss ? Math.max(tossTime, duration) : duration,
       receivedAt: null,
       runnerId: r?.id ?? null,
     };
     l.throws++;
     l.throwBase = base;
     l.state = "송구";
-    this.state.detail = (base === 4 ? "홈" : base + "루") + " 송구 · 공과 주자의 도착 순서 판정";
+    this.state.detail = toss ? `${where}로 토스` : where + " 송구 · 공과 주자의 도착 순서 판정";
   }
   private retire(
     l: LivePlay,
@@ -3331,7 +3498,31 @@ export class BaseballEngine {
       const i = this.receiver(base, l.fielder);
       // A fielder still on the ground after a missed dive cannot cover yet.
       if (i === l.diver && l.elapsed < (l.downUntil ?? 0)) continue;
+      if (l.relay && i === l.relay.who) continue;
       this.moveFielder(l.defenders[i], BASES[base - 1], dt);
+    }
+    // Relay: the cutoff man heads for his spot (planned throw, or lining up on a deep ball).
+    if (l.kind === "batted") {
+      let cut = l.relay;
+      if (!cut && l.fielder >= 6 && l.fieldedAt === null && !l.throw) {
+        const lead = l.runners
+            .filter((r) => !r.out)
+            .reduce((m, r) => Math.max(m, Math.floor(r.progress + 1e-9) + 1), 1),
+          base = Math.min(4, lead),
+          ball = l.bounced || l.ground ? this.state.ball : l.catchPoint,
+          bag = BASES[base - 1];
+        if (Math.hypot(ball.x - bag.x, ball.z - bag.z) > RULES.longThrow)
+          cut = {
+            who: this.cutoffFor(ball, base),
+            spot: V(
+              lerp(bag.x, ball.x, RULES.relayShare),
+              0,
+              lerp(bag.z, ball.z, RULES.relayShare),
+            ),
+            base,
+          };
+      }
+      if (cut && cut.who !== l.fielder) this.moveFielder(l.defenders[cut.who], cut.spot, dt);
     }
     if (l.resultBases === 4) {
       s.ball = this.liveBall(l, l.elapsed);
@@ -3339,7 +3530,7 @@ export class BaseballEngine {
         this.resolvePlay();
       return;
     }
-    if (l.fieldedAt === null) this.backUp(l);
+    if (l.fieldedAt === null) this.assignChaser(l);
     const auto = s.autoField || this.batting;
     if (l.fieldedAt === null && auto) this.planFly(l);
     if (l.fieldedAt === null) {
@@ -3598,13 +3789,34 @@ export class BaseballEngine {
       const t = l.throw;
       if (t) {
         const u = clamp((l.elapsed - t.startedAt) / t.duration, 0, 1),
-          base = BASES[t.base - 1];
+          base = t.to;
         s.ball = V(
           lerp(t.from.x, base.x, u),
-          lerp(1.2, 1.05, u) + Math.sin(Math.PI * u) * (l.kind === "batted" ? 1.5 : 0.6),
+          lerp(1.2, 1.05, u) +
+            Math.sin(Math.PI * u) * (t.kind === "toss" ? 0.7 : l.kind === "batted" ? 1.5 : 0.6),
           lerp(t.from.z, base.z, u),
         );
         if (
+          t.base === 0 &&
+          l.elapsed + 1e-8 >= t.startedAt + t.duration &&
+          t.receivedAt === null &&
+          Math.hypot(l.defenders[t.receiver].x - base.x, l.defenders[t.receiver].z - base.z) < 1
+        ) {
+          // Relay: the cutoff man has it; he turns and throws where the play is now.
+          t.receivedAt = l.elapsed;
+          l.fielder = t.receiver;
+          l.fielderPos = l.defenders[t.receiver];
+          l.fieldedAt = l.elapsed;
+          l.hold = RULES.relayHold;
+          l.throw = null;
+          l.relay = undefined;
+          l.requestedBase = null;
+          l.state = "포구";
+          s.detail = "중계 플레이 · 커트맨이 받아 다시 송구";
+          return;
+        }
+        if (
+          t.base > 0 &&
           l.elapsed + 1e-8 >= t.startedAt + t.duration &&
           t.receivedAt === null &&
           Math.hypot(l.defenders[t.receiver].x - base.x, l.defenders[t.receiver].z - base.z) < 1
@@ -3907,7 +4119,7 @@ export class BaseballEngine {
       at = this.liveBall(l, pickup),
       cover = l.defenders[this.receiver(base, l.fielder)],
       eta = Math.max(0, Math.hypot(cover.x - bag.x, cover.z - bag.z) - 0.9) / 8.2;
-    return Math.max(pickup + Math.max(0.22, distance(at, bag) / this.armOf(l)), eta + 0.02);
+    return Math.max(pickup + this.throwRoute(l, at, base, l.fielder).time, eta + 0.02);
   }
   /** E-steal: the pitch reached the catcher, who throws to second. Arrival order decides. */
   private startStealThrow(call: string) {

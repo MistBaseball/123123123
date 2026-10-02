@@ -370,7 +370,7 @@ export class SoftwareField {
       let yaw = ch.i === 1 ? Math.PI : 0;
       const active = l && ch.i === l.fielder;
       if (active) {
-        const target = l.throw ? BASES[l.throw.base - 1] : l.bounced ? l.land : l.catchPoint;
+        const target = l.throw ? l.throw.to : l.bounced ? l.land : l.catchPoint;
         yaw = playerYaw(V(target.x - ch.p.x, 0, target.z - ch.p.z));
       }
       this.drawPlayer(
