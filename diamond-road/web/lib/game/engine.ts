@@ -627,17 +627,18 @@ export const SWING_STYLES: Record<
 export const batReach = (contact: number, style: SwingStyle) =>
   (0.12 + clamp(over(contact), 0, 150) * 0.001) * SWING_STYLES[style].reach;
 /** Experience points: in-match plays, match result and daily actions. */
+/** Experience (구종 상점). Raised ×1.5 in v11.3: friends found the first days slow. */
 export const XP = {
-  strikeout: 5,
-  out: 2,
-  walk: 2,
-  hit: [0, 7, 10, 13, 20] as const,
-  run: 4,
-  complete: 40,
-  win: 30,
-  draw: 12,
-  training: 8,
-  rest: 3,
+  strikeout: 8,
+  out: 3,
+  walk: 3,
+  hit: [0, 10, 15, 20, 30] as const,
+  run: 6,
+  complete: 60,
+  win: 45,
+  draw: 18,
+  training: 12,
+  rest: 5,
 };
 /** Actions (training, rest, study) available each day before the day's match. */
 export const DAY_ACTIONS = 5;

@@ -36,6 +36,7 @@ import {
 import { TrainingMinigame, TRAINING_GAMES } from "@/components/game/Minigames";
 import { PatchNotesButton } from "@/components/game/PatchNotes";
 import { HallOfFameButton, HofResetForm } from "@/components/game/HallOfFame";
+import { GuideDialog, GuideNotice } from "@/components/game/Guide";
 import {
   Dialog,
   DialogContent,
@@ -2050,7 +2051,15 @@ function HiddenDialog({ engine, s }: { engine: BaseballEngine; s: GameState }) {
   );
 }
 /** Starting roulette: "a blessing from the baseball gods" grants one random pitch. */
-function BlessingDialog({ engine, s }: { engine: BaseballEngine; s: GameState }) {
+function BlessingDialog({
+  engine,
+  s,
+  onFinish,
+}: {
+  engine: BaseballEngine;
+  s: GameState;
+  onFinish: () => void;
+}) {
   const [phase, setPhase] = useState<"idle" | "spinning" | "done">("idle");
   const [reel, setReel] = useState<string[]>([]);
   const [offset, setOffset] = useState(0);
@@ -2080,7 +2089,10 @@ function BlessingDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
     <Dialog
       open={open}
       onOpenChange={(v) => {
-        if (!v && phase === "done") setPhase("idle");
+        if (!v && phase === "done") {
+          setPhase("idle");
+          onFinish();
+        }
       }}
     >
       <DialogContent className="blessing-dialog" showCloseButton={phase === "done"}>
@@ -2132,7 +2144,13 @@ function BlessingDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
             <span className={`tier-badge tier-${tier}`}>{tier}</span>
             <h3>{josa(won.name, "이가")} 손끝에 깃들었다</h3>
             <p>{won.desc} · 포심·슬라이더와 함께 바로 던질 수 있습니다.</p>
-            <button className="primary-button" onClick={() => setPhase("idle")}>
+            <button
+              className="primary-button"
+              onClick={() => {
+                setPhase("idle");
+                onFinish();
+              }}
+            >
               은총을 받고 훈련 시작 <ChevronRight size={16} />
             </button>
           </div>
@@ -2166,324 +2184,7 @@ function BlessingDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
   );
 }
 
-const TUTORIAL_KEY = "diamond-road-tutorial-v2";
-type TourTrack = "life" | "pitch" | "bat";
-type TourStep = {
-  title: string;
-  body: string;
-  /** CSS selector of the thing being explained; it gets a gold outline. */
-  target?: string;
-  /** Action steps move on by themselves once the player does it. */
-  wait?: "pitch" | "throw" | "result";
-};
-/**
- * Three short tours: the daily screen (training), and the first inning of the first match from
- * the mound and from the batter's box. Reading steps pause the game; P turns the tutorial off.
- */
-const TOURS: Record<TourTrack, TourStep[]> = {
-  life: [
-    {
-      title: "하루는 아침 → 오후 → 밤",
-      body: "아침에는 행동력 5로 훈련·수업·휴식을 하고, 오후에는 시즌 경기를 한 번 치러요. 경기가 끝나면 밤이 지나 다음 날이 됩니다. 오른쪽 '경기장으로 향하기'를 누르면 남은 행동력은 사라져요.",
-      target: ".life-timeline",
-    },
-    {
-      title: "목표: 꿈의 구단 스카우트 평가 100",
-      body: "고른 구단의 스카우트가 모든 시즌 경기를 지켜봐요. 경기가 끝날 때마다 탈삼진·안타·승리에 따라 평가가 오르고, 100이 되면 입단 제의를 받아 프로 무대로 갑니다.",
-      target: ".scout-meter",
-    },
-    {
-      title: "체력 · 컨디션 · 경험치",
-      body: "체력은 훈련과 투구로 줄고, 낮으면 구속과 제구가 떨어지고 폭투가 늘어요. 컨디션은 수업·휴식으로 오르며 공과 타구의 질에 영향을 줘요. 경험치(XP)는 경기에서 모아 새 구종을 사는 데 씁니다.",
-      target: ".condition-bar",
-    },
-    {
-      title: "내 능력치와 효과",
-      body: "7가지 능력치가 실제로 무엇을 바꾸는지 숫자로 보여 줘요. 예를 들어 구속 64면 전력 포심이 몇 km/h인지 나옵니다. 고교 때는 100까지, 프로에 가면 200까지 오를 수 있어요.",
-      target: ".stat-guide",
-    },
-    {
-      title: "훈련 카드",
-      body: "카드를 누르면 미니게임 설명이 먼저 나오고, 결과(아쉬움·좋음·완벽)에 따라 능력치가 0~2 올라요. 훈련 하나에 행동력 1과 카드에 적힌 체력이 들어요. 카드 안 상자에는 지금 능력치와 효과가 보입니다.",
-      target: ".training-grid",
-    },
-    {
-      title: "쉬는 것도 실력",
-      body: "체력이 모자라면 훈련 카드가 눌리지 않아요. '충분한 휴식'은 체력과 컨디션을 회복하고, '수업·영상 분석'은 퀴즈로 컨디션을 올려요.",
-      target: ".rest-card",
-    },
-    {
-      title: "자율 연습",
-      body: "불펜(투구)과 배팅 케이지(타격)는 행동력과 경험치 없이 조작만 연습하는 곳이에요. 경기 전에 손을 풀기 좋아요.",
-      target: ".practice-row",
-    },
-    {
-      title: "구종 상점",
-      body: "경기에서 모은 경험치로 새 구종을 익혀요. 카드의 태그는 그 공의 장점(헛스윙 유도 등)과 단점(제구 어려움 등)이에요. 익힌 구종은 투구 플랜에서 바로 고를 수 있습니다.",
-      target: ".pitch-shop",
-    },
-    {
-      title: "이제 경기장으로",
-      body: "훈련을 마쳤으면 '경기장으로 향하기'를 누르세요. 첫 경기의 1회는 튜토리얼 이닝이라 투구와 타격을 하나씩 안내해 드려요. 튜토리얼은 언제든 P로 끌 수 있어요.",
-      target: ".life-cta",
-    },
-  ],
-  pitch: [
-    {
-      title: "튜토리얼 이닝 · 마운드에 섰어요",
-      body: "1회 초, 우리는 수비이고 당신은 투수입니다. 오른쪽 '투구 플랜'을 위에서부터 따라가면 한 구를 던질 수 있어요. 읽는 동안 경기는 멈춰 있어요.",
-      target: ".pitch-panel",
-    },
-    {
-      title: "상대 타자",
-      body: "지금 타석의 상대 선수예요. 좌타·우타와 컨택(맞히기)·파워(멀리 치기)·선구(볼 고르기)·주력이 학교마다, 선수마다 정해져 있어요. 선구가 높은 타자에게는 볼이 잘 안 통해요.",
-      target: ".pp-rival",
-    },
-    {
-      title: "① 구종 고르기",
-      body: "숫자키(새 구종은 = [ ] 키)나 버튼으로 구종을 고르세요. 버튼의 km/h는 지금 강도로 던졌을 때의 구속이에요. 다른 구종을 하나 골라 보세요.",
-      target: ".pp-pitches",
-      wait: "pitch",
-    },
-    {
-      title: "구종의 움직임",
-      body: "고른 구종이 어느 방향으로 얼마나 휘는지 cm로 알려 줘요. 조준판의 색 영역도 같은 휨이에요. 휨은 '구위' 능력치가 높을수록 커집니다.",
-      target: ".pp-desc",
-    },
-    {
-      title: "② 투구 강도",
-      body: "왼쪽으로 내리면 느리지만 정확하고, 오른쪽으로 올리면 빠르지만 덜 정확하고 체력도 더 들어요. 결정구는 세게, 볼카운트가 불리하면 정확하게.",
-      target: "[data-tour=effort]",
-    },
-    {
-      title: "③ 목표 지점과 제구 오차",
-      body: "조준판(또는 3D 화면의 스트라이크 존)에서 공을 보낼 곳을 고르세요. 공은 노린 곳에서 '제구 오차'만큼 벗어나요. 존 모서리를 노리면 치기 어렵지만 볼이 되기 쉬워요.",
-      target: ".aim-pad",
-    },
-    {
-      title: "직접 던져 보기",
-      body: "조준판(또는 3D 화면의 스트라이크 존)에서 노릴 곳을 클릭하면 바로 던져요. 마우스를 올려 둔 채 Space를 눌러도 돼요. 지금 한 구를 던져 보세요!",
-      target: ".aim-pad",
-      wait: "throw",
-    },
-    {
-      title: "판정 확인",
-      body: "볼·스트라이크·파울·타구 결과가 화면 가운데와 아래 '직전 플레이'에 나와요. 판정이 나오면 다음으로 넘어가요.",
-      target: ".field-bottom",
-      wait: "result",
-    },
-    {
-      title: "볼카운트와 점수판",
-      body: "B(볼) 4개면 볼넷, S(스트라이크) 3개면 삼진, O(아웃) 3개면 공수 교대예요. 2스트라이크 뒤의 파울은 카운트가 늘지 않아요. 몸에 맞으면 사구로 1루에 보내요.",
-      target: ".scoreboard",
-    },
-    {
-      title: "투수 체력",
-      body: "공을 던질수록 체력이 줄고, 낮아지면 구속·제구가 떨어지고 폭투가 잦아져요. 아래 줄에 지금 제구 오차(±cm)와 체력 때문에 떨어진 구속이 보여요. 체력은 '지구력' 능력치가 높을수록 천천히 줄어요.",
-      target: ".pp-stamina",
-    },
-    {
-      title: "고의4구 · 견제 · 초기화",
-      body: "'고의4구'는 타자를 바로 1루에 보내요. 주자가 있으면 '견제' 버튼이나 F로 견제구를 던져 리드한 주자를 잡을 수 있어요(같은 타자에게 계속 던지면 주자가 조심해요). 연습에서는 R로 공을 초기화해요.",
-      target: ".pp-actions",
-    },
-    {
-      title: "타구가 나오면",
-      body: "수비수가 자동으로 공을 쫓아 잡고, 주자와 공 중 누가 먼저 베이스에 닿는지로 아웃·세이프가 정해져요. 뜬공이 잡히면 주자는 원래 베이스로 돌아가야 해요. 설정에서 자동 수비를 끄면 WASD로 직접 움직이고 1~4로 송구할 베이스를 골라요.",
-      target: ".game-stage",
-    },
-    {
-      title: "카메라",
-      body: "투수·포수·중계·타구·탑뷰 카메라를 숫자 버튼이나 C로 바꿀 수 있어요. 타구가 나오면 자동으로 타구 카메라로 바뀌어요(설정에서 끌 수 있어요). 이제 이닝을 마무리해 보세요!",
-      target: ".camera-row",
-    },
-  ],
-  bat: [
-    {
-      title: "튜토리얼 이닝 · 공격 차례",
-      body: "1회 말, 이제 우리가 칩니다. 당신은 1번 타자이고, 2~9번은 미산고 동료가 자기 컨택·파워·주력으로 타석에 서요. 스윙은 모든 타석을 당신이 직접 조작해요. 오른쪽에 상대 학교 에이스의 구속·제구·구종 수가 나와요.",
-      target: ".pitch-panel",
-    },
-    {
-      title: "스윙 종류",
-      body: "컨택: 넓게 맞히고, 아슬아슬하게 빗나가면 파울로 버텨요. 강타: 범위가 아주 좁지만 맞으면 멀리 날아가요. 번트: 짧게 굴려 주자를 보내요(2스트라이크 번트 파울은 삼진).",
-      target: ".pp-swings",
-    },
-    {
-      title: "조준: 흐릿한 빛과 노란 원",
-      body: "상대가 던지면 화면에 흐릿한 빛이 생겨요. 공은 반드시 그 안으로 와요. 마우스를 움직이면 노란 원(배트가 닿는 범위)이 따라와요. 공이 지나갈 곳에 원을 겹치세요. 타석에 선 타자의 컨택이 높을수록 빛은 작고 원은 커져요.",
-      target: ".game-stage",
-    },
-    {
-      title: "타이밍 게이지",
-      body: "투구가 시작되면 화면 위에 얇은 게이지가 나와요. 흐린 금색은 맞힐 수 있는 구간, 밝은 금색은 좋은 타이밍이에요. 그때 클릭하거나 Space를 누르세요. 치지 않고 기다리면 볼을 골라낼 수 있어요.",
-      target: ".game-stage",
-    },
-    {
-      title: "결과 피드백",
-      body: "스윙 뒤에는 타이밍이 빨랐는지 늦었는지, 조준이 몇 cm 빗나갔는지가 여기에 나와요. 다음 공에 바로 고쳐 보세요.",
-      target: ".pp-desc",
-    },
-    {
-      title: "도루 사인",
-      body: "1루에 주자가 있고 2루가 비어 있으면 E 또는 이 버튼으로 도루 사인을 내요. 다음 투구와 함께 주자가 뛰고, 포수 송구와 누가 먼저 2루에 닿는지로 판정해요. 발이 빠른 주자일수록 유리해요.",
-      target: ".steal-button",
-    },
-    {
-      title: "직접 쳐 보기",
-      body: "이제 상대 투수가 던집니다. 빛을 보고 원을 맞추고, 밝은 금색 구간에서 클릭! 공 하나의 결과가 나오면 튜토리얼이 끝나요.",
-      target: ".game-stage",
-      wait: "result",
-    },
-  ],
-};
-function TutorialCoach({
-  track,
-  step,
-  onNext,
-  onSkip,
-}: {
-  track: TourTrack;
-  step: number;
-  onNext: () => void;
-  onSkip: () => void;
-}) {
-  const steps = TOURS[track],
-    t = steps[step];
-  // Spotlight: the page is dimmed except for the element being explained. Its box is tracked
-  // every frame so the hole follows scrolling, layout changes and smooth scrolls.
-  const [spot, setSpot] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
-  useEffect(() => {
-    if (!t?.target) {
-      setSpot(null);
-      return;
-    }
-    let raf = 0,
-      el: Element | null = document.querySelector(t.target);
-    // Jump (not glide) so the hole is right even on slow machines.
-    el?.scrollIntoView({ block: track === "life" ? "center" : "nearest" });
-    const pad = 6,
-      measure = () => {
-        if (!el?.isConnected) el = document.querySelector(t.target!);
-        const r = el?.getBoundingClientRect();
-        setSpot((prev) => {
-          if (!r || r.width === 0) return null;
-          const next = {
-            x: r.left - pad,
-            y: r.top - pad,
-            w: r.width + pad * 2,
-            h: r.height + pad * 2,
-          };
-          return prev &&
-            Math.abs(prev.x - next.x) < 0.5 &&
-            Math.abs(prev.y - next.y) < 0.5 &&
-            Math.abs(prev.w - next.w) < 0.5 &&
-            Math.abs(prev.h - next.h) < 0.5
-            ? prev
-            : next;
-        });
-      },
-      loop = () => {
-        measure();
-        raf = requestAnimationFrame(loop);
-      };
-    loop();
-    // Scrolling and resizing re-measure at once, without waiting for the next frame.
-    window.addEventListener("scroll", measure, true);
-    window.addEventListener("resize", measure);
-    return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener("scroll", measure, true);
-      window.removeEventListener("resize", measure);
-    };
-  }, [t, track]);
-  if (!t) return null;
-  const last = step === steps.length - 1;
-  // Card position: bottom-left as usual; if that would cover the highlight, sit right above or
-  // below it (then beside it, then a corner). Always left/top so it slides instead of jumping.
-  const vw = typeof window === "undefined" ? 1280 : window.innerWidth,
-    vh = typeof window === "undefined" ? 800 : window.innerHeight,
-    cw = Math.min(400, vw - 40),
-    ch = 240,
-    gap = 14,
-    fit = (x: number, y: number) => ({
-      left: clamp(x, 20, vw - cw - 20),
-      top: clamp(y, 20, vh - ch - 20),
-    }),
-    clear = (p: { left: number; top: number }) =>
-      !spot ||
-      p.left + cw < spot.x ||
-      spot.x + spot.w < p.left ||
-      p.top + ch < spot.y ||
-      spot.y + spot.h < p.top,
-    candidates = [
-      fit(20, vh - ch - 20),
-      ...(spot
-        ? [
-            fit(spot.x, spot.y - ch - gap),
-            fit(spot.x, spot.y + spot.h + gap),
-            fit(spot.x + spot.w + gap, spot.y),
-            fit(spot.x - cw - gap, spot.y),
-          ]
-        : []),
-      fit(vw - cw - 20, vh - ch - 20),
-      fit(vw - cw - 20, 20),
-      fit(20, 20),
-    ],
-    corner: React.CSSProperties = candidates.find(clear) ?? candidates[0];
-  return createPortal(
-    <>
-      {spot && (
-        <div
-          className="tutorial-spot"
-          aria-hidden="true"
-          style={{ left: spot.x, top: spot.y, width: spot.w, height: spot.h }}
-        />
-      )}
-      <aside className="tutorial-coach floating" style={corner} aria-label="튜토리얼">
-        <div className="tutorial-head">
-          <span>
-            {track === "life"
-              ? "하루 일정 안내"
-              : track === "pitch"
-                ? "튜토리얼 이닝 · 투수"
-                : "튜토리얼 이닝 · 타자"}
-          </span>
-          <span>
-            {step + 1} / {steps.length}
-          </span>
-        </div>
-        <div className="tutorial-progress" aria-hidden="true">
-          {steps.map((_, i) => (
-            <i key={i} className={i <= step ? "on" : ""} />
-          ))}
-        </div>
-        <h3>{t.title}</h3>
-        <p>{t.body}</p>
-        <div className="tutorial-actions">
-          <button className="subtle-button" onClick={onSkip}>
-            튜토리얼 끄기 <kbd>P</kbd>
-          </button>
-          {t.wait ? (
-            <span className="tutorial-wait">
-              {t.wait === "pitch"
-                ? "구종을 고르면 다음으로"
-                : t.wait === "throw"
-                  ? "공을 던지면 다음으로"
-                  : "결과가 나오면 다음으로"}
-            </span>
-          ) : (
-            <button className="primary-button" onClick={onNext}>
-              {last ? "알겠어요" : "다음"} <ChevronRight size={16} />
-            </button>
-          )}
-        </div>
-      </aside>
-    </>,
-    document.body,
-  );
-}
-/** "10/01 19:30" style label of this build, shown in the settings. */
+const GUIDE_NOTICE_KEY = "diamond-road-guide-notice";
 const BUILD_LABEL = (() => {
   const d = new Date(__BUILD__);
   return Number.isNaN(d.getTime())
@@ -2641,7 +2342,37 @@ export default function DiamondGame() {
     [devCode, setDevCode] = useState(""),
     [manualPause, setManualPause] = useState(false),
     [pending, setPending] = useState<Mode | null>(null),
-    [tour, setTour] = useState<{ track: TourTrack; step: number } | null>(null);
+    [guideNotice, setGuideNotice] = useState(false),
+    [rouletteDone, setRouletteDone] = useState(false);
+  // "Read the guide" notice, once per browser: after the starting roulette (a start that skips
+  // it, or a career that already had it, gets it as soon as nothing else is on screen).
+  const startedAtLoad = useRef(s.career.created && s.career.blessing !== "");
+  useEffect(() => {
+    const c = s.career;
+    let seen = true;
+    try {
+      seen = localStorage.getItem(GUIDE_NOTICE_KEY) === "1";
+    } catch {}
+    const ready =
+      c.created &&
+      !!c.team &&
+      c.blessing !== "" &&
+      !s.hiddenUnlock &&
+      (rouletteDone || startedAtLoad.current || c.blessing === "legend" || c.blessing === "none");
+    if (seen || !ready || guideNotice) return;
+    try {
+      localStorage.setItem(GUIDE_NOTICE_KEY, "1");
+    } catch {}
+    setGuideNotice(true);
+  }, [
+    s.career,
+    s.career.created,
+    s.career.team,
+    s.career.blessing,
+    s.hiddenUnlock,
+    rouletteDone,
+    guideNotice,
+  ]);
   // Hall of fame: a career played while the developer password is open gets the badge
   // (also a career started while it is still open). The mark is never removed.
   useEffect(() => {
@@ -2650,29 +2381,6 @@ export default function DiamondGame() {
       engine.persist();
     }
   }, [devUnlocked, s.career, engine]);
-  // Which tours are finished (stored per browser; separate from the career save).
-  const readTours = (): Record<TourTrack, boolean> => {
-    try {
-      const v = JSON.parse(localStorage.getItem(TUTORIAL_KEY) ?? "{}");
-      return { life: !!v.life, pitch: !!v.pitch, bat: !!v.bat };
-    } catch {
-      return { life: true, pitch: true, bat: true };
-    }
-  };
-  const saveTours = (v: Record<TourTrack, boolean>) => {
-    try {
-      localStorage.setItem(TUTORIAL_KEY, JSON.stringify(v));
-    } catch {}
-  };
-  const finishTour = (track: TourTrack) => {
-    saveTours({ ...readTours(), [track]: true });
-    setTour(null);
-  };
-  /** P: the whole tutorial off (all three tours). */
-  const endTutorial = () => {
-    saveTours({ life: true, pitch: true, bat: true });
-    setTour(null);
-  };
   const stage = useRef<HTMLDivElement>(null);
   const audio = useRef<AudioContext | null>(null);
   const [innings, setInnings] = useState(3);
@@ -2769,80 +2477,22 @@ export default function DiamondGame() {
     void check();
     return () => window.clearInterval(id);
   }, []);
-  // Start each tour the first time its moment comes: the daily screen once the player exists,
-  // the mound and the batter's box in the first inning of a season match.
-  useEffect(() => {
-    if (tour || !s.career.created || !s.career.team || s.career.blessing === "") return;
-    const done = readTours();
-    if (view === "life" && !done.life) setTour({ track: "life", step: 0 });
-    else if (view === "game" && s.mode === "match" && s.inning === 1 && s.phase !== "finished") {
-      if (!engine.batting && !done.pitch && s.phase === "ready")
-        setTour({ track: "pitch", step: 0 });
-      else if (engine.batting && !done.bat && (s.phase === "ready" || s.phase === "between"))
-        setTour({ track: "bat", step: 0 });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    view,
-    s.mode,
-    s.inning,
-    s.half,
-    s.phase,
-    s.career.created,
-    s.career.team,
-    s.career.blessing,
-    tour,
-  ]);
-  useEffect(() => {
-    if (view !== "life" && tour?.track === "life") finishTour("life");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view]);
-  // Action steps move on when the player does the thing.
-  const tourStart = useRef({ selected: s.selected, sawPitch: false });
-  useEffect(() => {
-    tourStart.current = { selected: s.selected, sawPitch: false };
-    // Only when a new step begins.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tour?.track, tour?.step]);
-  useEffect(() => {
-    if (!tour) return;
-    const t = TOURS[tour.track][tour.step],
-      next = () =>
-        tour.step >= TOURS[tour.track].length - 1
-          ? finishTour(tour.track)
-          : setTour({ ...tour, step: tour.step + 1 });
-    if (s.phase === "windup" || s.phase === "flight") tourStart.current.sawPitch = true;
-    if (t?.wait === "pitch" && s.selected !== tourStart.current.selected) next();
-    else if (t?.wait === "throw" && (s.phase === "windup" || s.phase === "flight")) next();
-    else if (
-      t?.wait === "result" &&
-      tourStart.current.sawPitch &&
-      ["result", "between", "finished"].includes(s.phase)
-    )
-      next();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tour, s.selected, s.phase]);
-  // Reading a step in a match pauses the game; action steps let it run.
-  const tourPause = !!tour && tour.track !== "life" && !TOURS[tour.track][tour.step]?.wait;
   useEffect(() => {
     engine.set(
       "paused",
-      view !== "game" || help || settings || !!pending || manualPause || tourPause,
+      view !== "game" || help || settings || !!pending || manualPause || guideNotice,
     );
-  }, [view, help, settings, pending, manualPause, engine, tourPause]);
-  const tutorialRef = useRef(tour);
-  tutorialRef.current = tour;
-  // On the daily screen the game's key handler is off, so P is caught here.
+  }, [view, help, settings, pending, manualPause, engine, guideNotice]);
+  // H: the guide (조작법) opens and closes from anywhere (not while typing).
   useEffect(() => {
-    if (view !== "life" || !tour) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.code === "KeyP" && !(e.target as HTMLElement)?.closest?.("input,textarea"))
-        endTutorial();
+      if (e.code !== "KeyH" || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+      if ((e.target as HTMLElement)?.closest?.("input,textarea,[role=combobox]")) return;
+      setHelp((v) => !v);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, tour]);
+  }, []);
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -2859,11 +2509,7 @@ export default function DiamondGame() {
       if (target?.closest?.("[role=slider]") && k.startsWith("arrow")) return;
       engine.keys.add(k);
       if (e.repeat) return;
-      // During the tutorial P skips it; otherwise P / Esc pause the game.
-      if (k === "p" && tutorialRef.current !== null) {
-        endTutorial();
-        return;
-      }
+      // P / Esc pause the game.
       if (k === "p" || k === "escape") {
         setManualPause((v) => !v);
         return;
@@ -3029,7 +2675,7 @@ export default function DiamondGame() {
     <main className="diamond-app">
       <Toaster theme="dark" position="bottom-center" />
       <CreationDialog engine={engine} s={s} />
-      <BlessingDialog engine={engine} s={s} />
+      <BlessingDialog engine={engine} s={s} onFinish={() => setRouletteDone(true)} />
       <HiddenDialog engine={engine} s={s} />
       <NightDialog s={s} recap={recap} onClose={() => setRecap(null)} />
       <EndingDialog
@@ -3059,6 +2705,10 @@ export default function DiamondGame() {
           </a>
           <PatchNotesButton />
           <HallOfFameButton engine={engine} career={s.career} />
+          <button className="patch-button" onClick={() => setHelp(true)} aria-label="조작법">
+            <BookOpen size={15} />
+            <span>조작법</span>
+          </button>
         </div>
         <button
           className="life-status"
@@ -3120,18 +2770,6 @@ export default function DiamondGame() {
               ref={stage}
             >
               <Field engine={engine} />
-              {tour && tour.track !== "life" && view === "game" && (
-                <TutorialCoach
-                  track={tour.track}
-                  step={tour.step}
-                  onNext={() =>
-                    tour.step >= TOURS[tour.track].length - 1
-                      ? finishTour(tour.track)
-                      : setTour({ ...tour, step: tour.step + 1 })
-                  }
-                  onSkip={endTutorial}
-                />
-              )}
               <div className="field-top">
                 <div className="chip-stack">
                   <span className="inning-chip">{batting ? "공격 · 타격" : "수비 · 투구"}</span>
@@ -3491,7 +3129,7 @@ export default function DiamondGame() {
                   )}
                   <PitchMovementGuide s={s} />
                 </div>
-                <div className="pp-step" data-tour="effort">
+                <div className="pp-step">
                   <h3>
                     <i>2</i> 투구 강도 <b>{s.effort}%</b>
                     <small>왼쪽 제구 · 오른쪽 구속</small>
@@ -3663,132 +3301,21 @@ export default function DiamondGame() {
           }}
         />
       )}
-      {view === "life" && tour?.track === "life" && (
-        <TutorialCoach
-          track="life"
-          step={tour.step}
-          onNext={() =>
-            tour.step >= TOURS.life.length - 1
-              ? finishTour("life")
-              : setTour({ ...tour, step: tour.step + 1 })
-          }
-          onSkip={endTutorial}
-        />
-      )}
       <footer className="app-footer">
         <span>
           DIAMOND ROAD <b>·</b> 웹 플레이 테스트 05
         </span>
         <span>선수 기록 자동 저장 · 경기 진행은 현재 세션에 유지</span>
       </footer>
-      <Dialog open={help} onOpenChange={setHelp}>
-        <DialogContent className="help-dialog">
-          <DialogHeader>
-            <DialogTitle>마운드부터 시작해 보세요.</DialogTitle>
-            <DialogDescription>
-              투구 · 타격 · 주루 · 수비를 한 경기에서 점검합니다.
-            </DialogDescription>
-          </DialogHeader>
-          <button
-            className="subtle-button tutorial-replay"
-            onClick={() => {
-              // Replay everything: the daily screen now, the mound and the plate in the next
-              // first inning.
-              saveTours({ life: false, pitch: false, bat: false });
-              setHelp(false);
-              setView("life");
-              setTour({ track: "life", step: 0 });
-            }}
-          >
-            튜토리얼 다시 보기
-          </button>
-          <div className="help-steps">
-            <section>
-              <h3>투구</h3>
-              <ul>
-                <li>
-                  숫자키나 버튼으로 구종을 고르고, 조준판이나 스트라이크 존을 클릭해 던집니다.
-                </li>
-                <li>노린 곳에서 제구 오차만큼 벗어납니다. 체력·컨디션이 낮으면 더 벗어납니다.</li>
-                <li>
-                  주자가 있으면 <kbd>F</kbd> 또는 견제 버튼으로 견제구를 던질 수 있습니다.
-                </li>
-                <li>지친 투수는 폭투가 늘어납니다. 타자 몸에 맞으면 사구로 1루에 보냅니다.</li>
-              </ul>
-            </section>
-            <section>
-              <h3>타격</h3>
-              <ul>
-                <li>상대가 3아웃을 당하면 우리 공격입니다.</li>
-                <li>
-                  흐릿한 빛은 공이 올 범위(공은 항상 그 안), 노란 점선 원은 배트가 닿는 범위입니다.
-                </li>
-                <li>공을 끝까지 보고 조준한 뒤, 위쪽 게이지의 밝은 금색 구간에서 클릭합니다.</li>
-                <li>
-                  1루에 주자가 있으면 <kbd>E</kbd>로 도루 사인. 투구와 함께 뛰고 포수 송구와 도착
-                  순서로 판정됩니다.
-                </li>
-              </ul>
-            </section>
-            <section>
-              <h3>주루·수비</h3>
-              <ul>
-                <li>타자와 주자는 공이 살아 있는 동안 계속 달립니다.</li>
-                <li>
-                  뜬공이 떨어지기 전에 잡히면 타자 아웃, 주자는 원래 베이스로 돌아갑니다. 공이 먼저
-                  가면 아웃입니다.
-                </li>
-                <li>땅볼은 공과 주자 중 누가 먼저 베이스에 닿는지로 포스·태그 아웃을 정합니다.</li>
-                <li>
-                  설정에서 자동 수비를 끄면 <kbd>WASD</kbd>로 수비수를 움직이고 <kbd>1</kbd>–
-                  <kbd>4</kbd>로 송구 베이스를 고릅니다.
-                </li>
-              </ul>
-            </section>
-            <section>
-              <h3>하루 일정과 성장</h3>
-              <ul>
-                <li>
-                  아침에는 행동력 5로 훈련·수업·휴식, 오후에는 시즌 경기, 밤이 지나면 다음 날.
-                </li>
-                <li>
-                  훈련 미니게임 결과에 따라 능력치가 0~2 오릅니다. 능력치마다 하는 일은 하루 일정의
-                  &lsquo;내 능력치와 효과&rsquo;에 나옵니다.
-                </li>
-                <li>경기에서 모은 경험치로 구종 상점에서 새 구종을 익힙니다.</li>
-                <li>
-                  꿈의 구단 스카우트 평가가 100이 되면 입단하고, 같은 선수로 더 어려운 프로 무대가
-                  열립니다(새 목표: 1군 신뢰도).
-                </li>
-              </ul>
-            </section>
-          </div>
-          <details className="prototype-notes">
-            <summary>이번 웹 점검판의 범위</summary>
-            <p>
-              직접 플레이: 10구종, 조준 오차, 중력 궤적, 좌·우타 AI, 스윙, 번트, 주루, 도루(E),
-              견제, 사구, 폭투, 포구·송구, 볼넷·삼진·파울·안타·홈런·병살·희생플라이·고의4구,
-              3/9이닝, 5개 카메라, 훈련·스카우트·입단 스토리·프로 모드.
-            </p>
-            <p>
-              웹용으로 단순화: 구종 회전 효과는 보정 궤적, 타구는 능력치와 난수로 정하며,
-              포구·송구·주루는 실제 이동 위치와 도착 시간으로 판정합니다. 고교 생활은 하루 단위
-              훈련/수업/휴식, 프로 모드는 같은 경기 시스템에 높은 난이도와 새 목표를 더한
-              단계입니다. 연장전·보크·부상·교체·세부 공식 기록과 프로 리그 장기 운영은 구현되어 있지
-              않습니다. 동점 경기는 무승부로 끝납니다. Unity 프로젝트와 별도인 점검용 게임입니다.
-            </p>
-            <p>
-              투구 조준판의 좌우와 변화량은 투수 방향 기준입니다. 색 영역은 기본 포물선 대비 최대
-              휨이며, 최종 도착 범위나 제구 오차 범위가 아닙니다. 표시 구속은 게임 내 물리 구속이며,
-              반응 시간을 위해 공 이동은 난이도에 따라 느리게 보여 주고, 구속 차이가 잘 보이도록
-              빠른 공은 더 빠르게, 느린 공은 더 느리게 보여 줍니다.
-            </p>
-          </details>
-          <button className="primary-button" onClick={() => setHelp(false)}>
-            플레이로 돌아가기 <Play size={16} />
-          </button>
-        </DialogContent>
-      </Dialog>
+      <GuideDialog open={help} onOpenChange={setHelp} />
+      <GuideNotice
+        open={guideNotice}
+        onRead={() => {
+          setGuideNotice(false);
+          setHelp(true);
+        }}
+        onLater={() => setGuideNotice(false)}
+      />
       <Dialog open={settings} onOpenChange={setSettings}>
         <DialogContent className="settings-dialog">
           <DialogHeader>
