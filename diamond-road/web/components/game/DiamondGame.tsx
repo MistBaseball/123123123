@@ -1402,48 +1402,11 @@ function LifeView({
   );
 }
 
-const PRESETS: { name: string; desc: string; add: Career["stats"] }[] = [
-  {
-    name: "정통파 에이스",
-    desc: "빠른 공과 체력으로 윽박지르는 투수",
-    add: { velocity: 28, control: 14, movement: 14, stamina: 20, contact: 8, power: 8, speed: 8 },
-  },
-  {
-    name: "기교파",
-    desc: "제구와 변화로 타자를 요리하는 투수",
-    add: { velocity: 8, control: 28, movement: 28, stamina: 14, contact: 8, power: 4, speed: 10 },
-  },
-  {
-    name: "투타 겸업",
-    desc: "마운드와 타석 모두에서 빛나는 선수",
-    add: { velocity: 15, control: 14, movement: 15, stamina: 8, contact: 18, power: 18, speed: 12 },
-  },
-  {
-    name: "강타자",
-    desc: "정확하고 멀리 치는 타자 (타자만에 어울림)",
-    add: { velocity: 5, control: 5, movement: 5, stamina: 5, contact: 30, power: 30, speed: 20 },
-  },
-];
 /** Role (fixed for the career): the half the player does not play is played by the AI. */
-const ROLES: { id: Role; label: string; desc: string; preset: string }[] = [
-  {
-    id: "two-way",
-    label: "투타 겸업",
-    desc: "던지고 친다 (지금까지와 같음)",
-    preset: "투타 겸업",
-  },
-  {
-    id: "pitcher",
-    label: "투수만",
-    desc: "우리 공격은 AI가 진행 (배속 가능), 타석엔 지명타자",
-    preset: "정통파 에이스",
-  },
-  {
-    id: "batter",
-    label: "타자만",
-    desc: "우리 수비·투구는 AI가 진행 (배속 가능)",
-    preset: "강타자",
-  },
+const ROLES: { id: Role; label: string; desc: string }[] = [
+  { id: "two-way", label: "투타 겸업", desc: "던지고 친다 (지금까지와 같음)" },
+  { id: "pitcher", label: "투수만", desc: "우리 공격은 AI가 진행 (배속 가능), 타석엔 지명타자" },
+  { id: "batter", label: "타자만", desc: "우리 수비·투구는 AI가 진행 (배속 가능)" },
 ];
 const statKeys = Object.keys(statNames) as (keyof Career["stats"])[];
 /** First screen: choose a name and spread the starting stat points. */
@@ -1460,10 +1423,10 @@ function CreationDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
   }, [s.career.created]);
   const [name, setName] = useState("");
   const [role, setRole] = useState<Role>("two-way");
-  const [stats, setStats] = useState<Career["stats"]>(() => {
-    const p = PRESETS[0].add;
-    return Object.fromEntries(statKeys.map((k) => [k, STAT_BASE + p[k]])) as Career["stats"];
-  });
+  // Every stat starts at the base; the player spends the free points himself.
+  const [stats, setStats] = useState<Career["stats"]>(
+    () => Object.fromEntries(statKeys.map((k) => [k, STAT_BASE])) as Career["stats"],
+  );
   const left = STAT_POINTS - statKeys.reduce((a, k) => a + stats[k] - STAT_BASE, 0);
   const bump = (k: keyof Career["stats"], d: number) =>
     setStats((st) => {
@@ -1546,10 +1509,9 @@ function CreationDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
             <DialogHeader>
               <DialogTitle>선수 등록</DialogTitle>
               <DialogDescription>
-                {teamOf(team)?.name} 입단을 꿈꾸는 미산고 3학년. 역할을 고르고(나중에 못 바꿈) 이름과 능력치{" "}
-                {STAT_POINTS}
-                포인트를 나눠 주세요. 각 능력은 {STAT_BASE}에서 시작해 최대 {STAT_CAP}까지 올릴 수
-                있습니다.
+                {teamOf(team)?.name} 입단을 꿈꾸는 미산고 3학년. 역할을 고르고(나중에 못 바꿈) 이름을
+                정한 뒤, 자유 능력치 {STAT_POINTS}포인트를 원하는 곳에 찍어 주세요. 모든 능력은{" "}
+                {STAT_BASE}에서 시작해 최대 {STAT_CAP}까지 올릴 수 있습니다.
               </DialogDescription>
             </DialogHeader>
             <label className="creation-name">
@@ -1568,22 +1530,20 @@ function CreationDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
                   role="radio"
                   aria-checked={role === r.id}
                   className={`subtle-button ${role === r.id ? "on" : ""}`}
-                  onClick={() => {
-                    setRole(r.id);
-                    const p = PRESETS.find((x) => x.name === r.preset);
-                    if (p)
-                      setStats(
-                        Object.fromEntries(
-                          statKeys.map((k) => [k, STAT_BASE + p.add[k]]),
-                        ) as Career["stats"],
-                      );
-                  }}
+                  onClick={() => setRole(r.id)}
                 >
                   <strong>{r.label}</strong>
                   <small>{r.desc}</small>
                 </button>
               ))}
             </div>
+            {role !== "two-way" && (
+              <p className="creation-notice">
+                📢 <b>공지</b> · {role === "pitcher" ? "투수만" : "타자만"}을 골라도 투수·타자 능력치는
+                모두 내 선수의 능력치입니다. AI가 대신하는 쪽도 훈련으로 올려야 해요(명예의 전당 종합
+                점수에도 모든 능력치가 들어갑니다).
+              </p>
+            )}
             <div className="creation-difficulty" role="radiogroup" aria-label="난이도">
               <span>
                 난이도 <small>명예의 전당은 이 선수가 경기한 가장 쉬운 난이도에 올라가요</small>
@@ -1602,24 +1562,6 @@ function CreationDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
                   </button>
                 ))}
               </div>
-            </div>
-            <div className="creation-presets">
-              {PRESETS.map((p) => (
-                <button
-                  key={p.name}
-                  className="subtle-button"
-                  onClick={() =>
-                    setStats(
-                      Object.fromEntries(
-                        statKeys.map((k) => [k, STAT_BASE + p.add[k]]),
-                      ) as Career["stats"],
-                    )
-                  }
-                >
-                  <strong>{p.name}</strong>
-                  <small>{p.desc}</small>
-                </button>
-              ))}
             </div>
             <div className="creation-stats">
               {statKeys.map((k) => (

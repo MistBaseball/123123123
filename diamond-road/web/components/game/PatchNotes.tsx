@@ -17,6 +17,15 @@ type Patch = { version: string; date: string; title: string; items: string[] };
 
 export const PATCHES: Patch[] = [
   {
+    version: "v12.2",
+    date: "10/04",
+    title: "선수 등록 · 자유 능력치",
+    items: [
+      "선수를 만들 때 유형 버튼(정통파 에이스·기교파·투타 겸업·강타자)을 없앴습니다. 모든 능력치가 45에서 시작하고, 자유 능력치 100포인트를 원하는 곳에 직접 찍어요.",
+      "공지 · 투수만/타자만을 골라도 투수·타자 능력치는 모두 내 선수의 능력치입니다. AI가 대신하는 쪽도 훈련으로 올려야 해요(명예의 전당 종합 점수에도 모든 능력치가 들어갑니다).",
+    ],
+  },
+  {
     version: "v12.1",
     date: "10/04",
     title: "시작할 때 난이도 고르기",
