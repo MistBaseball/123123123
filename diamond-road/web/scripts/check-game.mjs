@@ -3243,6 +3243,55 @@ check("Close pitches: the call says by how much it missed or clipped the zone", 
     for (let y = 0.3; y <= 1.6; y += 0.017)
       assert.equal(zoneMiss(V(x, y, 0)) <= 0, insideZone(V(x, y, 0)));
 });
+check("Bat-only: our AI pitcher calls pitches from the batter and the count, and throws over", () => {
+  const c = newCareer();
+  c.created = true;
+  c.team = "triples";
+  c.role = "batter";
+  const g = new BaseballEngine(c, seed(11));
+  g.start("match");
+  const s = g.state;
+  s.half = "top"; // the rival bats: our pitcher is the AI
+  assert(g.autoHalf && !g.batting);
+  const hitter = g.awayRoster.lineup[s.order[0] % 9],
+    keep = { ...hitter },
+    plans = (n) => Array.from({ length: n }, () => g.autoPitchPlan()),
+    mode = (p, m) => p.filter((x) => x.mode === m);
+  // A fast runner with an ordinary bat: sinkers/changeups down.
+  Object.assign(hitter, { speed: 99, contact: 30, power: 30 });
+  let p = plans(200);
+  assert(mode(p, "ground").length > 150, "fast runner: grounder pitches");
+  assert(mode(p, "ground").every((x) => x.pitch.soft > 0 || x.pitch.id === "changeup"));
+  assert(p.reduce((a, x) => a + x.aim.y, 0) / p.length < 0.75, "kept low");
+  // A big bat, slow: breaking balls on the corners.
+  Object.assign(hitter, { speed: 20, contact: 99, power: 99 });
+  p = plans(200);
+  assert(mode(p, "break").filter((x) => x.pitch.id !== "fastball").length > 110, "big bat: breaking balls");
+  // Both: a mix of the two.
+  Object.assign(hitter, { speed: 99, contact: 99, power: 99 });
+  p = plans(200);
+  assert(mode(p, "ground").length && mode(p, "break").length, "both: mixed");
+  // Three balls: a strike in the zone.
+  s.balls = 3;
+  assert(plans(50).every((x) => x.mode === "zone"));
+  s.balls = 0;
+  Object.assign(hitter, keep);
+  // Pickoffs: a runner on first draws throws over, never past the limit per batter.
+  let thrown = 0;
+  for (let i = 0; i < 300; i++) {
+    s.phase = "ready";
+    s.live = null;
+    s.bases = [true, false, false];
+    s.pickoffs = i % 2 ? RULES.autoPickoffMax : 0;
+    s.timer = 0;
+    g.tick(1 / 60);
+    if (s.live?.kind === "pickoff") {
+      assert(i % 2 === 0, "no throw over past the limit");
+      thrown++;
+    }
+  }
+  assert(thrown > 10, `throws over (${thrown})`);
+});
 check("Roles: the AI plays the half the player does not; limit break needs only the role's stats", () => {
   for (const role of ["pitcher", "batter"]) {
     const c = newCareer();

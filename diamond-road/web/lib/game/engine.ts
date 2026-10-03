@@ -419,6 +419,17 @@ export const weatherOf = (c: Pick<Career, "day" | "name" | "team">): Weather =>
     : "clear";
 /** Decisive pitch: any pitch whose description says "결정구" (data decides, no code list). */
 export const isDecisive = (p: Pick<PitchData, "desc">) => p.desc.includes("결정구");
+/** Our own pitcher's pitches (bat-only player): the first n, n as many as the rival ace's. */
+const AUTO_ARSENAL: PitchId[] = [
+  "fastball",
+  "slider",
+  "sinker",
+  "changeup",
+  "curve",
+  "splitter",
+  "twoseam",
+  "cutter",
+];
 export const pitchData = (id: PitchId) => ALL_PITCHES.find((p) => p.id === id) ?? PITCHES[0];
 // AI pitchers only use the four original pitch types.
 const AI_PITCHES = 4;
@@ -478,6 +489,12 @@ export const RULES = {
   autoPitchMovement: 72,
   autoBatBoost: 0,
   autoPitchAim: 0.17,
+  /** Bat-only player, our pitcher's pickoffs: chance before a pitch with a base stealer on
+   * (scaled by how fast he is against the rival lineup), at most autoPickoffMax per batter. */
+  autoPickoff: 0.3,
+  autoPickoffMax: 2,
+  /** Each pickoff this plate appearance keeps the runner closer: steal chance × this. */
+  pickoffStealDrop: 0.7,
   /** Bat-only player: his team's batting is all he controls, so it carries a bit more. */
   batterRoleBoost: 0.05,
   aiHrSqueeze: 0.4,
@@ -739,7 +756,7 @@ export const difficultySetting = (): Difficulty => {
     return "normal";
   }
 };
-const byDifficulty = <T,>(d: Difficulty, v: Record<Difficulty, T>) => v[d] ?? v.normal;
+const byDifficulty = <T>(d: Difficulty, v: Record<Difficulty, T>) => v[d] ?? v.normal;
 /** Easiest first. */
 export const DIFFICULTY_ORDER: Difficulty[] = ["baby", "easy", "normal", "hard", "impossible"];
 export const easierDifficulty = (a: Difficulty, b: Difficulty) =>
@@ -1208,11 +1225,7 @@ export const SPEED_LOOK_REF = 135;
  * time, and the speed term widens the gap between slow and fast pitches beyond the physical
  * one, so 170 km/h looks clearly faster than 130 km/h. Swing timing uses shares of this time.
  */
-export const visualFlightTime = (
-  duration: number,
-  speed: number,
-  difficulty: Difficulty,
-) =>
+export const visualFlightTime = (duration: number, speed: number, difficulty: Difficulty) =>
   duration *
   byDifficulty(difficulty, { baby: 2.8, easy: 2.5, normal: 1.8, hard: 1.2, impossible: 1.05 }) *
   clamp((SPEED_LOOK_REF / speed) ** 0.9, 0.72, 1.4);
@@ -2682,7 +2695,8 @@ export class BaseballEngine {
     // Sounds on/off is remembered in this browser.
     if (key === "sound")
       try {
-        if (typeof localStorage !== "undefined") localStorage.setItem(SOUND_KEY, value ? "on" : "off");
+        if (typeof localStorage !== "undefined")
+          localStorage.setItem(SOUND_KEY, value ? "on" : "off");
       } catch {
         /* private mode */
       }
@@ -2774,14 +2788,17 @@ export class BaseballEngine {
       stats = this.playerStats,
       stage = this.stageRules,
       machine = ai || auto,
-      pitch = machine
-        ? PITCHES[
-            Math.floor(
-              this.rng() *
-                Math.min(PITCHES.length, stage.aiPitchKinds, this.awayRoster.ace.kinds + 2),
-            )
-          ]
-        : pitchData(s.selected);
+      plan = auto ? this.autoPitchPlan() : null,
+      pitch = plan
+        ? plan.pitch
+        : machine
+          ? PITCHES[
+              Math.floor(
+                this.rng() *
+                  Math.min(PITCHES.length, stage.aiPitchKinds, this.awayRoster.ace.kinds + 2),
+              )
+            ]
+          : pitchData(s.selected);
     const fatigue = ai
       ? Math.max(0, s.pitchCount[0] - 25) * 0.18
       : auto
@@ -2805,8 +2822,8 @@ export class BaseballEngine {
       pitch.maxSpeed ?? 190,
     );
     // Our own AI pitcher works the zone more (the rival's spread made walks and hit batters).
-    const aim = auto
-      ? V(gaussian(this.rng) * RULES.autoPitchAim, 0.92 + gaussian(this.rng) * 0.22, 0)
+    const aim = plan
+      ? plan.aim
       : machine
         ? V(gaussian(this.rng) * 0.29, 0.95 + gaussian(this.rng) * 0.34, 0)
         : { ...s.aim };
@@ -2902,10 +2919,12 @@ export class BaseballEngine {
     s.lastPitch = pitch.name;
     s.ball = { ...start };
     s.live = null;
-    s.message = ai ? "타이밍을 기다리세요" : "목표 지점 고정";
+    s.message = ai ? "타이밍을 기다리세요" : plan ? "우리 투수 투구" : "목표 지점 고정";
     s.detail = ai
       ? "흐린 원 = 공이 올 범위 · 조준 후 클릭 / Space"
-      : `${pitch.name} · ${Math.round(speed)} km/h`;
+      : plan
+        ? `포수 사인 · ${plan.note} · ${pitch.name} ${Math.round(speed)} km/h`
+        : `${pitch.name} · ${Math.round(speed)} km/h`;
     s.resultTone = "neutral";
     // The rival's runner breaks: the pitcher sees him go.
     if (s.stealTrack && !this.batting) {
@@ -2937,9 +2956,10 @@ export class BaseballEngine {
       s.timer -= dt;
       if (s.timer <= 0) this.launch(true);
     } else if (s.phase === "ready" && this.autoHalf) {
-      // Bat-only player: our own pitcher (a teammate) pitches on his own.
+      // Bat-only player: our own pitcher (a teammate) pitches on his own, and throws over
+      // to keep a fast runner close.
       s.timer -= dt;
-      if (s.timer <= 0) this.launch(false, true);
+      if (s.timer <= 0 && !this.autoPickoff()) this.launch(false, true);
     } else if (s.phase === "windup") {
       s.timer -= dt;
       this.runSteal(dt);
@@ -3046,7 +3066,9 @@ export class BaseballEngine {
       RULES.aiSteal *
       clamp((speed - 50) / 40, 0.2, 1.4) *
       (target === 3 ? RULES.aiStealThird : 1) *
-      (s.strikes === 2 && s.balls === 3 ? 1.5 : 1);
+      (s.strikes === 2 && s.balls === 3 ? 1.5 : 1) *
+      // Thrown over to already: he keeps a shorter lead.
+      RULES.pickoffStealDrop ** s.pickoffs;
     return this.rng() < chance;
   }
   /** Moves the E-steal runner during the delivery (dt in real game seconds). */
@@ -3084,7 +3106,8 @@ export class BaseballEngine {
     if (message === "HOME RUN") this.sound(good ? "homer" : "groan");
     else if (/SINGLE|DOUBLE|TRIPLE|BASE ON BALLS|HIT BY PITCH|ERROR|STOLEN/.test(message))
       this.sound(good ? "cheer" : "groan");
-    else if (/OUT|DOUBLE PLAY|STRIKEOUT|FIELDER/.test(message)) this.sound(good ? "cheer" : "groan");
+    else if (/OUT|DOUBLE PLAY|STRIKEOUT|FIELDER/.test(message))
+      this.sound(good ? "cheer" : "groan");
     else if (message !== "BALL" && message !== "STRIKE" && message !== "FOUL")
       this.sound(good ? "cheer" : "call");
     this.emit();
@@ -3217,7 +3240,8 @@ export class BaseballEngine {
             // The very top of the rivals' contact is squeezed: about a third of their hits
             // were home runs (a real season: about one in eight). Those balls now die at the
             // track or off the wall instead.
-            q1 = q0 > RULES.aiHrKnee ? RULES.aiHrKnee + (q0 - RULES.aiHrKnee) * RULES.aiHrSqueeze : q0,
+            q1 =
+              q0 > RULES.aiHrKnee ? RULES.aiHrKnee + (q0 - RULES.aiHrKnee) * RULES.aiHrSqueeze : q0,
             // Our own batters batting on their own (pitch-only player).
             q = this.batting ? clamp(q1 + RULES.autoBatBoost, 0.05, 1) : q1;
           if (this.rng() < 0.19 || q < 0.25) this.foul();
@@ -4141,7 +4165,8 @@ export class BaseballEngine {
         });
     }
     const best = options.sort((a, b) => b.priority - a.priority)[0]?.base;
-    if (this.throwObserver && l.kind === "batted" && !sureOnly) this.observeThrow(l, forceOnly, best);
+    if (this.throwObserver && l.kind === "batted" && !sureOnly)
+      this.observeThrow(l, forceOnly, best);
     if (best || forceOnly || sureOnly) return best ?? 0;
     // No sure out: still throw ahead of the lead runner who is still running.
     const running = l.runners
@@ -4165,7 +4190,10 @@ export class BaseballEngine {
         .filter((r) => !r.out && r.progress < r.target - 1e-6)
         .sort((a, b) => b.progress - a.progress)[0];
       const ahead = running ? Math.min(4, Math.floor(running.progress + 1e-9) + 1) : 0;
-      pick = Math.max(0, opts.findIndex((o) => o.base === ahead));
+      pick = Math.max(
+        0,
+        opts.findIndex((o) => o.base === ahead),
+      );
     }
     this.throwObserver!(
       this.playContext(l),
@@ -4389,8 +4417,7 @@ export class BaseballEngine {
         limit = r.target === 4 ? limit : Math.min(limit, r.target);
         continue;
       }
-      r.thinkAt =
-        now + (this.runnerAI && l.kind === "batted" ? RULES.brainThink : RULES.runThink);
+      r.thinkAt = now + (this.runnerAI && l.kind === "batted" ? RULES.brainThink : RULES.runThink);
       // He misjudges a loose ball more than one already in a fielder's hands.
       r.read ??= (this.rng() + this.rng() + this.rng() - 1.5) * 2 * RULES.runRead;
       const misread = r.read * (l.fieldedAt === null || l.state === "포구" ? 1 : 0.3);
@@ -4457,7 +4484,13 @@ export class BaseballEngine {
         ) {
           r.brainKey = key;
           r.brainAt = now + RULES.brainEvery;
-          pick = allowed[brain(this.playContext(l), allowed.map((o) => o.f!))] ?? allowed[0];
+          pick =
+            allowed[
+              brain(
+                this.playContext(l),
+                allowed.map((o) => o.f!),
+              )
+            ] ?? allowed[0];
         } else if (brain) pick = cur ?? allowed[0] ?? options[0];
         else {
           pick = [...options].sort((a, b) => b.base - a.base).find((o) => o.p < go);
@@ -5410,7 +5443,8 @@ export class BaseballEngine {
       s.lastDistance = Math.round(Math.hypot(at.x, at.z));
       detail += ` · 비거리 ${s.lastDistance} m`;
       // A home run gets its distance up big.
-      if (l.resultBases === 4) this.callout(`비거리 ${s.lastDistance}m`, this.batting ? "gold" : "red");
+      if (l.resultBases === 4)
+        this.callout(`비거리 ${s.lastDistance}m`, this.batting ? "gold" : "red");
     } else s.lastDistance = null;
     this.result(
       message,
@@ -5622,6 +5656,106 @@ export class BaseballEngine {
     s.resultTone = "neutral";
     this.emit();
   }
+  /** The rival lineup's average (what counts as a fast runner or a big bat this game). */
+  private rivalAverage() {
+    const l = this.awayRoster.lineup.map(formOf),
+      avg = (k: "contact" | "power" | "speed") => l.reduce((a, p) => a + p[k], 0) / l.length;
+    return { contact: avg("contact"), power: avg("power"), speed: avg("speed") };
+  }
+  /**
+   * Bat-only player: our own pitcher (and catcher) call the next pitch from the batter and
+   * the count. A runner faster than his lineup (speed 5+ over the average) gets sinkers and
+   * changeups down (grounders: their soft contact and the low spot); a big bat (contact and
+   * power together 5+ over) gets breaking balls on the corners (whiffs and chases); both
+   * get a mix. 3 balls: a strike; 2 strikes: a chase pitch just off the plate.
+   */
+  autoPitchPlan(): { pitch: PitchData; aim: Vec; note: string; mode: string } {
+    const s = this.state,
+      stage = this.stageRules,
+      g = () => gaussian(this.rng),
+      n = Math.min(AUTO_ARSENAL.length, stage.aiPitchKinds, this.awayRoster.ace.kinds + 2),
+      arsenal = AUTO_ARSENAL.slice(0, Math.max(1, n)).map(pitchData),
+      has = (...ids: PitchId[]) => arsenal.find((p) => ids.includes(p.id)),
+      fastball = arsenal[0],
+      sinkers = arsenal.filter((p) => p.soft > 0 || p.id === "changeup"),
+      breaking = arsenal
+        .filter((p) => p.id !== "fastball" && !sinkers.includes(p))
+        .sort((a, b) => b.whiff + b.chase - (a.whiff + a.chase)),
+      b = formOf(this.batter),
+      avg = this.rivalAverage(),
+      fast = b.speed >= avg.speed + 5,
+      big = (b.contact + b.power) / 2 >= (avg.contact + avg.power) / 2 + 5,
+      side = this.rng() < 0.5 ? -1 : 1,
+      low = (p: PitchData | undefined, note: string) => ({
+        pitch: p ?? fastball,
+        aim: V(g() * 0.14, 0.64 + g() * 0.1, 0),
+        note,
+        mode: "ground",
+      }),
+      corner = (p: PitchData | undefined, note: string) => ({
+        pitch: p ?? fastball,
+        aim: V(side * 0.19 + g() * 0.06, 0.74 + g() * 0.14, 0),
+        note,
+        mode: "break",
+      }),
+      pickBreak = () => breaking[this.rng() < 0.65 || breaking.length < 2 ? 0 : 1];
+    // Behind 3-0 / 3-1 / 3-2: get it over (the sinker still down, a fastball otherwise).
+    if (s.balls === 3)
+      return {
+        pitch: fast ? (has("sinker", "twoseam") ?? fastball) : fastball,
+        aim: V(g() * 0.09, 0.9 + g() * 0.12, 0),
+        note: "볼카운트 불리 · 스트라이크 넣기",
+        mode: "zone",
+      };
+    // Two strikes: the best chase pitch just off the plate.
+    if (s.strikes === 2 && breaking.length && this.rng() < 0.75)
+      return {
+        pitch: breaking[0],
+        aim: V(side * 0.27 + g() * 0.05, 0.5 + g() * 0.08, 0),
+        note: "2스트라이크 · 유인구",
+        mode: "chase",
+      };
+    const mode =
+      fast && big ? (this.rng() < 0.5 ? "ground" : "break") : fast ? "ground" : big ? "break" : "";
+    if (mode === "ground" && sinkers.length)
+      return low(
+        sinkers[Math.floor(this.rng() * sinkers.length)],
+        fast && big ? "발 빠른 강타자 · 땅볼 유도" : "발 빠른 타자 · 땅볼 유도",
+      );
+    if (mode === "break" && breaking.length && this.rng() < 0.8)
+      return corner(
+        pickBreak(),
+        fast && big ? "발 빠른 강타자 · 변화구 승부" : "강타자 · 변화구 승부",
+      );
+    // Otherwise mostly fastballs, mixed with the rest.
+    if (this.rng() < 0.5 || arsenal.length < 2)
+      return {
+        pitch: fastball,
+        aim: V(g() * RULES.autoPitchAim, 0.92 + g() * 0.22, 0),
+        note: big ? "강타자 · 직구로 카운트 잡기" : "직구 승부",
+        mode: "normal",
+      };
+    const other = arsenal[1 + Math.floor(this.rng() * (arsenal.length - 1))];
+    return {
+      pitch: other,
+      aim: V(g() * RULES.autoPitchAim, 0.85 + g() * 0.2, 0),
+      note: "구종 섞기",
+      mode: "normal",
+    };
+  }
+  /**
+   * Bat-only player: before a pitch, our pitcher may throw over to a runner who could steal
+   * (more often the faster he is, less after each throw). True when he threw.
+   */
+  private autoPickoff() {
+    const s = this.state,
+      target = this.stealTarget;
+    if (s.mode !== "match" || !target || s.pickoffs >= RULES.autoPickoffMax) return false;
+    const speed = formOf(this.runnerOn(target - 1)).speed,
+      avg = this.rivalAverage().speed,
+      chance = RULES.autoPickoff * clamp(0.4 + (speed - avg) / 20, 0.15, 1.3) * 0.5 ** s.pickoffs;
+    return this.rng() < chance && this.pickoff(target - 1);
+  }
   /**
    * Pickoff: instead of pitching, the pitcher throws to a base. The runner dives back from his
    * lead; the fielder tags him if the ball wins the race to the bag.
@@ -5644,14 +5778,16 @@ export class BaseballEngine {
       gamble = RULES.runnerLeadGamble * this.stageRules.leadGamble * caution,
       runners = this.baseRunners(RULES.runnerLead, RULES.runnerReaction);
     s.pickoffs++;
-    s.energy = clamp(
-      s.energy -
-        pitchEnergyCost(s.effort, this.playerStats.stamina) *
-          RULES.pickoffEnergy *
-          (this.raining ? RULES.rainStamina : 1),
-      0,
-      100,
-    );
+    // (Our AI pitcher's throws over do not tire the bat-only player.)
+    if (!this.autoHalf)
+      s.energy = clamp(
+        s.energy -
+          pitchEnergyCost(s.effort, this.playerStats.stamina) *
+            RULES.pickoffEnergy *
+            (this.raining ? RULES.rainStamina : 1),
+        0,
+        100,
+      );
     for (const r of runners) {
       r.progress = r.from + (RULES.runnerLead + this.rng() * gamble) / BASE_PATH_LENGTH;
       // Only the runner being thrown at dives back; the others just step back to the bag.
