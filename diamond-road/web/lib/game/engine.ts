@@ -2038,8 +2038,10 @@ export class BaseballEngine {
   private recorded = false;
   private soundCallback: (kind: string) => void = () => {};
   keys = new Set<string>();
-  constructor(career = newCareer(), rng = Math.random) {
-    this.state = initial(career);
+  constructor(career?: Career, rng = Math.random) {
+    // A career handed in is this engine's own; the empty default waits for load().
+    this.loaded = career !== undefined;
+    this.state = initial(career ?? newCareer());
     this.snapshot = { ...this.state };
     this.rng = rng;
   }
@@ -2231,10 +2233,27 @@ export class BaseballEngine {
   log(text: string) {
     this.state.log = [text, ...this.state.log].slice(0, 16);
   }
+  /**
+   * A save that has not been read yet (`load`) is never written over: the empty starting
+   * career once replaced real saves when the hall of fame saved before the game loaded.
+   */
+  private loaded = false;
   persist() {
+    try {
+      if (
+        !this.loaded &&
+        typeof localStorage !== "undefined" &&
+        localStorage.getItem("diamond-road-career-v1")
+      )
+        return;
+    } catch {
+      return;
+    }
     try {
       if (typeof localStorage !== "undefined") {
         localStorage.setItem("diamond-road-career-v1", JSON.stringify(this.state.career));
+        // The save is this engine's own from now on.
+        this.loaded = true;
         this.state.saveStatus = "이 브라우저에 자동 저장됨";
       }
     } catch {
@@ -2246,6 +2265,7 @@ export class BaseballEngine {
    * Returns false when there was nothing valid to load.
    */
   load(raw: string | null = null): boolean {
+    this.loaded = true;
     let ok = false;
     try {
       raw ??= localStorage.getItem("diamond-road-career-v1");

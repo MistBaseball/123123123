@@ -3047,8 +3047,19 @@ check("A refresh picks the match up again (a pitch under way counts against you)
     removeItem: (k) => store.delete(k),
   };
   try {
+    // The empty starting career is never saved over a real one before the save is read.
+    const real = newCareer();
+    real.created = true;
+    real.name = "진짜선수";
+    store.set("diamond-road-career-v1", JSON.stringify(real));
+    const early = new BaseballEngine();
+    early.persist();
+    assert.equal(JSON.parse(store.get("diamond-road-career-v1")).name, "진짜선수");
+    assert(early.load() && early.state.career.name === "진짜선수");
+    store.clear();
     const g = new BaseballEngine(),
       c = newCareer();
+    g.load();
     c.created = true;
     c.team = "triples";
     g.state.career = c;

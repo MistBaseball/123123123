@@ -17,6 +17,15 @@ type Patch = { version: string; date: string; title: string; items: string[] };
 
 export const PATCHES: Patch[] = [
   {
+    version: "v11.13",
+    date: "10/03",
+    title: "새로고침하면 처음부터 시작되던 버그 수정",
+    items: [
+      "명예의 전당 닉네임을 등록한 브라우저에서 새로고침하면 선수 기록이 지워지고 구단 고르기부터 다시 시작되던 버그를 고쳤습니다.",
+      "명예의 전당 서버가 4일마다 자동으로 깨워져, 오래 아무도 안 들어와도 잠들지 않습니다.",
+    ],
+  },
+  {
     version: "v11.12",
     date: "10/03",
     title: "명예의 전당 실시간 · 저장 충돌 막기",

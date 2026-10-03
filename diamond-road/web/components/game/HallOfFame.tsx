@@ -57,7 +57,8 @@ export function HallOfFameButton({ engine, career }: { engine: BaseballEngine; c
 
   // Auto update: after every match (and when the career moves up a stage).
   useEffect(() => {
-    if (!profile || !hofConfigured()) return;
+    // Only a real player (after the save is read and the player is made) has a record.
+    if (!profile || !hofConfigured() || !career.created) return;
     const named = attachProfile(career, profile),
       id = ensureIdentity(career);
     if (named || id) engine.persist();
@@ -68,7 +69,17 @@ export function HallOfFameButton({ engine, career }: { engine: BaseballEngine; c
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile, career.games, career.day, career.stage, career.proGoal, career.league, career.name]);
+  }, [
+    profile,
+    career.created,
+    career.hofId,
+    career.games,
+    career.day,
+    career.stage,
+    career.proGoal,
+    career.league,
+    career.name,
+  ]);
 
   // Boards load when the window opens or the board changes (after our own row is sent), then
   // again every 10 s while the window is open and the tab is on screen: friends' records live.
