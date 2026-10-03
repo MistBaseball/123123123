@@ -1720,7 +1720,7 @@ check(
     );
     const by = (n) => named.find((p) => p.name === n);
     assert(["contact", "power", "eye", "speed"].every((k) => by("김영호")[k] === 99));
-    assert(by("송대현").contact >= 90 && by("송대현").power >= 90);
+    assert(by("박시우").contact >= 90 && by("박시우").power >= 90);
     assert(by("양서준").contact >= 90 && by("양서준").power >= 90);
     assert(
       by("옥동규").speed === Math.max(...named.map((p) => (p.name === "김영호" ? 0 : p.speed))),
