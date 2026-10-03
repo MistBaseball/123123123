@@ -1360,7 +1360,9 @@ export class BaseballField {
   private recordReplay() {
     const s = this.engine.state,
       l = s.live;
-    if (l && s.phase === "inplay" && l.kind === "batted") {
+    // Every live play (a steal or pickoff can make a close call too; recording only batted
+    // balls replayed the previous play's tape: the fielder on the bag and no runner).
+    if (l && s.phase === "inplay") {
       if (this.tapeLive !== l) {
         this.tape = [];
         this.tapeLive = l;
