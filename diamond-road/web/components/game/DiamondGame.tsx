@@ -1584,6 +1584,25 @@ function CreationDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
                 </button>
               ))}
             </div>
+            <div className="creation-difficulty" role="radiogroup" aria-label="난이도">
+              <span>
+                난이도 <small>명예의 전당은 이 선수가 경기한 가장 쉬운 난이도에 올라가요</small>
+              </span>
+              <div>
+                {DIFFICULTIES.map((d) => (
+                  <button
+                    key={d.id}
+                    role="radio"
+                    aria-checked={s.difficulty === d.id}
+                    className={`subtle-button ${s.difficulty === d.id ? "on" : ""}`}
+                    onClick={() => engine.setDifficulty(d.id)}
+                    title={d.note || undefined}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="creation-presets">
               {PRESETS.map((p) => (
                 <button

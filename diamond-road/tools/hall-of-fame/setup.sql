@@ -111,11 +111,10 @@ begin
     dev = cur.dev or excluded.dev,
     -- 불명예도 한 번 붙으면 지워지지 않는다.
     dishonor = cur.dishonor or excluded.dishonor,
-    -- 난이도는 더 쉬운 쪽으로만 바뀐다(쉬운 난이도로 한 번이라도 했으면 그 랭킹).
-    difficulty = case
-      when array_position(array['baby', 'easy', 'normal', 'hard', 'impossible'], excluded.difficulty)
-         < array_position(array['baby', 'easy', 'normal', 'hard', 'impossible'], cur.difficulty)
-      then excluded.difficulty else cur.difficulty end,
+    -- 난이도: 게임이 선수마다 "경기한 가장 쉬운 난이도"를 기록해서 보낸다(v12.1).
+    -- (예전에는 서버가 더 쉬운 쪽으로만 바꿨는데, 선수를 만들자마자 '보통'으로 먼저 올라가
+    --  그 뒤 어려움·불가능으로 한 기록도 계속 '보통'에 묶였다.)
+    difficulty = excluded.difficulty,
     role = excluded.role,
     stat_total = excluded.stat_total,
     updated_at = now()

@@ -6,6 +6,7 @@
 import { HOF_KEY, HOF_URL } from "./hof-config";
 import {
   DIFFICULTIES,
+  difficultySetting,
   matchTeams,
   tierOf,
   type Career,
@@ -130,7 +131,8 @@ export function recordOf(c: Career, p: HofProfile) {
     dev: !!(c.devUsed || c.devCap),
     dishonor: !!c.dishonor,
     // The board: the easiest difficulty this career has played a match on.
-    difficulty: c.minDifficulty ?? "normal",
+    // (No match yet and none recorded: the difficulty set now.)
+    difficulty: c.minDifficulty ?? (c.games ? "normal" : difficultySetting()),
     role: c.role ?? "two-way",
     stat_total: statTotal(c),
   };

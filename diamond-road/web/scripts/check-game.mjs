@@ -3244,6 +3244,20 @@ check("Close pitches: the call says by how much it missed or clipped the zone", 
     for (let y = 0.3; y <= 1.6; y += 0.017)
       assert.equal(zoneMiss(V(x, y, 0)) <= 0, insideZone(V(x, y, 0)));
 });
+check("Difficulty chosen at creation is the career's hall-of-fame board from the start", () => {
+  const g = new BaseballEngine(newCareer(), seed(6));
+  g.setDifficulty("impossible");
+  const base = Object.fromEntries(Object.keys(newCareer().stats).map((k) => [k, 45]));
+  assert(g.createPlayer("불가능맨", base).ok);
+  assert.equal(g.state.career.minDifficulty, "impossible");
+  // Playing an easier match later moves it down (never up).
+  g.setDifficulty("hard");
+  g.start("match");
+  g.state.pitchCount[1] = 1;
+  g.setDifficulty("easy");
+  assert.equal(g.state.career.minDifficulty, "easy");
+  g.setDifficulty("normal");
+});
 check("Batting order: the player sets who bats where between matches; positions stay", () => {
   const c = newCareer();
   c.created = true;

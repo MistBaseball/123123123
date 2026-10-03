@@ -6231,6 +6231,8 @@ export class BaseballEngine {
     c.stats = { ...stats };
     c.created = true;
     c.role = role === "pitcher" || role === "batter" ? role : "two-way";
+    // The hall-of-fame board starts at the difficulty chosen here (it can only get easier).
+    c.minDifficulty = this.state.difficulty;
     c.history = [`${c.name}, 고교 3학년 마지막 시즌을 시작하다.`];
     if (isLegendName(c.name)) {
       // Hidden start: every stat at 200, seven pitches, and no roulette.
