@@ -19,23 +19,23 @@ export const TRAINING_GAMES: Record<
     how: "포수 미트가 가리키는 곳을 정확히 찌르는 제구 훈련입니다.",
     steps: [
       "스트라이크 존(3×3 칸) 안에 금색 과녁이 하나씩 나타납니다.",
-      "과녁은 약 1초 뒤 작아지며 사라집니다. 사라지기 전에 클릭하세요.",
+      "과녁은 약 1.4초 뒤 작아지며 사라집니다. 사라지기 전에 클릭하세요.",
       "모두 8개가 나옵니다.",
     ],
     controls: "마우스 클릭 · 휴대폰은 터치",
     score: "7개 이상 완벽(+2) · 4개 이상 좋음(+1) · 3개 이하 아쉬움(+0)",
   },
   weights: {
-    game: "power",
-    title: "하체 폭발력",
-    how: "하체의 힘을 한 번에 폭발시키는 타이밍 훈련입니다.",
+    game: "charge",
+    title: "스쿼트 힘 모으기",
+    how: "하체에 힘을 끝까지 모았다가 한 번에 밀어 올리는 훈련입니다.",
     steps: [
-      "흰 막대가 게이지 위를 왼쪽↔오른쪽으로 오갑니다.",
-      "오른쪽 끝 빨간 구간(최대 출력)에 들어왔을 때 멈추세요. 금색 구간도 점수가 있습니다.",
-      "3번 시도하며, 시도할수록 막대가 빨라집니다.",
+      "Space(또는 버튼)를 누르고 있으면 힘 게이지가 점점 빠르게 찹니다.",
+      "초록 구간에서 손을 떼면 성공, 끝까지 차면 과부하로 실패합니다.",
+      "3세트이며, 세트마다 초록 구간이 조금씩 좁아집니다.",
     ],
-    controls: "Space · Enter · 게이지 클릭",
-    score: "빨강 100점 · 금색 70점 · 가운데 40점 — 평균 85 이상 완벽, 40 이상 좋음",
+    controls: "Space 누르고 있다가 떼기 · 버튼 누르고 있다가 떼기",
+    score: "초록 한가운데 100점 · 초록 70점 · 조금 모자람 40점 — 평균 85 이상 완벽, 40 이상 좋음",
   },
   breaking: {
     game: "memory",
@@ -50,16 +50,16 @@ export const TRAINING_GAMES: Record<
     score: "3단계 모두 성공 완벽 · 2단계 이상 좋음 · 1단계 이하 아쉬움",
   },
   running: {
-    game: "mash",
-    title: "왕복 달리기",
-    how: "마지막 이닝까지 버티는 지구력을 만드는 달리기입니다.",
+    game: "pace",
+    title: "페이스 유지",
+    how: "마지막 이닝까지 버티는 지구력은 일정한 페이스에서 나옵니다.",
     steps: [
-      "시작하면 6초 타이머가 돌아갑니다.",
-      "Space를 누를 때마다 선수가 앞으로 달립니다. 최대한 빠르게 연타하세요.",
-      "42번을 누르면 결승선 통과로 바로 끝납니다.",
+      "Space(또는 버튼)를 누르고 있으면 속도가 오르고, 떼면 내려갑니다.",
+      "흰 바늘을 초록 페이스 구간 안에 두세요. 구간은 천천히 움직입니다.",
+      "10초 동안 구간 안에 있던 시간이 점수입니다.",
     ],
-    controls: 'Space 연타 · "달려!" 버튼 연타',
-    score: "결승선 도착 완벽 · 절반 이상 좋음 · 그 미만 아쉬움",
+    controls: "Space 누르기/떼기 · 버튼 누르기/떼기",
+    score: "구간 안 70% 이상 완벽 · 35% 이상 좋음 · 그 미만 아쉬움",
   },
   sprint: {
     game: "mash",
@@ -106,7 +106,7 @@ export const TRAINING_GAMES: Record<
     score: "3문제 정답 완벽 · 2문제 좋음 — 맞힐수록 컨디션 +2~+6",
   },
 };
-type GameKind = "aim" | "power" | "memory" | "mash" | "timing" | "quiz";
+type GameKind = "aim" | "power" | "memory" | "mash" | "timing" | "quiz" | "charge" | "pace";
 
 export const gradeOf = (q: number) => (q >= 0.85 ? "완벽" : q >= 0.4 ? "좋음" : "아쉬움");
 
@@ -142,6 +142,7 @@ function useFrame(active: boolean, fn: (t: number) => void) {
   }, [active]);
 }
 
+const TARGET_LIFE = 1400;
 function AimGame({ onEnd }: { onEnd: (q: number) => void }) {
   const TOTAL = 8;
   const [target, setTarget] = useState<{ x: number; y: number; n: number } | null>(null);
@@ -159,8 +160,9 @@ function AimGame({ onEnd }: { onEnd: (q: number) => void }) {
       }
       n++;
       setShown(n);
-      setTarget({ x: 12 + Math.random() * 76, y: 12 + Math.random() * 76, n });
-      timer = window.setTimeout(next, 950);
+      setTarget({ x: 14 + Math.random() * 72, y: 14 + Math.random() * 72, n });
+      // 1.4 s per target (was 0.95 s: too hard).
+      timer = window.setTimeout(next, TARGET_LIFE);
     };
     timer = window.setTimeout(next, 500);
     return () => clearTimeout(timer);
@@ -303,7 +305,7 @@ function MemoryGame({ onEnd }: { onEnd: (q: number) => void }) {
       }
       setShowing(i % 2 === 0 ? s[i / 2] : -1);
       i++;
-    }, 420);
+    }, 520);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [round]);
@@ -408,6 +410,191 @@ function TimingGame({ onEnd }: { onEnd: (q: number) => void }) {
   );
 }
 
+/** Space/Enter held down (true) or released (false) while a minigame runs. */
+function useHoldKey(active: boolean, fn: (down: boolean) => void) {
+  const ref = useRef(fn);
+  ref.current = fn;
+  useEffect(() => {
+    if (!active) return;
+    const h = (down: boolean) => (e: KeyboardEvent) => {
+      if (e.key === " " || e.key === "Enter") {
+        e.preventDefault();
+        if (!e.repeat) ref.current(down);
+      }
+    };
+    const d = h(true),
+      u = h(false);
+    window.addEventListener("keydown", d);
+    window.addEventListener("keyup", u);
+    return () => {
+      window.removeEventListener("keydown", d);
+      window.removeEventListener("keyup", u);
+    };
+  }, [active]);
+}
+
+/** Squat: hold to build power (faster and faster), let go inside the green zone. */
+function ChargeGame({ onEnd }: { onEnd: (q: number) => void }) {
+  const SETS = 3,
+    FULL = 1.8; // seconds to fill the gauge from empty
+  const zones = [
+    [0.72, 0.92],
+    [0.75, 0.91],
+    [0.78, 0.9],
+  ];
+  const [level, setLevel] = useState(0);
+  const [scores, setScores] = useState<number[]>([]);
+  const [holding, setHolding] = useState(false);
+  const [pause, setPause] = useState(false);
+  const since = useRef(0);
+  const levelRef = useRef(0);
+  const set = scores.length,
+    [lo, hi] = zones[Math.min(set, SETS - 1)];
+  const finish = (score: number) => {
+    setHolding(false);
+    const next = [...scores, score];
+    setScores(next);
+    setPause(true);
+    window.setTimeout(() => {
+      if (next.length >= SETS) onEnd(next.reduce((a, b) => a + b, 0) / SETS);
+      else {
+        levelRef.current = 0;
+        setLevel(0);
+        setPause(false);
+      }
+    }, 750);
+  };
+  useFrame(holding, () => {
+    const t = (performance.now() - since.current) / 1000,
+      v = Math.min(1, (t / FULL) ** 1.7);
+    levelRef.current = v;
+    setLevel(v);
+    if (v >= 1) finish(0.05);
+  });
+  const press = (down: boolean) => {
+    if (pause || scores.length >= SETS) return;
+    if (down && !holding) {
+      since.current = performance.now();
+      setHolding(true);
+    } else if (!down && holding) {
+      const v = levelRef.current,
+        mid = (lo + hi) / 2;
+      finish(
+        v >= lo && v <= hi
+          ? Math.abs(v - mid) < (hi - lo) * 0.3
+            ? 1
+            : 0.7
+          : v >= lo - 0.12 && v < lo
+            ? 0.4
+            : 0.1,
+      );
+    }
+  };
+  useHoldKey(true, press);
+  const last = scores.at(-1);
+  return (
+    <div className="mg-stage">
+      <div className="mg-meter">
+        <i
+          className="mg-meter-zone"
+          style={{ left: `${lo * 100}%`, right: `${(1 - hi) * 100}%` }}
+        />
+        <i className="mg-meter-over" />
+        <b className="mg-meter-fill" style={{ width: `${level * 100}%` }} />
+      </div>
+      <p className="mg-score">
+        {pause && last !== undefined && (
+          <span className={last >= 1 ? "great" : last >= 0.7 ? "good" : ""}>
+            {last >= 1
+              ? "폭발!"
+              : last >= 0.7
+                ? "좋음"
+                : last >= 0.4
+                  ? "조금 모자람"
+                  : last > 0.06
+                    ? "힘이 빠짐"
+                    : "과부하!"}
+          </span>
+        )}
+        <span>
+          세트 {Math.min(set + 1, SETS)} / {SETS}
+        </span>
+      </p>
+      <button
+        className="primary-button mg-big"
+        onPointerDown={() => press(true)}
+        onPointerUp={() => press(false)}
+        onPointerLeave={() => press(false)}
+      >
+        {holding ? "버티는 중… 떼면 밀어 올리기" : "누르고 있기 (Space)"}
+      </button>
+    </div>
+  );
+}
+
+/** Distance run: hold to speed up, let go to ease off; stay inside the drifting pace band. */
+function PaceGame({ onEnd }: { onEnd: (q: number) => void }) {
+  const TIME = 10,
+    WIDTH = 0.2;
+  const [speed, setSpeed] = useState(0.3);
+  const [band, setBand] = useState(0.5);
+  const [left, setLeft] = useState(TIME);
+  const [inside, setInside] = useState(0);
+  const st = useRef({ speed: 0.3, holding: false, last: 0, inside: 0, done: false });
+  useFrame(!st.current.done, (t) => {
+    const r = st.current,
+      dt = r.last ? Math.min(0.05, t - r.last) : 0;
+    r.last = t;
+    r.speed = Math.min(1, Math.max(0, r.speed + (r.holding ? 0.55 : -0.42) * dt));
+    // The band drifts slowly between about 35% and 70%.
+    const b = 0.52 + Math.sin(t * 0.7) * 0.12 + Math.sin(t * 1.9 + 1) * 0.05;
+    if (Math.abs(r.speed - b) <= WIDTH / 2) r.inside += dt;
+    setSpeed(r.speed);
+    setBand(b);
+    setInside(r.inside);
+    setLeft(Math.max(0, TIME - t));
+    if (t >= TIME && !r.done) {
+      r.done = true;
+      onEnd(Math.min(1, r.inside / TIME / 0.8));
+    }
+  });
+  const hold = (down: boolean) => {
+    st.current.holding = down;
+  };
+  useHoldKey(true, hold);
+  const ok = Math.abs(speed - band) <= WIDTH / 2;
+  return (
+    <div className="mg-stage">
+      <div className="mg-meter">
+        <i
+          className="mg-meter-zone"
+          style={{
+            left: `${(band - WIDTH / 2) * 100}%`,
+            right: `${(1 - band - WIDTH / 2) * 100}%`,
+          }}
+        />
+        <b className={`mg-meter-needle ${ok ? "ok" : ""}`} style={{ left: `${speed * 100}%` }} />
+      </div>
+      <p className="mg-score">
+        <span className={ok ? "good" : ""}>
+          {ok ? "좋은 페이스" : speed > band ? "너무 빨라요" : "너무 느려요"}
+        </span>
+        <span>
+          남은 시간 <b>{left.toFixed(1)}</b>초 · 구간 안 {Math.round((inside / TIME) * 100)}%
+        </span>
+      </p>
+      <button
+        className="primary-button mg-big"
+        onPointerDown={() => hold(true)}
+        onPointerUp={() => hold(false)}
+        onPointerLeave={() => hold(false)}
+      >
+        누르면 빨라지고 떼면 느려져요 (Space)
+      </button>
+    </div>
+  );
+}
+
 const QUIZ = [
   { q: "스트라이크를 3개 받으면?", a: ["삼진 아웃", "볼넷", "파울"], ok: 0 },
   { q: "볼을 4개 고르면 타자는?", a: ["아웃", "1루로 진루", "타석 유지"], ok: 1 },
@@ -498,6 +685,8 @@ export function TrainingMinigame({
     mash: MashGame,
     timing: TimingGame,
     quiz: QuizGame,
+    charge: ChargeGame,
+    pace: PaceGame,
   }[info.game];
   return (
     <Dialog

@@ -3258,13 +3258,13 @@ kbd {
 }
 .mg-target {
   position: absolute;
-  width: 38px;
-  height: 38px;
-  margin: -19px 0 0 -19px;
+  width: 48px;
+  height: 48px;
+  margin: -24px 0 0 -24px;
   border-radius: 50%;
   border: 3px solid #f0be60;
   background: radial-gradient(#f0be60 0 22%, #f0be6033 23% 60%, transparent 61%);
-  animation: mg-pop 0.95s linear forwards;
+  animation: mg-pop 1.4s linear forwards;
   cursor: crosshair;
 }
 @keyframes mg-pop {
@@ -3272,8 +3272,8 @@ kbd {
     transform: scale(1.2);
   }
   to {
-    transform: scale(0.45);
-    opacity: 0.4;
+    transform: scale(0.6);
+    opacity: 0.5;
   }
 }
 .mg-power,
@@ -3343,6 +3343,50 @@ kbd {
   bottom: 0;
   width: 6px;
   background: repeating-linear-gradient(#fff 0 6px, #111 6px 12px);
+}
+/* Charge / pace meter (squat and distance-run minigames). */
+.mg-meter {
+  position: relative;
+  height: 34px;
+  border-radius: 6px;
+  background: #ffffff14;
+  overflow: hidden;
+}
+.mg-meter i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+.mg-meter-zone {
+  background: #5fd38a55;
+  border-left: 2px solid #5fd38a;
+  border-right: 2px solid #5fd38a;
+}
+.mg-meter-over {
+  left: 97%;
+  right: 0;
+  background: #e8795a;
+}
+.mg-meter-fill {
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  border-radius: 0 4px 4px 0;
+  background: linear-gradient(90deg, #e9bc6799, #f4d48c);
+}
+.mg-meter-needle {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  width: 6px;
+  margin-left: -3px;
+  border-radius: 3px;
+  background: #fff;
+  box-shadow: 0 0 6px #000;
+}
+.mg-meter-needle.ok {
+  background: #b8f5c9;
 }
 .mg-big {
   margin: 0;
@@ -4425,6 +4469,53 @@ kbd {
 .team-lineup small {
   color: #b0bec3;
   white-space: nowrap;
+}
+/* Batting order editor: ▲▼ on each row. */
+.team-lineup.editable li {
+  grid-template-columns: 18px 1fr auto auto;
+  align-items: center;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.team-lineup.editable li.me {
+  background: #e8b65a1a;
+}
+.team-lineup .me-tag {
+  font-style: normal;
+  font-size: 0.6875rem;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: #e8b65a;
+  color: #1a1408;
+}
+.lineup-move {
+  display: flex;
+  gap: 3px;
+}
+.lineup-move button {
+  width: 24px;
+  height: 22px;
+  border: 1px solid #ffffff26;
+  border-radius: 4px;
+  background: #ffffff0d;
+  color: #e0ba76;
+  font-size: 0.625rem;
+  cursor: pointer;
+}
+.lineup-move button:hover:not(:disabled) {
+  background: #e8b65a33;
+}
+.lineup-move button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.lineup-lock {
+  color: #f0a35e;
+  font-weight: 600;
+}
+.lineup-reset {
+  margin: -6px 0 14px;
 }
 @media (max-width: 680px) {
   .recap-breakdown {

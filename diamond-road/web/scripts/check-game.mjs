@@ -29,6 +29,7 @@ import {
   STAT_NAMES,
   XP,
   HOME_LINEUP,
+  validOrder,
   ALL_PITCHES,
   HIDDEN_PITCHES,
   LEGEND_PITCHES,
@@ -3242,6 +3243,43 @@ check("Close pitches: the call says by how much it missed or clipped the zone", 
   for (let x = -0.4; x <= 0.4; x += 0.013)
     for (let y = 0.3; y <= 1.6; y += 0.017)
       assert.equal(zoneMiss(V(x, y, 0)) <= 0, insideZone(V(x, y, 0)));
+});
+check("Batting order: the player sets who bats where between matches; positions stay", () => {
+  const c = newCareer();
+  c.created = true;
+  c.name = "나";
+  const g = new BaseballEngine(c, seed(5));
+  const defense = g.defenseOf(true).map((p) => p.name);
+  // 김영호 (member 3) leads off, the player bats second.
+  const order = [3, 0, 1, 2, 4, 5, 6, 7, 8];
+  assert(g.setBattingOrder(order));
+  assert.equal(g.ourRunner(0).name, HOME_LINEUP[3].name);
+  assert.equal(g.ourRunner(1).name, "나");
+  assert.deepEqual(g.defenseOf(true).map((p) => p.name), defense, "fielding positions unchanged");
+  g.start("match");
+  g.state.half = "bottom";
+  g.state.order[1] = 0;
+  assert(!g.playerUp, "slot 1 is 김영호");
+  g.state.order[1] = 10; // slot 2 the second time through
+  assert(g.playerUp, "the player bats second");
+  // Not during a match, and only real orders (each of the nine once).
+  g.state.pitchCount[1] = 3;
+  assert(g.matchActive && !g.setBattingOrder(order.slice().reverse()));
+  g.state.pitchCount[1] = 0;
+  g.state.order = [0, 0];
+  assert(!g.setBattingOrder([0, 0, 1, 2, 3, 4, 5, 6, 7]) && !g.setBattingOrder([0, 1, 2]));
+  assert(!validOrder([0, 1, 2, 3, 4, 5, 6, 7, 9]));
+  // Saved with the career; a broken saved order falls back to the default.
+  const again = new BaseballEngine();
+  assert(again.load(JSON.stringify(g.state.career)));
+  assert.deepEqual(again.battingOrder, order);
+  assert(again.load(JSON.stringify({ ...g.state.career, battingOrder: [1, 1, 1] })));
+  assert.equal(again.ourRunner(0).name, "나");
+  // Batting practice is always the player.
+  g.start("batting");
+  assert.equal(g.batter.name, "나");
+  // Back to the default.
+  assert(g.setBattingOrder(null) && g.state.career.battingOrder === undefined);
 });
 check("Bat-only: our AI pitcher calls pitches from the batter and the count, and throws over", () => {
   const c = newCareer();

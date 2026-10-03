@@ -781,6 +781,79 @@ function TeamStrength({ engine }: { engine: BaseballEngine }) {
     </div>
   );
 }
+/**
+ * Our batting order (v12): ▲▼ move a hitter up or down. Positions in the field stay with the
+ * player; only who bats where changes. Locked while a match is under way.
+ */
+function LineupEditor({ engine, s }: { engine: BaseballEngine; s: GameState }) {
+  const order = engine.battingOrder,
+    locked = engine.matchActive,
+    custom = order.some((k, i) => k !== i),
+    me = order.indexOf(0),
+    move = (i: number, d: number) => {
+      const j = i + d;
+      if (j < 0 || j > 8) return;
+      const next = [...order];
+      [next[i], next[j]] = [next[j], next[i]];
+      if (!engine.setBattingOrder(next)) toast.error("경기 중에는 타순을 바꿀 수 없어요");
+    };
+  return (
+    <>
+      <p className="muted small">
+        {engine.role === "pitcher"
+          ? `투수만 모드라 내 자리에는 지명타자가 ${me + 1}번으로 섭니다.`
+          : `나는 ${me + 1}번 타자.`}{" "}
+        ▲▼로 타순을 바꿀 수 있어요(수비 위치는 그대로). 스윙은 모두 내가 조작하고, 내 능력치
+        평균이 오르면 동료 능력치도 그 75%만큼 함께 오릅니다.
+        {locked && <b className="lineup-lock"> 경기 중에는 타순을 바꿀 수 없어요.</b>}
+      </p>
+      <ol className="team-lineup editable">
+        {order.map((k, i) => {
+          const p = engine.member(k);
+          return (
+            <li key={k} className={k === 0 ? "me" : ""}>
+              <span>{i + 1}</span>
+              <strong>
+                {p.nick ? (
+                  <>
+                    <em>[{p.nick}]</em> {p.name}
+                  </>
+                ) : (
+                  p.name
+                )}
+                {k === 0 && engine.role !== "pitcher" && <i className="me-tag">나</i>}
+              </strong>
+              <small>
+                컨 {p.contact} · 파 {p.power} · 주 {p.speed}
+              </small>
+              <span className="lineup-move">
+                <button
+                  disabled={locked || i === 0}
+                  onClick={() => move(i, -1)}
+                  aria-label={`${p.name} 타순 올리기`}
+                >
+                  ▲
+                </button>
+                <button
+                  disabled={locked || i === 8}
+                  onClick={() => move(i, 1)}
+                  aria-label={`${p.name} 타순 내리기`}
+                >
+                  ▼
+                </button>
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+      {custom && !locked && (
+        <button className="subtle-button lineup-reset" onClick={() => engine.setBattingOrder(null)}>
+          기본 타순으로 되돌리기
+        </button>
+      )}
+    </>
+  );
+}
 function CareerView({ engine, s }: { engine: BaseballEngine; s: GameState }) {
   const c = s.career;
   const [name, setName] = useState(c.name);
@@ -903,34 +976,12 @@ function CareerView({ engine, s }: { engine: BaseballEngine; s: GameState }) {
             ))}
           </div>
           <h3>
-            {engine.homeRoster.name} 라인업
+            {engine.homeRoster.name} 라인업 · 타순
             {Math.floor(c.teamBoost ?? 0) > 0 && (
               <small className="team-boost"> 팀 성장 +{Math.floor(c.teamBoost ?? 0)}</small>
             )}
           </h3>
-          <p className="muted small">
-            나는 1번 타자. 2~9번은 동료가 자기 능력치로 타석에 서고, 스윙은 모두 내가 조작한다. 내
-            능력치 평균이 오르면 동료 능력치도 그 75%만큼 함께 오른다.
-          </p>
-          <ol className="team-lineup">
-            {Array.from({ length: 9 }, (_, i) => engine.ourRunner(i)).map((p, i) => (
-              <li key={i}>
-                <span>{i + 1}</span>
-                <strong>
-                  {p.nick ? (
-                    <>
-                      <em>[{p.nick}]</em> {p.name}
-                    </>
-                  ) : (
-                    p.name
-                  )}
-                </strong>
-                <small>
-                  컨 {p.contact} · 파 {p.power} · 주 {p.speed}
-                </small>
-              </li>
-            ))}
-          </ol>
+          <LineupEditor engine={engine} s={s} />
           <h3>나의 야구 일지</h3>
           <ol>
             {c.history.map((item, i) => (

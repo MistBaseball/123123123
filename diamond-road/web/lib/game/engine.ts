@@ -1434,8 +1434,15 @@ export const HOME_LINEUP: Player[] = [
   { name: "양서준", nick: "야구괴인", hand: "L", contact: 95, power: 95, eye: 75, speed: 62 },
   { name: "송대현", nick: "면접관", hand: "R", contact: 92, power: 90, eye: 90, speed: 88 },
   { name: "이지섭", nick: "F=ma", hand: "R", contact: 55, power: 98, eye: 50, speed: 30 },
-  { name: "아모스", nick: "몽골의", hand: "L", contact: 99, power: 84, eye: 99, speed: 74 },
+  { name: "아모스", nick: "몽골리안", hand: "L", contact: 99, power: 84, eye: 99, speed: 74 },
 ];
+/** The default batting order: roster members in order, the player (member 0) leading off. */
+export const DEFAULT_ORDER = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+/** A batting order is valid when it holds each of the nine members exactly once. */
+export const validOrder = (o: unknown): o is number[] =>
+  Array.isArray(o) &&
+  o.length === 9 &&
+  DEFAULT_ORDER.every((k) => o.filter((v) => v === k).length === 1);
 /** "[별호] 이름", or just the name. */
 export const playerLabel = (p: Pick<Player, "name" | "nick">) =>
   p.nick ? `[${p.nick}] ${p.name}` : p.name;
@@ -1720,6 +1727,9 @@ export type Career = {
   legend?: boolean;
   /** Rating points every teammate has gained with the player (optional, older saves: 0). */
   teamBoost?: number;
+  /** Batting order chosen by the player: slot (0–8) → roster member (0 = the player).
+   * Missing = the default order (the player leads off). */
+  battingOrder?: number[];
   /** "mlb" after signing with a major-league club (absent = Korean pro league). */
   league?: "mlb";
   /** Major-league club signed with (MLB_TEAMS id). */
@@ -2250,12 +2260,35 @@ export class BaseballEngine {
       makeRoster(school.name, school.strength, school.style),
     );
   }
+  /** The batting order in use: lineup slot → roster member (0 = the player). */
+  get battingOrder(): number[] {
+    const o = this.state.career.battingOrder;
+    return validOrder(o) ? o : DEFAULT_ORDER;
+  }
   /**
-   * Our hitter in lineup slot i: the player leads off (slot 0, career stats); slots 1–8 are the
-   * teammates with their own contact, power, eye and speed. The user swings for all of them.
+   * Sets the batting order (slot → member). Only between matches: mid-game it would change
+   * who is on base. False when refused or not a valid order.
    */
-  ourRunner(i: number): Player {
+  setBattingOrder(order: number[] | null) {
+    if (this.matchActive || (order && !validOrder(order))) return false;
     const c = this.state.career;
+    if (!order || order.every((k, i) => k === i)) delete c.battingOrder;
+    else c.battingOrder = [...order];
+    this.persist();
+    this.emit();
+    return true;
+  }
+  /** Our hitter in lineup slot i (the batting order picks the member). */
+  ourRunner(i: number): Player {
+    return this.member(this.battingOrder[((i % 9) + 9) % 9]);
+  }
+  /**
+   * Our roster member k: the player is member 0 (career stats); 1–8 are the teammates with
+   * their own contact, power, eye and speed. The user swings for all of them.
+   */
+  member(k: number): Player {
+    const c = this.state.career,
+      i = k;
     let p = this.homeRoster.lineup[i % 9];
     // A pitch-only player does not bat: a designated hitter (the team's average bat) does.
     if (i % 9 === 0 && this.role === "pitcher") {
@@ -2289,7 +2322,7 @@ export class BaseballEngine {
     return (
       this.batting &&
       this.role !== "pitcher" &&
-      (this.state.mode !== "match" || this.state.order[1] % 9 === 0)
+      (this.state.mode !== "match" || this.battingOrder[this.state.order[1] % 9] === 0)
     );
   }
   /** The nine fielders now on defense, in DEFENSE order (index 0 = pitcher). */
@@ -2298,7 +2331,8 @@ export class BaseballEngine {
   }
   /** Nine fielders of our team (home) or the rival (away), in DEFENSE order. */
   defenseOf(home: boolean): Player[] {
-    if (home) return HOME_POSITIONS.map((slot) => this.ourRunner(slot));
+    // Positions belong to the members, whatever the batting order.
+    if (home) return HOME_POSITIONS.map((k) => this.member(k));
     const r = this.awayRoster,
       // The ace fields like an average player of his team (pro scale in the pros).
       pro = !!r.lineup[0]?.pro,
@@ -2351,7 +2385,9 @@ export class BaseballEngine {
     const s = this.state;
     // Batting practice is always the player; in a match the lineup slot decides.
     return this.batting
-      ? this.ourBatter(s.mode === "match" ? s.order[1] : 0)
+      ? s.mode === "match"
+        ? this.ourBatter(s.order[1])
+        : this.member(0)
       : this.cheered(this.awayRoster.lineup[s.order[0] % 9]);
   }
   onSound(fn: (kind: string) => void) {
@@ -2506,6 +2542,9 @@ export class BaseballEngine {
           typeof c.teamBoost === "number" && Number.isFinite(c.teamBoost)
             ? clamp(c.teamBoost, 0, 200)
             : 0;
+        // Batting order (v12): kept only if it is a valid order of the nine.
+        if (validOrder(c.battingOrder)) clean.battingOrder = [...c.battingOrder];
+        else delete clean.battingOrder;
         this.state.career = clean;
         this.state.energy = clean.energy;
         // The match being prepared belongs to the loaded day: its weather too.
@@ -6490,8 +6529,9 @@ export class BaseballEngine {
     c.league = "mlb";
     c.mlbDay ??= c.day;
     c.mlbClub = t.id;
-    // New club, new teammates: the team growth starts again.
+    // New club, new teammates: the team growth and the batting order start again.
     c.teamBoost = 0;
+    delete c.battingOrder;
     c.history = [`${t.city} ${t.name}와 계약! MLB 하드 모드가 시작된다`, ...c.history].slice(0, 12);
     this.persist();
     this.start("match");
@@ -6583,8 +6623,9 @@ export class BaseballEngine {
     if (!club || this.matchActive) return false;
     if (c.stage === "pro") return true;
     c.stage = "pro";
-    // New club, new teammates: the team growth starts again from zero.
+    // New club, new teammates: the team growth starts again from zero (and the order).
     c.teamBoost = 0;
+    delete c.battingOrder;
     c.proUnlocked = true;
     c.proGoal = false;
     c.scout = 30;
