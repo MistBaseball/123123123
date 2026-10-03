@@ -471,6 +471,15 @@ export const RULES = {
   brainThink: 0.1,
   /** Rival contact quality above aiHrKnee keeps only aiHrSqueeze of the rest (fewer homers). */
   aiHrKnee: 0.78,
+  /** Role modes: our own AI pitcher (bat-only player) and AI batters (pitch-only player)
+   * are tuned so each role wins about as often as a two-way player. */
+  autoPitchVelocity: 3,
+  autoPitchControl: 0.85,
+  autoPitchMovement: 72,
+  autoBatBoost: 0,
+  autoPitchAim: 0.17,
+  /** Bat-only player: his team's batting is all he controls, so it carries a bit more. */
+  batterRoleBoost: 0.05,
   aiHrSqueeze: 0.4,
   brainEvery: 1,
   /** Turns a learned runner may make on one play. */
@@ -712,6 +721,15 @@ export const DIFFICULTIES: { id: Difficulty; label: string; note: string }[] = [
   { id: "baby", label: "응애", note: "아주 여유로운 타이밍 · 훈련 2배" },
 ];
 const DIFF_KEY = "diamond-road-difficulty";
+const SOUND_KEY = "diamond-road-sound";
+/** Sounds start off (browsers block sound before a click) unless turned on before. */
+export const soundSetting = () => {
+  try {
+    return typeof localStorage !== "undefined" && localStorage.getItem(SOUND_KEY) === "on";
+  } catch {
+    return false;
+  }
+};
 const isDifficulty = (v: unknown): v is Difficulty => DIFFICULTIES.some((d) => d.id === v);
 export const difficultySetting = (): Difficulty => {
   try {
@@ -722,6 +740,10 @@ export const difficultySetting = (): Difficulty => {
   }
 };
 const byDifficulty = <T,>(d: Difficulty, v: Record<Difficulty, T>) => v[d] ?? v.normal;
+/** Easiest first. */
+export const DIFFICULTY_ORDER: Difficulty[] = ["baby", "easy", "normal", "hard", "impossible"];
+export const easierDifficulty = (a: Difficulty, b: Difficulty) =>
+  DIFFICULTY_ORDER.indexOf(a) <= DIFFICULTY_ORDER.indexOf(b) ? a : b;
 export const swingWindow = (
   difficulty: Difficulty,
   stage: Stage = "high",
@@ -1713,6 +1735,17 @@ export type Career = {
   /** Ranking nickname and #tag of this career (travels with the save code). */
   hofNick?: string;
   hofTag?: string;
+  /** Easiest difficulty a match of this career was played on (its hall-of-fame board). */
+  minDifficulty?: Difficulty;
+  /** Chosen at creation, fixed: pitch and bat (default), pitch only, or bat only. */
+  role?: Role;
+};
+export type Role = "two-way" | "pitcher" | "batter";
+/** Stats each role uses (limit break needs them all at 250). */
+export const ROLE_STATS: Record<Role, (keyof Career["stats"])[]> = {
+  "two-way": ["velocity", "control", "movement", "stamina", "contact", "power", "speed"],
+  pitcher: ["velocity", "control", "movement", "stamina"],
+  batter: ["contact", "power", "speed"],
 };
 /** Highest a stat can go for this career (the pro cap for a legend start). */
 export const statCapOf = (
@@ -2055,7 +2088,7 @@ const initial = (career: Career, mode: Mode = "match", maxInnings = 3): GameStat
   difficulty: difficultySetting(),
   lastDistance: null,
   swingStyle: "contact",
-  sound: false,
+  sound: soundSetting(),
   message: mode === "batting" ? "타석에 들어섰습니다" : "첫 공, 어디로 던질까요?",
   detail:
     mode === "batting"
@@ -2209,9 +2242,13 @@ export class BaseballEngine {
    * teammates with their own contact, power, eye and speed. The user swings for all of them.
    */
   ourRunner(i: number): Player {
-    const c = this.state.career,
-      p = this.homeRoster.lineup[i % 9];
-    if (i % 9 === 0)
+    const c = this.state.career;
+    let p = this.homeRoster.lineup[i % 9];
+    // A pitch-only player does not bat: a designated hitter (the team's average bat) does.
+    if (i % 9 === 0 && this.role === "pitcher") {
+      const avg = teamRatings(this.homeRoster.lineup.slice(1));
+      p = { ...p, ...avg, name: "지명타자", nick: "", hand: "L", pro: !!p.pro };
+    } else if (i % 9 === 0)
       return {
         ...p,
         name: c.name,
@@ -2236,7 +2273,11 @@ export class BaseballEngine {
   }
   /** True when the player character (leadoff, slot 0) is at the plate. */
   get playerUp() {
-    return this.batting && (this.state.mode !== "match" || this.state.order[1] % 9 === 0);
+    return (
+      this.batting &&
+      this.role !== "pitcher" &&
+      (this.state.mode !== "match" || this.state.order[1] % 9 === 0)
+    );
   }
   /** The nine fielders now on defense, in DEFENSE order (index 0 = pitcher). */
   get fielders(): Player[] {
@@ -2627,6 +2668,8 @@ export class BaseballEngine {
   setDifficulty(d: Difficulty) {
     if (!isDifficulty(d)) return;
     this.state.difficulty = d;
+    // Switching in the middle of a match counts for this career's hall-of-fame board.
+    if (this.matchActive) this.markDifficulty();
     try {
       if (typeof localStorage !== "undefined") localStorage.setItem(DIFF_KEY, d);
     } catch {
@@ -2636,6 +2679,13 @@ export class BaseballEngine {
   }
   set<K extends keyof GameState>(key: K, value: GameState[K]) {
     this.state[key] = value;
+    // Sounds on/off is remembered in this browser.
+    if (key === "sound")
+      try {
+        if (typeof localStorage !== "undefined") localStorage.setItem(SOUND_KEY, value ? "on" : "off");
+      } catch {
+        /* private mode */
+      }
     this.emit();
   }
   setAim(x: number, y: number) {
@@ -2701,6 +2751,7 @@ export class BaseballEngine {
       s.phase !== "ready" ||
       s.paused ||
       this.batting ||
+      this.autoHalf ||
       !Number.isFinite(x) ||
       !Number.isFinite(y)
     )
@@ -2714,11 +2765,16 @@ export class BaseballEngine {
     this.launch(false);
     return true;
   }
-  private launch(ai: boolean) {
+  /**
+   * ai: the rival's pitcher (we bat). auto: our own pitcher on his own (bat-only player); he
+   * pitches like the rival's ace (same numbers, so neither side gets a better arm).
+   */
+  private launch(ai: boolean, auto = false) {
     const s = this.state,
       stats = this.playerStats,
       stage = this.stageRules,
-      pitch = ai
+      machine = ai || auto,
+      pitch = machine
         ? PITCHES[
             Math.floor(
               this.rng() *
@@ -2726,11 +2782,18 @@ export class BaseballEngine {
             )
           ]
         : pitchData(s.selected);
-    const fatigue = ai ? Math.max(0, s.pitchCount[0] - 25) * 0.18 : 100 - s.energy;
-    const formPenalty = ai ? 0 : (100 - s.career.form) * 0.02;
+    const fatigue = ai
+      ? Math.max(0, s.pitchCount[0] - 25) * 0.18
+      : auto
+        ? Math.max(0, s.pitchCount[1] - 25) * 0.18
+        : 100 - s.energy;
+    const formPenalty = machine ? 0 : (100 - s.career.form) * 0.02;
     const speed = clamp(
-      (ai
-        ? stage.aiVelocity + this.awayRoster.ace.velocity - (this.cheerActive ? 3 : 0)
+      (machine
+        ? stage.aiVelocity +
+          this.awayRoster.ace.velocity +
+          (auto ? RULES.autoPitchVelocity : 0) -
+          (this.cheerActive && ai ? 3 : 0)
         : fastballSpeed(stats.velocity)) +
         pitch.delta -
         fatigue * 0.065 -
@@ -2741,12 +2804,17 @@ export class BaseballEngine {
       60,
       pitch.maxSpeed ?? 190,
     );
-    const aim = ai
-      ? V(gaussian(this.rng) * 0.29, 0.95 + gaussian(this.rng) * 0.34, 0)
-      : { ...s.aim };
+    // Our own AI pitcher works the zone more (the rival's spread made walks and hit batters).
+    const aim = auto
+      ? V(gaussian(this.rng) * RULES.autoPitchAim, 0.92 + gaussian(this.rng) * 0.22, 0)
+      : machine
+        ? V(gaussian(this.rng) * 0.29, 0.95 + gaussian(this.rng) * 0.34, 0)
+        : { ...s.aim };
     const sigma =
-      (ai
-        ? 0.04 * this.awayRoster.ace.control * (this.cheerActive ? 1.08 : 1)
+      (machine
+        ? 0.04 *
+          this.awayRoster.ace.control *
+          (auto ? RULES.autoPitchControl : this.cheerActive ? 1.08 : 1)
         : controlSpread(stats.control, s.energy, s.effort, s.career.form)) *
       pitch.control *
       (this.raining ? RULES.rainControl : 1);
@@ -2762,7 +2830,7 @@ export class BaseballEngine {
       s.mode === "match" &&
       s.bases.some(Boolean) &&
       this.rng() <
-        wildPitchChance(ai ? 100 - fatigue : s.energy, pitch.wild) *
+        wildPitchChance(machine ? 100 - fatigue : s.energy, pitch.wild) *
           (this.raining ? RULES.rainWildPitch : 1);
     if (wild) {
       target.y = 0.09 + this.rng() * 0.12;
@@ -2787,7 +2855,7 @@ export class BaseballEngine {
       elapsed: 0,
       pitch: pitch.id,
       speed,
-      movement: ai ? 65 : stats.movement,
+      movement: auto ? RULES.autoPitchMovement : machine ? 65 : stats.movement,
       swung: false,
       swingTime: 0,
       batAim: { ...s.aim },
@@ -2850,7 +2918,8 @@ export class BaseballEngine {
   swing() {
     const s = this.state,
       f = s.flight;
-    if (!this.batting || s.paused || s.phase !== "flight" || !f || f.swung) return false;
+    if (!this.batting || this.autoHalf || s.paused || s.phase !== "flight" || !f || f.swung)
+      return false;
     f.swung = true;
     f.swingTime = f.elapsed;
     f.batAim = { ...s.aim };
@@ -2867,14 +2936,19 @@ export class BaseballEngine {
     if (s.phase === "ready" && this.batting) {
       s.timer -= dt;
       if (s.timer <= 0) this.launch(true);
+    } else if (s.phase === "ready" && this.autoHalf) {
+      // Bat-only player: our own pitcher (a teammate) pitches on his own.
+      s.timer -= dt;
+      if (s.timer <= 0) this.launch(false, true);
     } else if (s.phase === "windup") {
       s.timer -= dt;
       this.runSteal(dt);
       if (s.timer <= 0) {
         s.phase = "flight";
+        this.sound("pitch");
         s.pitchCount[this.batting ? 0 : 1]++;
         s.practice.pitches++;
-        if (!this.batting && s.mode === "match")
+        if (!this.batting && !this.autoHalf && s.mode === "match")
           s.energy = clamp(
             s.energy -
               pitchEnergyCost(s.effort, this.playerStats.stamina) *
@@ -3005,7 +3079,14 @@ export class BaseballEngine {
     s.timer = hold;
     s.lastResult = message;
     this.log(message + (detail ? ` · ${detail}` : ""));
-    this.sound(tone === "gold" ? "hit" : "call");
+    // The crowd (home crowd: cheers for us, groans for the rivals' good plays).
+    const good = tone === "gold";
+    if (message === "HOME RUN") this.sound(good ? "homer" : "groan");
+    else if (/SINGLE|DOUBLE|TRIPLE|BASE ON BALLS|HIT BY PITCH|ERROR|STOLEN/.test(message))
+      this.sound(good ? "cheer" : "groan");
+    else if (/OUT|DOUBLE PLAY|STRIKEOUT|FIELDER/.test(message)) this.sound(good ? "cheer" : "groan");
+    else if (message !== "BALL" && message !== "STRIKE" && message !== "FOUL")
+      this.sound(good ? "cheer" : "call");
     this.emit();
   }
   private resolvePitch() {
@@ -3031,7 +3112,8 @@ export class BaseballEngine {
       // Hit by pitch: the ball's real path (control error, movement) touches the batter's
       // body hitbox, not a separate dice roll.
       hbp = this.pitchHit();
-    if (this.batting) {
+    // Pitch-only player: our batters bat on their own, like the rival's (the branch below).
+    if (this.batting && !this.autoHalf) {
       if (f.swung) {
         const timing = f.swingTime / f.visualDuration - SWING_SWEET,
           spatial = Math.hypot(f.batAim.x - f.target.x, f.batAim.y - f.target.y),
@@ -3135,7 +3217,9 @@ export class BaseballEngine {
             // The very top of the rivals' contact is squeezed: about a third of their hits
             // were home runs (a real season: about one in eight). Those balls now die at the
             // track or off the wall instead.
-            q = q0 > RULES.aiHrKnee ? RULES.aiHrKnee + (q0 - RULES.aiHrKnee) * RULES.aiHrSqueeze : q0;
+            q1 = q0 > RULES.aiHrKnee ? RULES.aiHrKnee + (q0 - RULES.aiHrKnee) * RULES.aiHrSqueeze : q0,
+            // Our own batters batting on their own (pitch-only player).
+            q = this.batting ? clamp(q1 + RULES.autoBatBoost, 0.05, 1) : q1;
           if (this.rng() < 0.19 || q < 0.25) this.foul();
           else this.contact(q, (this.rng() - 0.5) * 0.2);
         } else this.strike(true, "변화와 구속으로 헛스윙 유도");
@@ -3145,6 +3229,7 @@ export class BaseballEngine {
   }
   private strike(swing: boolean, detail: string) {
     const s = this.state;
+    this.sound("mitt");
     s.strikes++;
     s.lastOutcome = "Strike";
     if (s.strikes >= 3) {
@@ -3181,6 +3266,7 @@ export class BaseballEngine {
   }
   private ball() {
     const s = this.state;
+    this.sound("mitt");
     s.balls++;
     s.lastOutcome = "Ball";
     if (s.balls >= 4) {
@@ -3289,14 +3375,19 @@ export class BaseballEngine {
     const s = this.state;
     this.sound("hit");
     let q = quality;
-    const bunt = this.batting && s.swingStyle === "bunt";
-    if (this.batting) {
+    const player = this.batting && !this.autoHalf,
+      bunt = player && s.swingStyle === "bunt";
+    if (player) {
       const style = SWING_STYLES[s.swingStyle];
       q =
         clamp(q - (100 - s.career.form) * 0.001, 0, 1) *
           (style.spread[0] + this.rng() * style.spread[1]) +
         style.boost;
-      q = clamp(q + this.balance.batBoost, 0, 1.15);
+      q = clamp(
+        q + this.balance.batBoost + (this.role === "batter" ? RULES.batterRoleBoost : 0),
+        0,
+        1.15,
+      );
     }
     // A bunt is deadened in front of the plate: a slow roller toward one foul line (early
     // timing → third-base side). A clean bunt hugs the line and dies around RULES.buntSweet m,
@@ -4101,6 +4192,14 @@ export class BaseballEngine {
       l.ground ? 1 : 0,
     ];
   }
+  /** The career's hall-of-fame board is the easiest difficulty it ever played a match on. */
+  private markDifficulty() {
+    const s = this.state,
+      c = s.career;
+    c.minDifficulty = isDifficulty(c.minDifficulty)
+      ? easierDifficulty(c.minDifficulty, s.difficulty)
+      : s.difficulty;
+  }
   /** Ball holder option "keep the ball" (no throw / run at the runner): AI_HOLDER numbers. */
   private holdOption(): number[] {
     return [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
@@ -4516,7 +4615,7 @@ export class BaseballEngine {
         ? "땅에 닿기 전 포구 · 타자 아웃"
         : (base === 4 ? "홈" : base + "루") +
           (kind === "tag" ? "에서 주자 태그" : "에 공이 먼저 도착");
-    this.sound("call");
+    this.sound("glove");
   }
   private advanceLiveRunners(l: LivePlay, dt: number, previousTime: number) {
     for (const r of l.runners) {
@@ -5721,6 +5820,7 @@ export class BaseballEngine {
     if (!this.recorded) {
       this.recorded = true;
       const c = s.career;
+      this.markDifficulty();
       c.games++;
       if (!ejected && s.score[1] > s.score[0]) c.wins++;
       c.strikeouts += this.matchStrikeouts;
@@ -5941,7 +6041,7 @@ export class BaseballEngine {
     return true;
   }
   /** Creation screen: validates the point spread, then starts the career. */
-  createPlayer(name: string, stats: Career["stats"]) {
+  createPlayer(name: string, stats: Career["stats"], role: Role = "two-way") {
     const keys = Object.keys(newCareer().stats) as (keyof Career["stats"])[],
       spent = keys.reduce((a, k) => a + (stats[k] - STAT_BASE), 0);
     if (
@@ -5955,6 +6055,7 @@ export class BaseballEngine {
     c.name = name.trim().slice(0, 12) || "나의 선수";
     c.stats = { ...stats };
     c.created = true;
+    c.role = role === "pitcher" || role === "batter" ? role : "two-way";
     c.history = [`${c.name}, 고교 3학년 마지막 시즌을 시작하다.`];
     if (isLegendName(c.name)) {
       // Hidden start: every stat at 200, seven pitches, and no roulette.
@@ -6092,9 +6193,23 @@ export class BaseballEngine {
   get limitCost() {
     return this.state.limitUsed >= RULES.limitBreakFree ? RULES.limitBreakEnergy : 0;
   }
-  /** Limit break is unlocked: every stat at 250. */
+  /** Limit break is unlocked: every stat of the player's role at 250 (a bat-only player
+   * needs only the batting stats, a pitch-only player only the pitching ones). */
   get canLimitBreak() {
-    return Object.values(this.state.career.stats).every((v) => v >= LIMITLESS_CAP);
+    const st = this.state.career.stats;
+    return ROLE_STATS[this.role].every((k) => (st[k] ?? 0) >= LIMITLESS_CAP);
+  }
+  /** The player's role (career creation, fixed). Older careers pitch and bat. */
+  get role(): Role {
+    const r = this.state.career.role;
+    return r === "pitcher" || r === "batter" ? r : "two-way";
+  }
+  /** This half of a match is played by the AI while the player watches (pitch-only player
+   * at bat, bat-only player in the field). */
+  get autoHalf() {
+    const s = this.state;
+    if (s.mode !== "match") return false;
+    return this.role === "pitcher" ? this.batting : this.role === "batter" ? !this.batting : false;
   }
   /** The player's stats as the game uses them right now (300 across the board in a limit break). */
   get playerStats(): Career["stats"] {
@@ -6145,6 +6260,8 @@ export class BaseballEngine {
     const s = this.state;
     if (
       s.mode !== "match" ||
+      // Only for a pitch or swing of the player's own (not while the AI plays this half).
+      this.autoHalf ||
       !this.canLimitBreak ||
       this.limitActive ||
       (s.phase !== "ready" && s.phase !== "between")

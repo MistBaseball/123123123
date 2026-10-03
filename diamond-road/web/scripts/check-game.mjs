@@ -3243,4 +3243,45 @@ check("Close pitches: the call says by how much it missed or clipped the zone", 
     for (let y = 0.3; y <= 1.6; y += 0.017)
       assert.equal(zoneMiss(V(x, y, 0)) <= 0, insideZone(V(x, y, 0)));
 });
+check("Roles: the AI plays the half the player does not; limit break needs only the role's stats", () => {
+  for (const role of ["pitcher", "batter"]) {
+    const c = newCareer();
+    c.created = true;
+    c.team = "triples";
+    c.role = role;
+    const g = new BaseballEngine(c, seed(role === "pitcher" ? 3 : 4));
+    g.start("match");
+    let auto = 0,
+      mine = 0,
+      n = 0;
+    while (g.state.phase !== "finished" && n++ < 60 * 60 * 40) {
+      const s = g.state;
+      if (s.phase === "between") g.continueInning();
+      else if (s.phase === "ready" && !g.autoHalf && !g.batting) g.throwAt(0, 0.9);
+      if (s.phase === "ready") g.autoHalf ? auto++ : mine++;
+      // The player cannot act in the AI's half.
+      if (g.autoHalf) {
+        assert(!g.throwAt(0, 0.9) && !g.swing() && !g.limitBreak());
+        assert.equal(g.batting, role === "pitcher");
+      }
+      g.tick(1 / 30);
+    }
+    assert.equal(g.state.phase, "finished", `${role} match ends`);
+    assert(auto > 0 && mine > 0, `${role}: both halves happen`);
+  }
+  // A pitch-only player does not bat (a designated hitter takes slot 0).
+  const p = newCareer();
+  p.role = "pitcher";
+  p.name = "투수만";
+  const gp = new BaseballEngine(p);
+  assert.notEqual(gp.ourRunner(0).name, "투수만");
+  // Limit break: a bat-only player needs only contact, power and speed at 250.
+  const b = newCareer();
+  b.role = "batter";
+  Object.assign(b.stats, { contact: 250, power: 250, speed: 250 });
+  assert(new BaseballEngine(b).canLimitBreak);
+  const t = newCareer();
+  Object.assign(t.stats, { contact: 250, power: 250, speed: 250 });
+  assert(!new BaseballEngine(t).canLimitBreak, "a two-way player still needs every stat");
+});
 console.log(`\n${passed} gameplay checks passed.`);

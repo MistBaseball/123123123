@@ -53,6 +53,8 @@ const c = newCareer();
 c.created = true;
 c.team = "triples";
 c.name = "테스트";
+// ROLE=pitcher|batter: a pitch-only or bat-only career (the AI plays the other half).
+if (process.env.ROLE) c.role = process.env.ROLE;
 const g = new BaseballEngine(c, rng);
 // DIFF=baby|easy|normal|hard|impossible: difficulty, with that level's rival AI.
 if (process.env.DIFF) {
@@ -109,7 +111,7 @@ function match() {
       g.continueInning();
       continue;
     }
-    if (st.phase === "ready" && !g.batting) {
+    if (st.phase === "ready" && !g.batting && !g.autoHalf) {
       real += P.think;
       const owned = st.career.pitches;
       g.selectPitch(owned[Math.floor(rng() * owned.length)]);

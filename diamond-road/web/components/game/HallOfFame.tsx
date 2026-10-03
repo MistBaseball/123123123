@@ -17,6 +17,9 @@ import { tierOf } from "@/lib/game/engine";
 import {
   BOARDS,
   NICK_MAX,
+  ROLE_LABEL,
+  SCORE_RULE,
+  scoreOf,
   TIER_LABEL,
   displayName,
   ensureIdentity,
@@ -42,10 +45,18 @@ export function HallOfFameButton({ engine, career }: { engine: BaseballEngine; c
     [draft, setDraft] = useState(""),
     [editing, setEditing] = useState(false),
     [sync, setSync] = useState<Sync>("idle"),
-    [board, setBoard] = useState(BOARDS[0]),
+    // Opens on this career's own board.
+    [board, setBoard] = useState(
+      () => BOARDS.find((b) => b.id === (career.minDifficulty ?? "normal")) ?? BOARDS[2],
+    ),
     [rows, setRows] = useState<HofRow[] | null>(null),
-    [error, setError] = useState(false);
+    [error, setError] = useState<false | "old" | "net">(false);
 
+  // Opening the window shows this career's own board (the easiest difficulty it played).
+  useEffect(() => {
+    if (open) setBoard(BOARDS.find((b) => b.id === (career.minDifficulty ?? "normal")) ?? BOARDS[2]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
   // Another career (loaded with a save code, or a new one): its own nickname#tag.
   useEffect(() => {
     const next = profileOf(career);
@@ -98,7 +109,9 @@ export function HallOfFameButton({ engine, career }: { engine: BaseballEngine; c
           setRows(r);
           setError(false);
         })
-        .catch(() => alive && !shown && setError(true));
+        .catch(
+          (e: Error) => alive && !shown && setError(e.message === "old-server" ? "old" : "net"),
+        );
     void pull();
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible") void pull();
@@ -202,9 +215,15 @@ export function HallOfFameButton({ engine, career }: { engine: BaseballEngine; c
               {career.dishonor && <em className="hof-dishonor">불명예</em>}
             </header>
             <p>
-              {career.name} · {TIER_LABEL[tier]} · {career.day}일차
+              {career.name} · {TIER_LABEL[tier]} · {ROLE_LABEL[career.role ?? "two-way"]} ·{" "}
+              {career.day}일차 ·{" "}
+              {BOARDS.find((b) => b.id === (career.minDifficulty ?? "normal"))?.label} 랭킹
             </p>
             <dl>
+              <div>
+                <dt>종합 점수</dt>
+                <dd>{scoreOf(career)}</dd>
+              </div>
               <div>
                 <dt>경기</dt>
                 <dd>{career.games}</dd>
@@ -255,7 +274,14 @@ export function HallOfFameButton({ engine, career }: { engine: BaseballEngine; c
                   </button>
                 ))}
               </div>
-              {error ? (
+              <p className="hof-rule">
+                난이도별 랭킹 · 경기를 한 가장 쉬운 난이도에 기록돼요. {SCORE_RULE}
+              </p>
+              {error === "old" ? (
+                <p className="hof-note">
+                  랭킹 서버 업데이트가 필요해요 (관리자: setup.sql 다시 실행).
+                </p>
+              ) : error ? (
                 <p className="hof-note">랭킹을 불러오지 못했어요. 10초 뒤 다시 시도해요.</p>
               ) : !rows ? (
                 <p className="hof-note">불러오는 중…</p>
@@ -271,7 +297,8 @@ export function HallOfFameButton({ engine, career }: { engine: BaseballEngine; c
                         {r.dev && <em className="hof-dev">개발자(버그 찾는 중)</em>}
                         {r.dishonor && <em className="hof-dishonor">불명예</em>}
                         <small>
-                          {r.team} · {TIER_LABEL[r.tier]} · {r.games}경기
+                          {r.team} · {TIER_LABEL[r.tier]} · {ROLE_LABEL[r.role ?? "two-way"]} ·{" "}
+                          {r.games}경기 {r.wins}승 · K {r.strikeouts} · 안타 {r.hits}
                         </small>
                       </span>
                       <b>{board.value(r)}</b>

@@ -27,6 +27,16 @@ create table if not exists public.hall_of_fame (
 );
 -- v11.4: 파인타르 적발 칭호 「불명예」 (예전 표에 열 추가).
 alter table public.hall_of_fame add column if not exists dishonor boolean not null default false;
+-- v11.18: 난이도별 랭킹(그 선수가 경기한 가장 쉬운 난이도), 역할, 능력치 합, 종합 점수.
+alter table public.hall_of_fame add column if not exists difficulty text not null default 'normal'
+  check (difficulty in ('baby', 'easy', 'normal', 'hard', 'impossible'));
+alter table public.hall_of_fame add column if not exists role text not null default 'two-way'
+  check (role in ('two-way', 'pitcher', 'batter'));
+alter table public.hall_of_fame add column if not exists stat_total integer not null default 0
+  check (stat_total between 0 and 3000);
+-- 종합 점수 = 단계(고교 0 · 2군 100 · 1군 200 · MLB 300) + 승리×10 + 탈삼진 + 안타×2 + 득점×2 + 능력치 합÷10
+alter table public.hall_of_fame add column if not exists score integer
+  generated always as (tier_rank * 100 + wins * 10 + strikeouts + hits * 2 + runs * 2 + stat_total / 10) stored;
 
 alter table public.hall_of_fame enable row level security;
 drop policy if exists "hall of fame is public" on public.hall_of_fame;
@@ -36,7 +46,8 @@ create policy "hall of fame is public" on public.hall_of_fame
 -- 표를 직접 쓰는 권한은 없음. 읽기는 비밀값(secret_hash)을 뺀 열만.
 revoke all on public.hall_of_fame from anon, authenticated;
 grant select (player_id, nickname, tag, player_name, team, tier, tier_rank, day, games, wins,
-  strikeouts, hits, runs, pro_day, first_day, mlb_day, dev, dishonor, updated_at)
+  strikeouts, hits, runs, pro_day, first_day, mlb_day, dev, dishonor, difficulty, role, stat_total,
+  score, updated_at)
   on public.hall_of_fame to anon, authenticated;
 
 create or replace function public.submit_record(rec jsonb, secret text)
@@ -53,7 +64,8 @@ begin
   end if;
   insert into public.hall_of_fame as cur (
     player_id, secret_hash, nickname, tag, player_name, team, tier, tier_rank, day, games, wins,
-    strikeouts, hits, runs, pro_day, first_day, mlb_day, dev, dishonor, updated_at
+    strikeouts, hits, runs, pro_day, first_day, mlb_day, dev, dishonor, difficulty, role,
+    stat_total, updated_at
   ) values (
     (rec->>'player_id')::uuid,
     encode(sha256(convert_to(secret, 'UTF8')), 'hex'),
@@ -74,6 +86,9 @@ begin
     (rec->>'mlb_day')::int,
     coalesce((rec->>'dev')::boolean, false),
     coalesce((rec->>'dishonor')::boolean, false),
+    coalesce(rec->>'difficulty', 'normal'),
+    coalesce(rec->>'role', 'two-way'),
+    coalesce((rec->>'stat_total')::int, 0),
     now()
   )
   on conflict (player_id) do update set
@@ -96,6 +111,13 @@ begin
     dev = cur.dev or excluded.dev,
     -- 불명예도 한 번 붙으면 지워지지 않는다.
     dishonor = cur.dishonor or excluded.dishonor,
+    -- 난이도는 더 쉬운 쪽으로만 바뀐다(쉬운 난이도로 한 번이라도 했으면 그 랭킹).
+    difficulty = case
+      when array_position(array['baby', 'easy', 'normal', 'hard', 'impossible'], excluded.difficulty)
+         < array_position(array['baby', 'easy', 'normal', 'hard', 'impossible'], cur.difficulty)
+      then excluded.difficulty else cur.difficulty end,
+    role = excluded.role,
+    stat_total = excluded.stat_total,
     updated_at = now()
   -- v11.12: 경기 수·날짜가 줄어드는 기록(다른 컴퓨터에 남은 옛 기록)은 받지 않는다.
   where cur.secret_hash = excluded.secret_hash

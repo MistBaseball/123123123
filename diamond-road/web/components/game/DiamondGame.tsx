@@ -37,6 +37,7 @@ import { PatchNotesButton } from "@/components/game/PatchNotes";
 import { HallOfFameButton, HofResetForm } from "@/components/game/HallOfFame";
 import { CloudSave, pullCareer, syncCareer } from "@/components/game/CloudSave";
 import { AiLab } from "@/components/game/AiLab";
+import { Sfx } from "@/lib/game/sound";
 import { AI_LEVELS, applyLevel } from "@/lib/ai/levels";
 import { saveCode } from "@/lib/cloud-save";
 import { GuideDialog, GuideNotice } from "@/components/game/Guide";
@@ -107,6 +108,7 @@ import {
   type StatKey,
   type GameState,
   type Difficulty,
+  type Role,
   DIFFICULTIES,
   type Mode,
   type Camera,
@@ -229,11 +231,22 @@ function StatGuide({ c }: { c: Career }) {
   );
 }
 
-function Field({ engine, frozen = false }: { engine: BaseballEngine; frozen?: boolean }) {
+function Field({
+  engine,
+  frozen = false,
+  speed = 1,
+}: {
+  engine: BaseballEngine;
+  frozen?: boolean;
+  /** Fast-forward while the AI plays the player's off half (role modes). */
+  speed?: number;
+}) {
   const host = useRef<HTMLDivElement>(null);
   // Frozen (AI training ground open on top): the match waits and the field is not drawn.
   const still = useRef(frozen);
   still.current = frozen;
+  const fast = useRef(speed);
+  fast.current = speed;
   const [error, setError] = useState("");
   useEffect(() => {
     let field: BaseballField | SoftwareField | undefined,
@@ -264,8 +277,15 @@ function Field({ engine, frozen = false }: { engine: BaseballEngine; frozen?: bo
       const dt = Math.min((now - last) / 1000, 0.05) * engine.timeScale;
       last = now;
       if (!still.current) {
-        engine.tick(dt);
-        field?.update(dt);
+        // Fast-forward only the AI's half; rules step in pieces of at most 0.05 s.
+        const mult = engine.autoHalf ? fast.current : 1;
+        let left = dt * mult;
+        while (left > 1e-6) {
+          const step = Math.min(0.05, left);
+          engine.tick(step);
+          left -= step;
+        }
+        field?.update(dt * mult);
       }
       frame = requestAnimationFrame(tick);
     };
@@ -1347,6 +1367,32 @@ const PRESETS: { name: string; desc: string; add: Career["stats"] }[] = [
     desc: "마운드와 타석 모두에서 빛나는 선수",
     add: { velocity: 15, control: 14, movement: 15, stamina: 8, contact: 18, power: 18, speed: 12 },
   },
+  {
+    name: "강타자",
+    desc: "정확하고 멀리 치는 타자 (타자만에 어울림)",
+    add: { velocity: 5, control: 5, movement: 5, stamina: 5, contact: 30, power: 30, speed: 20 },
+  },
+];
+/** Role (fixed for the career): the half the player does not play is played by the AI. */
+const ROLES: { id: Role; label: string; desc: string; preset: string }[] = [
+  {
+    id: "two-way",
+    label: "투타 겸업",
+    desc: "던지고 친다 (지금까지와 같음)",
+    preset: "투타 겸업",
+  },
+  {
+    id: "pitcher",
+    label: "투수만",
+    desc: "우리 공격은 AI가 진행 (배속 가능), 타석엔 지명타자",
+    preset: "정통파 에이스",
+  },
+  {
+    id: "batter",
+    label: "타자만",
+    desc: "우리 수비·투구는 AI가 진행 (배속 가능)",
+    preset: "강타자",
+  },
 ];
 const statKeys = Object.keys(statNames) as (keyof Career["stats"])[];
 /** First screen: choose a name and spread the starting stat points. */
@@ -1362,6 +1408,7 @@ function CreationDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
     }
   }, [s.career.created]);
   const [name, setName] = useState("");
+  const [role, setRole] = useState<Role>("two-way");
   const [stats, setStats] = useState<Career["stats"]>(() => {
     const p = PRESETS[0].add;
     return Object.fromEntries(statKeys.map((k) => [k, STAT_BASE + p[k]])) as Career["stats"];
@@ -1448,7 +1495,7 @@ function CreationDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
             <DialogHeader>
               <DialogTitle>선수 등록</DialogTitle>
               <DialogDescription>
-                {teamOf(team)?.name} 입단을 꿈꾸는 미산고 3학년 투수. 이름을 정하고 능력치{" "}
+                {teamOf(team)?.name} 입단을 꿈꾸는 미산고 3학년. 역할을 고르고(나중에 못 바꿈) 이름과 능력치{" "}
                 {STAT_POINTS}
                 포인트를 나눠 주세요. 각 능력은 {STAT_BASE}에서 시작해 최대 {STAT_CAP}까지 올릴 수
                 있습니다.
@@ -1463,6 +1510,29 @@ function CreationDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
                 onChange={(e) => setName(e.target.value)}
               />
             </label>
+            <div className="creation-roles" role="radiogroup" aria-label="역할">
+              {ROLES.map((r) => (
+                <button
+                  key={r.id}
+                  role="radio"
+                  aria-checked={role === r.id}
+                  className={`subtle-button ${role === r.id ? "on" : ""}`}
+                  onClick={() => {
+                    setRole(r.id);
+                    const p = PRESETS.find((x) => x.name === r.preset);
+                    if (p)
+                      setStats(
+                        Object.fromEntries(
+                          statKeys.map((k) => [k, STAT_BASE + p.add[k]]),
+                        ) as Career["stats"],
+                      );
+                  }}
+                >
+                  <strong>{r.label}</strong>
+                  <small>{r.desc}</small>
+                </button>
+              ))}
+            </div>
             <div className="creation-presets">
               {PRESETS.map((p) => (
                 <button
@@ -1519,7 +1589,7 @@ function CreationDialog({ engine, s }: { engine: BaseballEngine; s: GameState })
               disabled={left !== 0 || !name.trim()}
               onClick={() => {
                 engine.chooseTeam(team);
-                const r = engine.createPlayer(name, stats);
+                const r = engine.createPlayer(name, stats, role);
                 r.ok
                   ? toast.success(`${name.trim()}, ${teamOf(team)?.name}을 향한 시즌 시작!`)
                   : toast.error(r.message);
@@ -2258,10 +2328,17 @@ const triggerCheer = (engine: BaseballEngine) => {
   else if (s.career.stage !== "pro") toast.error("응원 스킬은 프로 무대부터 열려요");
   else if (s.cheerUsed) toast.error("응원은 경기당 한 번만 쓸 수 있어요");
 };
+/** Role modes: how fast the AI's half plays (picked on the field, remembered). */
+const AUTO_SPEEDS = [1, 2, 4, 8];
+const AUTO_SPEED_KEY = "diamond-road-auto-speed";
 /** G: limit break for the next pitch (every stat 250 first; 3 free a match, then stamina). */
 const triggerLimit = (engine: BaseballEngine) => {
   const s = engine.state,
     cost = engine.limitCost;
+  if (engine.autoHalf) {
+    toast.error("AI가 진행하는 동안에는 쓸 수 없어요 · 내 차례에 써 주세요");
+    return;
+  }
   if (engine.limitBreak())
     toast.success(
       `⚡ 한계 돌파! 다음 1구 모든 능력치 ${LIMIT_BREAK}${cost ? ` · 체력 −${cost}` : ` · 무료 ${s.limitUsed}/${RULES.limitBreakFree}`}`,
@@ -2431,7 +2508,15 @@ export default function DiamondGame() {
     [pending, setPending] = useState<Mode | null>(null),
     [guideNotice, setGuideNotice] = useState(false),
     [rouletteDone, setRouletteDone] = useState(false),
-    [aiLab, setAiLab] = useState(false);
+    [aiLab, setAiLab] = useState(false),
+    [autoSpeed, setAutoSpeed] = useState(() => {
+      try {
+        const v = Number(localStorage.getItem(AUTO_SPEED_KEY));
+        return AUTO_SPEEDS.includes(v) ? v : 2;
+      } catch {
+        return 2;
+      }
+    });
   // "Read the guide" notice, once per browser: after the starting roulette (a start that skips
   // it, or a career that already had it, gets it as soon as nothing else is on screen).
   const startedAtLoad = useRef(s.career.created && s.career.blessing !== "");
@@ -2508,7 +2593,11 @@ export default function DiamondGame() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [s.career.games, s.career.day, s.career.stage, s.career.league, s.career.name, s.career.hofNick]);
   const stage = useRef<HTMLDivElement>(null);
-  const audio = useRef<AudioContext | null>(null);
+  const sfx = useRef(new Sfx());
+  // A quiet crowd murmur under matches (only with match sounds on).
+  useEffect(() => {
+    sfx.current.ambient(view === "game" && s.sound && s.mode === "match" && !aiLab);
+  }, [view, s.sound, s.mode, aiLab]);
   const [innings, setInnings] = useState(3);
   const batting = engine.batting;
   const newGame = (mode: Mode) => {
@@ -2526,56 +2615,9 @@ export default function DiamondGame() {
       setView("game");
       toast.success("하던 경기를 이어서 합니다");
     }
-    engine.onSound((kind) => {
-      try {
-        const a = audio.current ?? (audio.current = new AudioContext());
-        if (a.state === "suspended") void a.resume();
-        if (kind === "fanfare") {
-          // Short brass-like arpeggio, then a held major chord.
-          const notes: [number, number, number][] = [
-            [523.25, 0, 0.14],
-            [659.25, 0.14, 0.14],
-            [783.99, 0.28, 0.14],
-            [1046.5, 0.42, 0.5],
-            [523.25, 0.95, 0.9],
-            [659.25, 0.95, 0.9],
-            [783.99, 0.95, 0.9],
-            [1046.5, 0.95, 0.9],
-          ];
-          for (const [f, at, len] of notes) {
-            const o = a.createOscillator(),
-              g = a.createGain(),
-              t = a.currentTime + at;
-            o.type = "sawtooth";
-            o.frequency.setValueAtTime(f, t);
-            g.gain.setValueAtTime(0.0001, t);
-            g.gain.exponentialRampToValueAtTime(0.035, t + 0.03);
-            g.gain.exponentialRampToValueAtTime(0.0001, t + len);
-            o.connect(g);
-            g.connect(a.destination);
-            o.start(t);
-            o.stop(t + len + 0.05);
-          }
-          return;
-        }
-        const osc = a.createOscillator(),
-          gain = a.createGain();
-        osc.type = kind === "hit" ? "triangle" : "sine";
-        osc.frequency.setValueAtTime(
-          kind === "hit" ? 550 : kind === "swing" ? 200 : 760,
-          a.currentTime,
-        );
-        osc.frequency.exponentialRampToValueAtTime(90, a.currentTime + 0.13);
-        gain.gain.setValueAtTime(0.05, a.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, a.currentTime + 0.17);
-        osc.connect(gain);
-        gain.connect(a.destination);
-        osc.start();
-        osc.stop(a.currentTime + 0.18);
-      } catch {}
-    });
+    engine.onSound((kind) => sfx.current.play(kind));
     return () => {
-      void audio.current?.close();
+      sfx.current.close();
     };
   }, [engine]);
   // A tab left open keeps running the old version. Every 2 minutes, compare this page's script
@@ -2898,7 +2940,29 @@ export default function DiamondGame() {
               className={`game-stage ${batting && (s.phase === "windup" || s.phase === "flight") ? "batting-live" : ""}`}
               ref={stage}
             >
-              <Field engine={engine} frozen={aiLab} />
+              <Field engine={engine} frozen={aiLab} speed={autoSpeed} />
+              {engine.autoHalf && (
+                <div className="auto-speed" role="group" aria-label="AI 진행 배속">
+                  <span>
+                    {engine.role === "pitcher" ? "우리 공격" : "우리 수비"} · AI가 진행 중
+                  </span>
+                  {AUTO_SPEEDS.map((v) => (
+                    <button
+                      key={v}
+                      className={v === autoSpeed ? "on" : undefined}
+                      aria-pressed={v === autoSpeed}
+                      onClick={() => {
+                        setAutoSpeed(v);
+                        try {
+                          localStorage.setItem(AUTO_SPEED_KEY, String(v));
+                        } catch {}
+                      }}
+                    >
+                      ×{v}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="field-top">
                 <div className="chip-stack">
                   <span className="inning-chip">{batting ? "공격 · 타격" : "수비 · 투구"}</span>
@@ -3143,6 +3207,14 @@ export default function DiamondGame() {
               <h2>{batting ? "타격 플랜" : "투구 플랜"}</h2>
               <span className="status-pill">{status}</span>
             </div>
+            {engine.autoHalf && (
+              <p className="auto-note">
+                {engine.role === "pitcher"
+                  ? "투수만 모드 · 우리 공격은 AI가 칩니다."
+                  : "타자만 모드 · 우리 수비와 투구는 AI가 합니다."}{" "}
+                화면 위에서 배속(×1~×8)을 바꿀 수 있어요.
+              </p>
+            )}
             {!batting && (
               <div className="pp-rival">
                 <span className="pp-order">

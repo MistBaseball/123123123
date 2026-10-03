@@ -4,7 +4,15 @@
  * directly (no SDK): `rpc/submit_record` to write, the `hall_of_fame` table to read.
  */
 import { HOF_KEY, HOF_URL } from "./hof-config";
-import { matchTeams, tierOf, type Career, type Tier } from "./game/engine";
+import {
+  DIFFICULTIES,
+  matchTeams,
+  tierOf,
+  type Career,
+  type Difficulty,
+  type Role,
+  type Tier,
+} from "./game/engine";
 
 export type HofProfile = { nickname: string; tag: string };
 export type HofRow = {
@@ -26,12 +34,17 @@ export type HofRow = {
   dev: boolean;
   /** Caught with pine tar (missing before the v11.4 server update). */
   dishonor?: boolean;
+  /** v11.18 server: board, role, stat total and the composite score. */
+  difficulty?: Difficulty;
+  role?: Role;
+  stat_total?: number;
+  score?: number;
 };
 
 const PROFILE_KEY = "diamond-road-hof-profile";
 export const NICK_MAX = 12;
 const COLUMNS =
-  "player_id,nickname,tag,player_name,team,tier,day,games,wins,strikeouts,hits,runs,pro_day,first_day,mlb_day,dev";
+  "player_id,nickname,tag,player_name,team,tier,day,games,wins,strikeouts,hits,runs,pro_day,first_day,mlb_day,dev,dishonor,difficulty,role,stat_total,score";
 
 export const hofConfigured = () => !!HOF_URL && !!HOF_KEY;
 
@@ -116,8 +129,30 @@ export function recordOf(c: Career, p: HofProfile) {
     // Badge only where the developer password was opened during this career.
     dev: !!(c.devUsed || c.devCap),
     dishonor: !!c.dishonor,
+    // The board: the easiest difficulty this career has played a match on.
+    difficulty: c.minDifficulty ?? "normal",
+    role: c.role ?? "two-way",
+    stat_total: statTotal(c),
   };
 }
+export const statTotal = (c: Career) =>
+  Math.round(Object.values(c.stats).reduce((a, v) => a + v, 0));
+const TIER_POINTS: Record<Tier, number> = { high: 0, farm: 100, first: 200, mlb: 300 };
+/** Composite score (same formula as the server's `score` column, setup.sql). */
+export const scoreOf = (c: Career) =>
+  TIER_POINTS[tierOf(c)] +
+  c.wins * 10 +
+  c.strikeouts +
+  c.hits * 2 +
+  c.runs * 2 +
+  Math.floor(statTotal(c) / 10);
+export const SCORE_RULE =
+  "종합 점수 = 단계(고교 0 · 2군 100 · 1군 200 · MLB 300) + 승리×10 + 탈삼진 + 안타×2 + 득점×2 + 능력치 합÷10";
+export const ROLE_LABEL: Record<Role, string> = {
+  "two-way": "투타 겸업",
+  pitcher: "투수",
+  batter: "타자",
+};
 
 const headers = (): Record<string, string> => ({
   apikey: HOF_KEY,
@@ -152,10 +187,10 @@ export async function resetHallOfFame(code: string): Promise<number> {
 }
 
 export type Board = {
-  id: string;
+  id: Difficulty;
   label: string;
   order: string;
-  filter?: string;
+  filter: string;
   value: (r: HofRow) => string;
 };
 export const TIER_LABEL: Record<Tier, string> = {
@@ -164,46 +199,22 @@ export const TIER_LABEL: Record<Tier, string> = {
   first: "1군",
   mlb: "MLB",
 };
-export const BOARDS: Board[] = [
-  {
-    id: "overall",
-    label: "종합",
-    order: "tier_rank.desc,wins.desc,games.asc",
-    value: (r) => `${TIER_LABEL[r.tier]} · ${r.wins}승`,
-  },
-  { id: "wins", label: "승리", order: "wins.desc,games.asc", value: (r) => `${r.wins}승` },
-  {
-    id: "strikeouts",
-    label: "탈삼진",
-    order: "strikeouts.desc,games.asc",
-    value: (r) => `${r.strikeouts}K`,
-  },
-  { id: "hits", label: "안타", order: "hits.desc,games.asc", value: (r) => `${r.hits}안타` },
-  {
-    id: "pro",
-    label: "최단 입단",
-    order: "pro_day.asc,games.asc",
-    filter: "pro_day=not.is.null",
-    value: (r) => `${r.pro_day}일차`,
-  },
-  {
-    id: "mlb",
-    label: "최단 MLB",
-    order: "mlb_day.asc,games.asc",
-    filter: "mlb_day=not.is.null",
-    value: (r) => `${r.mlb_day}일차`,
-  },
-];
+/** One board per difficulty (hardest first), ranked by the composite score. */
+export const BOARDS: Board[] = DIFFICULTIES.map((d) => ({
+  id: d.id,
+  label: d.label,
+  order: "score.desc,games.asc",
+  filter: `difficulty=eq.${d.id}`,
+  value: (r: HofRow) => `${r.score ?? 0}점`,
+}));
 
 export async function fetchBoard(board: Board, limit = 50): Promise<HofRow[]> {
   const url =
     `${HOF_URL}/rest/v1/hall_of_fame?select=${COLUMNS}&order=${board.order}&limit=${limit}` +
-    (board.filter ? `&${board.filter}` : "");
-  // Ask for the 「불명예」 column too; a server without it yet (old setup.sql) answers 400.
-  let res = await fetch(url.replace(`select=${COLUMNS}`, `select=${COLUMNS},dishonor`), {
-    headers: headers(),
-  });
-  if (res.status === 400) res = await fetch(url, { headers: headers() });
+    `&${board.filter}`;
+  const res = await fetch(url, { headers: headers() });
+  // A server without the v11.18 columns yet (setup.sql not run again) answers 400.
+  if (res.status === 400) throw new Error("old-server");
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return (await res.json()) as HofRow[];
 }
