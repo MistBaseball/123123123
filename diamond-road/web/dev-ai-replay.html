@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <title>AI replay (dev only)</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #0d161d; color: #eef2ef; overflow: hidden;
+        font-family: "Pretendard", "Noto Sans KR", system-ui, sans-serif; }
+      #bar { position: absolute; top: 0; left: 0; right: 0; height: 64px; display: flex; gap: 10px;
+        align-items: center; padding: 0 14px; box-sizing: border-box; border-bottom: 1px solid #ffffff1a; }
+      .stat { background: #ffffff10; border-radius: 9px; padding: 5px 11px; min-width: 96px; }
+      .stat small { display: block; font-size: 11px; opacity: .7; }
+      .stat b { font-size: 20px; font-variant-numeric: tabular-nums; }
+      #caption { margin-left: auto; text-align: right; font-size: 13px; line-height: 1.45; }
+      #caption b { font-size: 15px; color: #f2c66d; }
+      #field { position: absolute; top: 64px; left: 0; right: 0; bottom: 0; }
+      #result { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 5;
+        background: #0d161dcc; padding: 6px 14px; border-radius: 8px; font-size: 15px; }
+    </style>
+  </head>
+  <body>
+    <div id="bar">
+      <div class="stat"><small>학습</small><b id="upd">0번째</b></div>
+      <div class="stat"><small>수비수 승률</small><b id="fw">—</b></div>
+      <div class="stat"><small>주자 승률</small><b id="rw">—</b></div>
+      <div id="caption"></div>
+    </div>
+    <div id="field"></div>
+    <div id="result"></div>
+    <script type="module">
+      // Dev-only page: replays fixed situations with a checkpoint's runner/fielder AI, frame by
+      // frame (driven by a script), for a video of how the AI plays at each training stage.
+      import { BaseballEngine, newCareer } from "/lib/game/engine.ts";
+      import { BaseballField } from "/lib/game/field.ts";
+      import { chooser, importPolicy } from "/lib/ai/agent.ts";
+      import { startPlay, lcg } from "/lib/ai/scenario.ts";
+      const g = new BaseballEngine(newCareer(), lcg(7));
+      g.state.nameTags = false;
+      const field = new BaseballField(document.getElementById("field"), g, { lite: true });
+      window.engine = g;
+      window.play = (sit, p) => {
+        startPlay(
+          sit,
+          p ? chooser(importPolicy(p.runner, 0), 0, { greedy: true }) : null,
+          p ? chooser(importPolicy(p.holder, 1), 1, { greedy: true }) : null,
+          g,
+        );
+        document.getElementById("result").textContent = "";
+      };
+      /** Advance `dt` s of play (60 Hz rule steps) and draw. Returns the phase. */
+      window.step = (dt) => {
+        const n = Math.max(1, Math.round(dt * 60));
+        for (let i = 0; i < n && g.state.phase === "inplay"; i++) g.tick(1 / 60);
+        field.update(dt);
+        if (g.state.phase !== "inplay")
+          document.getElementById("result").textContent = `${g.state.message} · ${g.state.detail}`;
+        return g.state.phase;
+      };
+      window.setBar = (b) => {
+        document.getElementById("upd").textContent = b.updates.toLocaleString() + "번째";
+        document.getElementById("fw").textContent = b.fielder ?? "—";
+        document.getElementById("rw").textContent = b.runner ?? "—";
+        document.getElementById("caption").innerHTML = b.caption ?? "";
+      };
+      window.ready = true;
+    </script>
+  </body>
+</html>

@@ -45,7 +45,8 @@ export const AI_CONFIG = {
       out: 1,
       /** Extra for every out after the first on the same play. */
       doublePlay: 0.5,
-      run: -1,
+      /** A run is worth about three outs (−1 made the fielders trade runs for outs). */
+      run: -3,
       /** Every base a runner (or the batter) gains. */
       advance: -0.2,
       throwError: -0.3,
@@ -53,11 +54,12 @@ export const AI_CONFIG = {
       step: -0.01,
     },
     runner: {
-      /** Reaching 1st, 2nd, 3rd (farther bases are worth more); home is `run`. */
-      advance: [0.2, 0.25, 0.3],
+      /** Reaching 1st, 2nd, 3rd (farther bases are worth clearly more: from 3rd a fly or a
+       * grounder scores); home is `run`. */
+      advance: [0.2, 0.35, 0.5],
       run: 1,
-      /** Bigger than all the advance rewards together (0.75). */
-      out: -1,
+      /** Bigger than all the advance rewards together (1.05). */
+      out: -1.2,
       step: -0.01,
     },
   },
