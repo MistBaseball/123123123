@@ -13,5 +13,5 @@ Mixamo에서 받은 FBX를 웹 게임용 GLB 두 개(`web/public/models/player.g
 opt.mjs가 하는 일: 노멀/금속 텍스처와 속눈썹 제거, 삼각형 약 9천 개로 단순화, 텍스처 JPEG 1024/512, meshopt 압축.
 애니메이션은 한 파일로 합치고 모든 클립이 첫 번째 뼈대를 움직이게 바꾼다(엉덩이 외 이동·스케일 트랙 제거).
 
-현재 `anims.glb`는 25개 클립이다(v11.7에 `turn180`, `trip`, `fall_flat`, v11.9에 `run_turn`, v11.10에 `hit_high`, `hit_mid`, `hit_low`). 걷기·조깅·실망 걷기 클립은 v11.9 정리 때 뺐다. 캐릭터는 그대로 두고 애니메이션만 다시 만들 때는
+현재 `anims.glb`는 24개 클립이다(v11.7에 `turn180`, `trip`, `fall_flat`, v11.9에 `run_turn`, v11.10에 `hit_high`, `hit_mid`; `hit_low`는 어울리지 않아 뺐다). 걷기·조깅·실망 걷기 클립은 v11.9 정리 때 뺐다. 캐릭터는 그대로 두고 애니메이션만 다시 만들 때는
 `opt.mjs`의 `---- animations` 부분만 실행하면 된다. `turn180`은 0.95초 이후 몸이 뒤집히는 구간이 있어 게임은 앞부분만 쓴다(`CLIP_KEYS.turnFrom/turnTo`).

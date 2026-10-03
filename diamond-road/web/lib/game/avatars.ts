@@ -1,7 +1,7 @@
 /**
  * Mixamo player model + baseball animations for the 3D field.
  *
- * Assets (public/models): player.glb (one skinned character, "Ch06") and anims.glb (25 clips
+ * Assets (public/models): player.glb (one skinned character, "Ch06") and anims.glb (24 clips
  * on the same skeleton, named after the source files: pitch_r, swing_l, run, diving_r, ...).
  * Each on-field player gets a clone with its own AnimationMixer. The game never reads the
  * animations back: it only shows them, so rules and timings stay in engine.ts.
@@ -35,8 +35,7 @@ export type ClipName =
   | "fall_flat"
   | "run_turn"
   | "hit_high"
-  | "hit_mid"
-  | "hit_low";
+  | "hit_mid";
 
 /**
  * Key moments of each clip (seconds), measured from the files (dev-avatar.html):
@@ -79,13 +78,11 @@ export const CLIP_KEYS = {
   turnTo: 1.05,
   /** Hit by pitch, at the plate while the call is shown: each clip from the moment the ball
    *  lands (its idle lead-in skipped) to the end of the reaction (head: just before the fall;
-   *  body: doubled over; legs: the hop). */
+   *  body: doubled over). A ball off the legs or feet has no reaction. */
   hitHighFrom: 0.3,
   hitHigh: 0.98,
   hitMidFrom: 0.2,
   hitMid: 1.35,
-  hitLowFrom: 0.1,
-  hitLow: 1.6,
   /** Dodging a tag into the bag (trip): take-off at dodgeFrom, flat on the ground at dodgeDown;
    *  then the dive clip's get-up (diveDown → diveUp). */
   dodgeFrom: 0.1,

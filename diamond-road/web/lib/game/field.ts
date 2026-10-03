@@ -1227,11 +1227,12 @@ export class BaseballField {
         this.hbpAt = this.time;
       }
       const hbp = s.phase === "result" && !s.live && s.lastOutcome === "HitByPitch" ? s.hbp : null,
+        // (No reaction for a ball off the legs or feet: that clip did not fit.)
         react = hbp
           ? hbp.part === "머리"
             ? { clip: "hit_high" as const, from: K.hitHighFrom, to: K.hitHigh }
-            : hbp.part === "다리"
-              ? { clip: "hit_low" as const, from: K.hitLowFrom, to: K.hitLow }
+            : hbp.part === "다리" || hbp.part === "발"
+              ? null
               : { clip: "hit_mid" as const, from: K.hitMidFrom, to: K.hitMid }
           : null;
       if (hbp && react && this.time - this.hbpAt < react.to - react.from) {

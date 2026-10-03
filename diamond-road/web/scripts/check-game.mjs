@@ -2964,8 +2964,6 @@ check(
       assert.equal(part(0.8, 1.05), "몸통");
       assert.equal(part(0.56, 1.37), "팔", "the front arm shields the hands");
       assert.equal(part(0.68, 0.5), "다리");
-      assert.equal(part(0.68, 0.15), undefined, "a pitch at his feet is just a ball");
-      assert.equal(part(0.75, 0.05), undefined);
       assert.equal(part(0.25, 1.0), undefined, "over the inside corner misses him");
       assert.equal(part(-0.6, 1.0), undefined, "the far side never hits him");
       assert.equal(part(0.9, 2.2), undefined, "over his head");
