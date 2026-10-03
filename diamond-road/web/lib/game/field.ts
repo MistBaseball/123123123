@@ -1396,6 +1396,21 @@ export class BaseballField {
       // At most two replays from one play (a double play shows both calls).
       if (frames.length < 10 || this.replayQueue.filter((q) => q.play === play).length >= 2)
         return false;
+      // A runner who is called out leaves the main picture at once; in the replay he stays
+      // where he was tagged/forced, so the call is seen with him in it.
+      if (r.base) {
+        const key = "r" + r.base.runner;
+        let seen: ReplayActor | undefined;
+        frames.forEach((f, i) => {
+          const a = f.actors.get(key);
+          if (a?.on) seen = a;
+          else if (seen) {
+            const copy = new Map(f.actors);
+            copy.set(key, { ...seen });
+            frames[i] = { ...f, actors: copy };
+          }
+        });
+      }
       const defense = this.engine.batting ? "away" : "home",
         offense = this.engine.batting ? "home" : "away",
         lefty = this.engine.fielders[r.fielder]?.hand === "L";
@@ -1524,25 +1539,35 @@ export class BaseballField {
     ball.position.lerpVectors(A.ball, B.ball, u);
     // Camera.
     if (R.base) {
-      // Close play: low and side-on to the runner's path, the bag in the middle.
+      // Close play: from just past the bag, looking back down the runner's path, so the
+      // runner is seen coming the whole way and the fielder takes the throw in front of us.
+      // (Side-on from 5.5 m, the runner stayed out of the picture until the last moment:
+      // the replay showed the fielder standing on the bag and nothing else.)
       const bag = BASES[R.base.base - 1],
         prev = BASES[(R.base.base + 2) % 4],
-        dx = bag.x - prev.x,
-        dz = bag.z - prev.z,
-        dl = Math.hypot(dx, dz) || 1;
-      let sx = -dz / dl,
-        sz = dx / dl;
-      // From outside the diamond (away from its centre).
+        key = R.cast[0].key,
+        start = fr.find((f) => f.actors.get(key)?.on)?.actors.get(key);
+      let ax = (prev.x - bag.x) / (Math.hypot(prev.x - bag.x, prev.z - bag.z) || 1),
+        az = (prev.z - bag.z) / (Math.hypot(prev.x - bag.x, prev.z - bag.z) || 1);
+      // The way he really came (a runner going back to a bag comes from the other side).
+      if (start) {
+        const rx = start.x - bag.x,
+          rz = start.z - bag.z,
+          rl = Math.hypot(rx, rz);
+        if (rl > 2) {
+          ax = rx / rl;
+          az = rz / rl;
+        }
+      }
+      let sx = -az,
+        sz = ax;
+      // A little off the line, on the outside of the diamond (away from its centre).
       if (sx * (bag.x - 0) + sz * (bag.z - 19.4) < 0) {
         sx = -sx;
         sz = -sz;
       }
-      this.replayCam.position.set(
-        bag.x + sx * 5.5 - (dx / dl) * 1.2,
-        1.25,
-        bag.z + sz * 5.5 - (dz / dl) * 1.2,
-      );
-      this.replayCam.lookAt(bag.x, 0.55, bag.z);
+      this.replayCam.position.set(bag.x - ax * 6.5 + sx * 2.6, 1.9, bag.z - az * 6.5 + sz * 2.6);
+      this.replayCam.lookAt(bag.x + ax * 3.5, 0.8, bag.z + az * 3.5);
     } else {
       // Fielding highlight: side-on to his run (the side facing home), following him.
       const f0 = fr[0].actors.get(R.cast[0].key)!,

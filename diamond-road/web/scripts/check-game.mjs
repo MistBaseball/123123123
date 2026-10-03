@@ -2612,16 +2612,19 @@ check("Tier balance applies in season matches only; AI homers stay realistic", (
   g.start("bullpen");
   assert.deepEqual(g.balance, { aiPower: 1, batBoost: 0 }, "practice is neutral");
   // AI contact quality: the curve makes homers rarer than the flat roll (power 65 batter).
-  const homerShare = (curve) => {
+  const homerShare = (curve, power = 65) => {
     const r = seed(9);
     let hr = 0;
     for (let i = 0; i < 20000; i++) {
-      const q = Math.min(1, 0.15 + r() ** curve * 0.75 + 0.065);
-      if ((8 + q * q * 115) * carryScale(65) > HOME_RUN_DISTANCE) hr++;
+      const q0 = Math.min(1, 0.15 + r() ** curve * 0.75 + 0.065),
+        q = q0 > RULES.aiHrKnee ? RULES.aiHrKnee + (q0 - RULES.aiHrKnee) * RULES.aiHrSqueeze : q0;
+      if ((8 + q * q * 115) * carryScale(power) > HOME_RUN_DISTANCE) hr++;
     }
     return hr / 20000;
   };
-  assert(homerShare(1) > 0.08 && homerShare(TIER_BALANCE.high.aiPower) < homerShare(1) * 0.85);
+  // Rival homers are squeezed (v11.16): well under the flat curve, but they still happen.
+  assert(homerShare(TIER_BALANCE.high.aiPower, 110) > 0.005, "big hitters still homer");
+  assert(homerShare(TIER_BALANCE.high.aiPower) < 0.04, `rival homer share ${homerShare(TIER_BALANCE.high.aiPower)}`);
   for (const t of Object.values(TIER_BALANCE)) {
     assert(t.aiPower >= 1 && t.aiPower <= 2 && t.batBoost >= -0.1 && t.batBoost <= 0.2);
   }
@@ -3213,5 +3216,19 @@ check("Difficulty: five levels, saved, and the learned AI plays for the rival te
   }
   assert(asked.top.runner > 0 && asked.top.fielder === 0, JSON.stringify(asked));
   assert(asked.bottom.fielder > 0 && asked.bottom.runner === 0, JSON.stringify(asked));
+});
+check("Manual fielding: with no key held the fielder still goes for the ball", () => {
+  const rnd = aiSeed(4);
+  for (let i = 0; i < 40; i++) {
+    const sit = randomSituation(rnd);
+    if (sit.ball.kind !== "ground") continue;
+    const g = engineFor(sit);
+    g.state.autoField = false;
+    const { stats } = runPlay(sit, null, null, { g });
+    const l = g.state.live;
+    assert.equal(g.state.phase, "result");
+    assert(l.fieldedAt !== null, `ground ball ${i} was picked up`);
+    assert(stats.seconds < 12, `ground ball ${i} settled in ${stats.seconds.toFixed(1)} s`);
+  }
 });
 console.log(`\n${passed} gameplay checks passed.`);

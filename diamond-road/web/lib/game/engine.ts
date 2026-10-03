@@ -469,6 +469,9 @@ export const RULES = {
   /** Learned AI (training ground): runners decide every brainThink s, a chasing holder every
    * holdThink s (fewer, weightier choices than the hand-written AI's 0.1 s reads). */
   brainThink: 0.1,
+  /** Rival contact quality above aiHrKnee keeps only aiHrSqueeze of the rest (fewer homers). */
+  aiHrKnee: 0.78,
+  aiHrSqueeze: 0.4,
   brainEvery: 1,
   /** Turns a learned runner may make on one play. */
   brainTurns: 2,
@@ -1095,11 +1098,12 @@ export const TIER_RATINGS: Record<Exclude<Tier, "high">, { mean: number; spread:
  */
 export const TIER_BALANCE: Record<Tier, { aiPower: number; batBoost: number }> = {
   // Measured with AI steals, tag-ups, hitbox tags/slides, the runner AI and errors
-  // (normal-player bot, 40 careers, 3 innings): see docs/CHANGELOG.md (v11.9).
-  high: { aiPower: 1.32, batBoost: -0.042 },
-  farm: { aiPower: 1.42, batBoost: 0.07 },
-  first: { aiPower: 1.32, batBoost: 0.022 },
-  mlb: { aiPower: 1.27, batBoost: 0.03 },
+  // (normal-player bot, 32 careers, 3 innings): see docs/CHANGELOG.md (v11.16: rival homers
+  // squeezed, so the rivals hit a bit harder overall and our boost is lower).
+  high: { aiPower: 1.0, batBoost: -0.06 },
+  farm: { aiPower: 1.14, batBoost: 0.055 },
+  first: { aiPower: 1.04, batBoost: 0.008 },
+  mlb: { aiPower: 1.01, batBoost: 0.018 },
 };
 const NEUTRAL_BALANCE = { aiPower: 1, batBoost: 0 };
 /** What the career gauge measures in this tier. */
@@ -3095,15 +3099,19 @@ export class BaseballEngine {
             0.9,
           );
         if (this.rng() < prob) {
-          const q = clamp(
-            0.15 +
-              this.rng() ** this.balance.aiPower * 0.75 +
-              b.power * 0.001 -
-              Math.max(0, edge - 0.65) * 0.25 -
-              data.soft * bite,
-            0.05,
-            1,
-          );
+          const q0 = clamp(
+              0.15 +
+                this.rng() ** this.balance.aiPower * 0.75 +
+                b.power * 0.001 -
+                Math.max(0, edge - 0.65) * 0.25 -
+                data.soft * bite,
+              0.05,
+              1,
+            ),
+            // The very top of the rivals' contact is squeezed: about a third of their hits
+            // were home runs (a real season: about one in eight). Those balls now die at the
+            // track or off the wall instead.
+            q = q0 > RULES.aiHrKnee ? RULES.aiHrKnee + (q0 - RULES.aiHrKnee) * RULES.aiHrSqueeze : q0;
           if (this.rng() < 0.19 || q < 0.25) this.foul();
           else this.contact(q, (this.rng() - 0.5) * 0.2);
         } else this.strike(true, "변화와 구속으로 헛스윙 유도");
@@ -4792,7 +4800,11 @@ export class BaseballEngine {
         oldPos = { ...l.fielderPos },
         // Before landing: run to the catch point. After it lands: cut off the rolling ball.
         target = !l.ground && !l.bounced ? l.catchPoint : this.interceptPoint(l);
-      if (!s.autoField && !this.batting) {
+      // Manual fielding: WASD steers him; with no key held he runs to the ball on his own
+      // (before, nobody moved and the batter circled the bases while the ball lay there).
+      const steering =
+        !s.autoField && !this.batting && ["w", "a", "s", "d"].some((k) => this.keys.has(k));
+      if (steering) {
         const dx = (this.keys.has("d") ? 1 : 0) - (this.keys.has("a") ? 1 : 0),
           dz = (this.keys.has("w") ? 1 : 0) - (this.keys.has("s") ? 1 : 0),
           n = Math.hypot(dx, dz) || 1;
