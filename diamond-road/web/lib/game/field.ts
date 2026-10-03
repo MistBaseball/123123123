@@ -1230,7 +1230,7 @@ export class BaseballField {
         react = hbp
           ? hbp.part === "머리"
             ? { clip: "hit_high" as const, from: K.hitHighFrom, to: K.hitHigh }
-            : hbp.part === "다리" || hbp.part === "발"
+            : hbp.part === "다리"
               ? { clip: "hit_low" as const, from: K.hitLowFrom, to: K.hitLow }
               : { clip: "hit_mid" as const, from: K.hitMidFrom, to: K.hitMid }
           : null;

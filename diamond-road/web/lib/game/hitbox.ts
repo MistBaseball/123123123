@@ -29,9 +29,11 @@ export function segmentDistance(q: P3, a: P3, b: P3) {
 
 /** Ball radius (m). */
 export const BALL_R = 0.037;
+/** Below this height (m) a pitch never counts as hitting the batter (feet, ankles). */
+export const BALL_LOW = 0.3;
 
 /**
- * The right-handed batter's body in his stance beside the plate (bones of the idle_bat_r clip,
+ * The right-handed batter's body in his stance (no feet: see BALL_LOW) beside the plate (bones of the idle_bat_r clip,
  * model at x = 0.82). A left-handed batter is the mirror image (x → −x).
  */
 // (Hands before arms: where they overlap, the hands are named.)
@@ -45,10 +47,8 @@ const RIGHTY: Capsule[] = [
   { a: p(0.74, 1.39, -0.37), b: p(0.57, 1.38, -0.22), r: 0.05, part: "팔" },
   { a: p(0.8, 0.83, 0.15), b: p(0.64, 0.47, 0.3), r: 0.09, part: "다리" },
   { a: p(0.64, 0.47, 0.3), b: p(0.76, 0.14, 0.35), r: 0.07, part: "다리" },
-  { a: p(0.76, 0.12, 0.35), b: p(0.61, 0.04, 0.4), r: 0.05, part: "발" },
   { a: p(0.83, 0.84, -0.04), b: p(0.66, 0.48, -0.17), r: 0.09, part: "다리" },
   { a: p(0.66, 0.48, -0.17), b: p(0.76, 0.15, -0.22), r: 0.07, part: "다리" },
-  { a: p(0.76, 0.13, -0.22), b: p(0.62, 0.04, -0.29), r: 0.05, part: "발" },
 ];
 const mirror = (c: Capsule): Capsule => ({
   ...c,
@@ -66,8 +66,9 @@ export function ballHitsBody(path: P3[], hand: "R" | "L") {
   const body = batterBody(hand);
   for (let i = 0; i < path.length; i++) {
     const q = path[i];
-    // Quick reject: nowhere near the batter's box.
-    if ((hand === "L" ? -q.x : q.x) < 0.3 || q.z > 0.75 || q.z < -0.6) continue;
+    // Quick reject: nowhere near the batter's box. Feet and ankles are left out on purpose
+    // (a ball at his shoes looked odd): a pitch that low is just a ball.
+    if ((hand === "L" ? -q.x : q.x) < 0.3 || q.z > 0.75 || q.z < -0.6 || q.y < BALL_LOW) continue;
     for (const c of body)
       if (segmentDistance(q, c.a, c.b) <= c.r + BALL_R)
         return { part: c.part, point: { ...q }, index: i };
