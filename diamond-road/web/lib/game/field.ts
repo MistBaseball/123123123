@@ -84,6 +84,10 @@ const SWING_TIME = 0.42;
 /** Highlight replay: slow-motion speed and the window around the catch (s of play time). */
 /** Batter keeps swinging this long into the play before the runner takes over (s). */
 const BAT_FOLLOW = 0.34;
+/** Drawn ball radius (enlarged to read on screen) and the real one the strike call uses
+ * (insideZone adds it to the zone's edges: 0.2515 = 0.215 + 0.0365). */
+const BALL_DRAWN = 0.075,
+  BALL_RADIUS = 0.0365;
 const REPLAY_SLOW = 0.4,
   REPLAY_BEFORE = 1.3,
   REPLAY_AFTER = 1.1;
@@ -138,6 +142,11 @@ export class BaseballField {
   private hint: THREE.Group;
   private zone: THREE.Group;
   private trail: THREE.Line;
+  /** 180 km/h and up: a blue fire around the ball and a comet tail of glows behind it. */
+  private fire: THREE.Mesh[] = [];
+  /** Limit break: an electric gold aura around our player and a ring on the ground. */
+  private aura: THREE.Mesh | null = null;
+  private auraRing: THREE.Mesh | null = null;
   private trailPositions: THREE.Vector3[] = [];
   private landing: THREE.Mesh;
   private time = 0;
@@ -297,7 +306,7 @@ export class BaseballField {
     }
     // Leather ball with red stitches; a faint glow keeps it readable against the crowd.
     this.ball = new THREE.Mesh(
-      new THREE.SphereGeometry(0.075, 24, 16),
+      new THREE.SphereGeometry(BALL_DRAWN, 24, 16),
       new THREE.MeshStandardMaterial({
         map: tex.ballTexture(),
         roughness: 0.45,
@@ -387,6 +396,7 @@ export class BaseballField {
       new THREE.LineBasicMaterial({ color: "#ffe3a1", transparent: true, opacity: 0.8 }),
     );
     this.scene.add(this.trail);
+    this.buildEffects();
     // Real player models: load in the background; the drawn figures play until they are in.
     loadAvatarAssets()
       .then((assets) => {
@@ -1605,6 +1615,9 @@ export class BaseballField {
     hide(this.ball);
     hide(this.halo);
     hide(this.trail);
+    for (const m of this.fire) hide(m);
+    if (this.aura) hide(this.aura);
+    if (this.auraRing) hide(this.auraRing);
     ball.visible = A.ballOn;
     const r = this.renderer,
       size = r.getSize(new THREE.Vector2()),
@@ -1665,6 +1678,90 @@ export class BaseballField {
   }
   /** Number of rain streaks (kept modest for low-end laptops). */
   private static RAIN_DROPS = 1100;
+  /** Soft round glow (white centre fading out), tinted by the material colour. */
+  private glowTexture(): THREE.Texture {
+    const c = document.createElement("canvas");
+    c.width = c.height = 64;
+    const g = c.getContext("2d")!,
+      grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grad.addColorStop(0, "rgba(255,255,255,1)");
+    grad.addColorStop(0.35, "rgba(255,255,255,0.55)");
+    grad.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 64, 64);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  }
+  private buildEffects() {
+    const tex = this.glowTexture(),
+      glow = (color: string) =>
+        new THREE.MeshBasicMaterial({
+          map: tex,
+          color,
+          transparent: true,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        });
+    for (let i = 0; i < 9; i++) {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), glow(i ? "#1f6fff" : "#4fb0ff"));
+      m.visible = false;
+      m.renderOrder = 3;
+      this.fire.push(m);
+      this.scene.add(m);
+    }
+    this.aura = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 3.2), glow("#ffb21f"));
+    this.aura.visible = false;
+    this.aura.renderOrder = 3;
+    this.scene.add(this.aura);
+    this.auraRing = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.8, 40), glow("#ffd75e"));
+    this.auraRing.rotation.x = -Math.PI / 2;
+    this.auraRing.visible = false;
+    this.scene.add(this.auraRing);
+  }
+  /** Blue fire on 180 km/h+ pitches; the limit-break aura on our player. */
+  private updateEffects(dt: number) {
+    const s = this.engine.state,
+      f = s.flight,
+      blue = s.phase === "flight" && !!f && f.speed >= 180 && this.ball.visible;
+    this.fire.forEach((m, i) => {
+      const at = i === 0 ? this.ball.position : this.trailPositions[this.trailPositions.length - 1 - i * 3];
+      m.visible = blue && !!at;
+      if (!m.visible || !at) return;
+      m.position.copy(at);
+      m.quaternion.copy(this.camera.quaternion);
+      const flick = 1 + Math.sin(this.time * 40 + i * 1.7) * 0.12,
+        size = (i === 0 ? 0.7 : 0.6 * (1 - i / 11)) * this.ball.scale.x * flick;
+      m.scale.setScalar(size);
+      (m.material as THREE.MeshBasicMaterial).opacity = i === 0 ? 0.9 : 0.75 * (1 - i / 9);
+    });
+    // Limit break: on the pitcher when we pitch, on the batter when we bat.
+    const on = this.engine.limitActive && s.mode === "match",
+      fig = this.engine.batting ? this.batter : this.players[0],
+      where = fig ? (this.avatars?.get(fig)?.object.position ?? fig.root.position) : null;
+    for (const m of [this.aura, this.auraRing]) if (m) m.visible = on && !!where;
+    if (on && where && this.aura && this.auraRing) {
+      const pulse = 0.5 + 0.5 * Math.sin(this.time * 9);
+      // Just behind him as the camera sees him, so the glow frames him instead of covering him.
+      const bx = where.x - this.camera.position.x,
+        bz = where.z - this.camera.position.z,
+        bl = Math.hypot(bx, bz) || 1;
+      this.aura.position.set(where.x + (bx / bl) * 0.5, 1.25, where.z + (bz / bl) * 0.5);
+      // Upright billboard: turns to face the camera around the vertical only.
+      this.aura.rotation.set(
+        0,
+        Math.atan2(this.camera.position.x - where.x, this.camera.position.z - where.z),
+        0,
+      );
+      this.aura.scale.set(1 + pulse * 0.08, 1 + pulse * 0.05, 1);
+      (this.aura.material as THREE.MeshBasicMaterial).opacity = 0.7 + pulse * 0.3;
+      const grow = (this.time * 1.4) % 1;
+      this.auraRing.position.set(where.x, 0.04, where.z);
+      this.auraRing.scale.setScalar(0.8 + grow * 1.4);
+      (this.auraRing.material as THREE.MeshBasicMaterial).opacity = 0.8 * (1 - grow);
+    }
+    void dt;
+  }
   private updateWeather(dt: number) {
     const want = this.engine.raining ? "rain" : "clear";
     if (want !== this.weatherShown) this.setWeather(want);
@@ -2449,11 +2546,23 @@ export class BaseballField {
         dt * (s.phase === "flight" && s.flight && pitchData(s.flight.pitch).flutter ? 1.2 : 30);
     this.ball.visible = s.phase === "flight" || s.phase === "inplay" || s.phase === "result";
     const ballDistance = this.camera.position.distanceTo(this.ball.position);
-    this.ball.scale.setScalar(Math.max(1, ballDistance / 18));
+    // The ball is drawn about twice its real size (and bigger far away) so it reads on screen.
+    // From the catcher's view that made pitches just off the plate look like they clipped the
+    // zone and were still called balls: near the plate it shrinks to its real size (the call
+    // uses the real ball, BALL_RADIUS), and the glow goes, so what touches the box is a strike.
+    const real = BALL_RADIUS / BALL_DRAWN,
+      nearPlate =
+        cam === "catcher" && (s.phase === "flight" || s.phase === "result")
+          ? clamp(1 - this.ball.position.z / 4, 0, 1)
+          : // From the mound the call is read where the ball came to rest at the plate.
+            cam === "pitcher" && s.phase === "result" && !s.live
+            ? 1
+            : 0;
+    this.ball.scale.setScalar(lerp(Math.max(1, ballDistance / 18), real, nearPlate));
     this.halo.position.copy(this.ball.position);
     this.halo.quaternion.copy(this.camera.quaternion);
     this.halo.scale.copy(this.ball.scale);
-    this.halo.visible = this.ball.visible && s.phase !== "result";
+    this.halo.visible = this.ball.visible && s.phase !== "result" && nearPlate < 0.5;
     this.zone.visible = s.phase !== "inplay" && (cam === "pitcher" || cam === "catcher");
     this.target.visible = this.zone.visible && s.phase !== "result";
     const aim = s.flight && !this.engine.batting ? s.flight.aim : s.aim;
@@ -2492,11 +2601,13 @@ export class BaseballField {
     this.trail.geometry = new THREE.BufferGeometry().setFromPoints(this.trailPositions);
     const material = this.trail.material as THREE.LineBasicMaterial;
     material.color.set(pitchData(f?.pitch ?? s.selected).color).lerp(HOT, heat * 0.7);
+    if (s.phase === "flight" && f && f.speed >= 180) material.color.set("#4fb6ff");
     material.opacity = 0.4 + heat * 0.6;
     // Ease the pitcher's and batter's joints toward this frame's pose, so phase changes
     // (set → wind-up → release → back to the set, swing → stance) never snap.
     if (this.avatars) this.driveAvatars(dt, cam);
     this.updateWeather(dt);
+    this.updateEffects(dt);
     // Only the drawn image is smoothed: the computed pose is put back after rendering, so the
     // next frame's pose code never reads a blended (re-decomposed) rotation.
     const rate = 1 - Math.exp(-dt * 26),

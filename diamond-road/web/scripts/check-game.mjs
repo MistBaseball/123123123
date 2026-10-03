@@ -64,6 +64,8 @@ import {
   WALL_HEIGHT,
   carryScale,
   HOME_RUN_DISTANCE,
+  zoneCall,
+  zoneMiss,
 } from "../lib/game/engine.ts";
 import {
   touchDistance,
@@ -3230,5 +3232,15 @@ check("Manual fielding: with no key held the fielder still goes for the ball", (
     assert(l.fieldedAt !== null, `ground ball ${i} was picked up`);
     assert(stats.seconds < 12, `ground ball ${i} settled in ${stats.seconds.toFixed(1)} s`);
   }
+});
+check("Close pitches: the call says by how much it missed or clipped the zone", () => {
+  assert.equal(zoneCall(V(0.27, 0.9, 0)), "존에서 공 2 cm 빠짐 · 볼");
+  assert.equal(zoneCall(V(0.24, 0.9, 0)), "존 끝에 걸침 · 스트라이크");
+  assert.equal(zoneCall(V(0, 0.9, 0)), "스트라이크 존 통과");
+  assert.equal(zoneCall(V(0.6, 0.9, 0)), "스트라이크 존 바깥");
+  // Every miss > 0 is a ball and every miss ≤ 0 a strike (same line as the call).
+  for (let x = -0.4; x <= 0.4; x += 0.013)
+    for (let y = 0.3; y <= 1.6; y += 0.017)
+      assert.equal(zoneMiss(V(x, y, 0)) <= 0, insideZone(V(x, y, 0)));
 });
 console.log(`\n${passed} gameplay checks passed.`);

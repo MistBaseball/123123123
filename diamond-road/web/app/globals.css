@@ -1028,14 +1028,25 @@ kbd {
 .stamina [data-slot="progress-indicator"] {
   background: #9cc6b1;
 }
+/* Key guide: stays on screen at the bottom while the match is in view (it used to sit
+   under the line score and stats, below the fold on a laptop screen). */
 .controls-footer {
   display: flex;
-  gap: 24px;
+  gap: 18px;
   align-items: center;
-  padding: 19px 0;
-  color: #a0b1b8;
-  font-size: 0.75rem;
+  padding: 9px 16px;
+  margin-top: 12px;
+  color: #c3d0d5;
+  font-size: 0.8rem;
   flex-wrap: wrap;
+  position: sticky;
+  bottom: 0;
+  z-index: 30;
+  background: rgba(13, 22, 29, 0.92);
+  backdrop-filter: blur(6px);
+  border: 1px solid #2d3c44;
+  border-radius: 10px 10px 0 0;
+  box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.35);
 }
 .controls-footer > span {
   display: flex;
@@ -1043,12 +1054,14 @@ kbd {
   gap: 7px;
 }
 .controls-footer b {
-  font-weight: 500;
-  color: #cdd6d4;
+  font-weight: 600;
+  color: #eef2ef;
 }
 .controls-footer kbd {
-  font-size: 0.75rem;
-  height: 19px;
+  font-size: 0.78rem;
+  height: 20px;
+  color: #f2c66d;
+  border-color: #5a6a72;
 }
 .controls-footer > button {
   margin-left: auto;
@@ -5628,4 +5641,12 @@ kbd {
 }
 .ai-power-meter i.on {
   background: #e3a93a;
+}
+
+@media (max-width: 720px) {
+  /* Phones: no keyboard, and a fixed bar would cover the field. */
+  .controls-footer {
+    position: static;
+    border-radius: 10px;
+  }
 }

@@ -3396,7 +3396,7 @@ export default function DiamondGame() {
         <div className="controls-footer">
           <span>
             <MousePointer2 size={15} />
-            <b>조준 + 클릭</b> 투구 / 스윙
+            <b>조준 + 클릭</b> 또는 <kbd>Space</kbd> 투구 / 스윙
           </span>
           <span>
             <kbd>1–0</kbd> <kbd>=</kbd> <kbd>[</kbd> <kbd>]</kbd> 구종 · <kbd>1–4</kbd> 송구 ·{" "}
@@ -3406,7 +3406,7 @@ export default function DiamondGame() {
             <kbd>WASD</kbd> 수동 수비
           </span>
           <span>
-            <kbd>P</kbd> 일시 정지
+            <kbd>C</kbd> 카메라 · <kbd>P</kbd> 일시 정지
           </span>
           <button onClick={() => setHelp(true)}>
             조작법 보기 <ArrowUpRight size={14} />

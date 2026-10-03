@@ -1197,6 +1197,27 @@ export const visualFlightTime = (
 export function insideZone(p: Vec) {
   return Math.abs(p.x) <= 0.2515 && p.y >= 0.5135 && p.y <= 1.3865;
 }
+/**
+ * How far the ball was from touching the zone (m): + = it missed by that much (a ball),
+ * − = it was inside by that much (a strike). The ball's radius is counted (insideZone).
+ */
+export function zoneMiss(p: Vec) {
+  const out = Math.max(Math.abs(p.x) - 0.2515, 0.5135 - p.y, p.y - 1.3865);
+  if (out > 0) {
+    // Off a corner: distance to the corner, not to the nearer edge's line.
+    const dx = Math.max(0, Math.abs(p.x) - 0.2515),
+      dy = Math.max(0, 0.5135 - p.y, p.y - 1.3865);
+    return Math.hypot(dx, dy);
+  }
+  return out;
+}
+/** Detail text of a taken pitch; close ones say by how much (the ball reads big on screen). */
+export function zoneCall(p: Vec) {
+  const m = zoneMiss(p),
+    cm = Math.max(1, Math.round(Math.abs(m) * 100));
+  if (m > 0) return m < 0.06 ? `존에서 공 ${cm} cm 빠짐 · 볼` : "스트라이크 존 바깥";
+  return -m < 0.04 ? `존 끝에 걸침 · 스트라이크` : "스트라이크 존 통과";
+}
 // Looking out from home, first base is on the right (world -X).
 export const BASES = [V(-19.4, 0.12, 19.4), V(0, 0.12, 38.8), V(19.4, 0.12, 19.4), V(0, 0.12, 0)];
 export const DEFENSE = [
@@ -1927,6 +1948,8 @@ export type GameState = {
   selected: PitchId;
   effort: number;
   difficulty: Difficulty;
+  /** Carry of the last ball hit in the air (m), for the result line; null for grounders. */
+  lastDistance: number | null;
   swingStyle: "contact" | "power" | "bunt";
   sound: boolean;
   message: string;
@@ -2030,6 +2053,7 @@ const initial = (career: Career, mode: Mode = "match", maxInnings = 3): GameStat
   selected: "fastball",
   effort: 90,
   difficulty: difficultySetting(),
+  lastDistance: null,
   swingStyle: "contact",
   sound: false,
   message: mode === "batting" ? "타석에 들어섰습니다" : "첫 공, 어디로 던질까요?",
@@ -3060,7 +3084,7 @@ export class BaseballEngine {
           batAim: null,
         };
         if (hbp) this.hitByPitch();
-        else if (zone) this.strike(false, "스트라이크 존 통과");
+        else if (zone) this.strike(false, zoneCall(f.target));
         else this.ball();
       }
     } else {
@@ -3115,7 +3139,7 @@ export class BaseballEngine {
           if (this.rng() < 0.19 || q < 0.25) this.foul();
           else this.contact(q, (this.rng() - 0.5) * 0.2);
         } else this.strike(true, "변화와 구속으로 헛스윙 유도");
-      } else if (zone) this.strike(false, "스트라이크 존 통과");
+      } else if (zone) this.strike(false, zoneCall(f.target));
       else this.ball();
     }
   }
@@ -3165,7 +3189,12 @@ export class BaseballEngine {
       this.walk();
       if (this.batting) this.earn(XP.walk, "볼넷·사구");
       this.result("BASE ON BALLS", "볼넷 · 타자 1루 진루", this.batting ? "gold" : "red");
-    } else this.settlePitch("BALL", "스트라이크 존 바깥", this.batting ? "gold" : "neutral");
+    } else
+      this.settlePitch(
+        "BALL",
+        s.flight ? zoneCall(s.flight.target) : "스트라이크 존 바깥",
+        this.batting ? "gold" : "neutral",
+      );
   }
   /** Hit by pitch: the batter takes first and forced runners move up one base. */
   /** Where the current pitch first touches the batter's body hitbox (or null). */
@@ -5276,6 +5305,14 @@ export class BaseballEngine {
       message = "RUNDOWN OUT";
       detail = "런다운 끝에 태그 아웃" + (scored ? ` · ${scored}점 득점` : "");
     }
+    // How far it flew (a ball in the air: where it came down or was caught).
+    if (!l.ground && !l.bunt) {
+      const at = l.caughtFly ? l.catchPoint : l.land;
+      s.lastDistance = Math.round(Math.hypot(at.x, at.z));
+      detail += ` · 비거리 ${s.lastDistance} m`;
+      // A home run gets its distance up big.
+      if (l.resultBases === 4) this.callout(`비거리 ${s.lastDistance}m`, this.batting ? "gold" : "red");
+    } else s.lastDistance = null;
     this.result(
       message,
       detail,
