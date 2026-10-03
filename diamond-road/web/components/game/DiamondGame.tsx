@@ -35,6 +35,7 @@ import {
 import { TrainingMinigame, TRAINING_GAMES } from "@/components/game/Minigames";
 import { PatchNotesButton } from "@/components/game/PatchNotes";
 import { HallOfFameButton, HofResetForm } from "@/components/game/HallOfFame";
+import { CloudSave, syncCareer } from "@/components/game/CloudSave";
 import { GuideDialog, GuideNotice } from "@/components/game/Guide";
 import {
   Dialog,
@@ -2457,6 +2458,12 @@ export default function DiamondGame() {
       engine.persist();
     }
   }, [devUnlocked, s.career, engine]);
+  // Personal save code: the career goes up after every match (and day / stage change).
+  useEffect(() => {
+    const t = window.setTimeout(() => void syncCareer(s.career), 1500);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s.career.games, s.career.day, s.career.stage, s.career.league, s.career.name]);
   const stage = useRef<HTMLDivElement>(null);
   const audio = useRef<AudioContext | null>(null);
   const [innings, setInnings] = useState(3);
@@ -2471,6 +2478,11 @@ export default function DiamondGame() {
   };
   useEffect(() => {
     engine.load();
+    // A match left in the middle (refresh, closed tab) picks up where it stopped.
+    if (engine.resumeMatch()) {
+      setView("game");
+      toast.success("하던 경기를 이어서 합니다");
+    }
     engine.onSound((kind) => {
       try {
         const a = audio.current ?? (audio.current = new AudioContext());
@@ -3617,6 +3629,14 @@ export default function DiamondGame() {
               onCheckedChange={(v) => engine.set("sound", v)}
             />
           </div>
+          <CloudSave
+            engine={engine}
+            career={s.career}
+            onLoaded={() => {
+              setSettings(false);
+              setView("life");
+            }}
+          />
           <button
             className="primary-button"
             onClick={() => {

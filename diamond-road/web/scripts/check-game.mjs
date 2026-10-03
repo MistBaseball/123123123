@@ -3038,4 +3038,45 @@ check(
     assert(!tagReaches(holder, V(2.5, 0, 36.3), dir, "slide"));
   },
 );
+check("A refresh picks the match up again; a bad save code career is refused", () => {
+  const store = new Map(),
+    had = globalThis.localStorage;
+  globalThis.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => store.set(k, String(v)),
+    removeItem: (k) => store.delete(k),
+  };
+  try {
+    const g = new BaseballEngine(),
+      c = newCareer();
+    c.created = true;
+    c.team = "triples";
+    g.state.career = c;
+    g.start("match", 3);
+    Object.assign(g.state, { inning: 2, half: "bottom", outs: 1, balls: 2, strikes: 1, bases: [true, false, true], score: [1, 2], pitchCount: [20, 18], order: [4, 3], phase: "ready" });
+    g.emit();
+    assert(store.has("diamond-road-match-v1"), "saved between pitches");
+    g.persist();
+    const h = new BaseballEngine();
+    assert(h.load());
+    assert(h.resumeMatch(), "the match comes back after a refresh");
+    const s = h.state;
+    assert.deepEqual([s.mode, s.inning, s.half, s.outs, s.balls, s.strikes, s.score], ["match", 2, "bottom", 1, 2, 1, [1, 2]]);
+    assert.deepEqual(s.bases, [true, false, true]);
+    // A different day (match already over elsewhere) does not resume.
+    const k = new BaseballEngine();
+    k.load();
+    k.state.career.day += 1;
+    assert(!k.resumeMatch());
+    assert(!store.has("diamond-road-match-v1"));
+    // Loading a career by code: junk is refused and the old career stays.
+    const name = h.state.career.name;
+    assert(!h.importCareer({ hello: 1 }));
+    assert.equal(h.state.career.name, name);
+    assert(h.importCareer({ ...c, name: "코드선수" }));
+    assert.equal(h.state.career.name, "코드선수");
+  } finally {
+    globalThis.localStorage = had;
+  }
+});
 console.log(`\n${passed} gameplay checks passed.`);

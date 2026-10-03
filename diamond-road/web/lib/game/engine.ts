@@ -371,6 +371,36 @@ export const HIDDEN_UNLOCKS: { id: PitchId; test: (stats: Career["stats"]) => bo
 export type Weather = "clear" | "rain";
 /** Rain on/off from the settings, remembered in this browser (default on). */
 const RAIN_KEY = "diamond-road-rain";
+/** The match in progress (between pitches), so a refresh does not lose it. */
+const MATCH_KEY = "diamond-road-match-v1";
+const MATCH_FIELDS = [
+  "maxInnings",
+  "inning",
+  "half",
+  "score",
+  "lines",
+  "hits",
+  "errors",
+  "balls",
+  "strikes",
+  "outs",
+  "bases",
+  "order",
+  "pitchCount",
+  "energy",
+  "selected",
+  "effort",
+  "swingStyle",
+  "history",
+  "log",
+  "matchXp",
+  "pickoffs",
+  "weather",
+  "limitUsed",
+  "pineTar",
+  "cheerUsed",
+  "cheerInning",
+] as const;
 export const rainSetting = () => {
   try {
     return typeof localStorage === "undefined" || localStorage.getItem(RAIN_KEY) !== "off";
@@ -2017,6 +2047,7 @@ export class BaseballEngine {
   };
   getSnapshot = () => this.snapshot;
   emit() {
+    this.autoSaveMatch();
     this.snapshot = { ...this.state };
     this.listeners.forEach((fn) => fn());
   }
@@ -2206,9 +2237,14 @@ export class BaseballEngine {
       this.state.saveStatus = "저장 공간 사용 불가 · 현재 플레이는 유지";
     }
   }
-  load() {
+  /**
+   * Loads the saved career (this browser's, or `raw` JSON from a cloud save code).
+   * Returns false when there was nothing valid to load.
+   */
+  load(raw: string | null = null): boolean {
+    let ok = false;
     try {
-      const raw = localStorage.getItem("diamond-road-career-v1");
+      raw ??= localStorage.getItem("diamond-road-career-v1");
       if (raw) {
         const c = JSON.parse(raw),
           keys = Object.keys(newCareer().stats) as (keyof Career["stats"])[],
@@ -2306,11 +2342,122 @@ export class BaseballEngine {
         if (this.state.mode === "match" && !this.matchActive)
           this.state.weather = this.state.rainOn ? weatherOf(clean) : "clear";
         if (this.checkHiddenPitches()) this.persist();
+        ok = true;
       }
     } catch {
       this.state.saveStatus = "저장 데이터를 읽지 못해 기본 선수로 시작";
     }
     this.emit();
+    return ok;
+  }
+  /**
+   * A career from a cloud save code: checked like a local save, then it replaces this one
+   * (any match in progress here is dropped). False if the data is not a valid career.
+   */
+  importCareer(data: unknown): boolean {
+    const before = this.state.career;
+    if (!this.load(JSON.stringify(data))) {
+      this.state.career = before;
+      return false;
+    }
+    this.clearMatchSave();
+    this.start("match", this.state.maxInnings);
+    this.persist();
+    this.emit();
+    return true;
+  }
+  /**
+   * The match in progress is kept between pitches (this browser), so a refresh or a closed
+   * tab picks it up again (`resumeMatch`).
+   */
+  private matchSaved = "";
+  private autoSaveMatch() {
+    const s = this.state;
+    if (s.mode !== "match") return;
+    if (s.phase === "finished") {
+      this.clearMatchSave();
+      return;
+    }
+    if ((s.phase !== "ready" && s.phase !== "between") || !this.matchActive) return;
+    const fields = Object.fromEntries(MATCH_FIELDS.map((k) => [k, s[k]])),
+      data = JSON.stringify({
+        v: 1,
+        name: s.career.name,
+        day: s.career.day,
+        games: s.career.games,
+        phase: s.phase,
+        fields,
+        extra: {
+          matchStrikeouts: this.matchStrikeouts,
+          matchHits: this.matchHits,
+          matchRuns: this.matchRuns,
+          xpParts: [...this.xpParts],
+          fullCountKey: this.fullCountKey,
+        },
+      });
+    if (data === this.matchSaved) return;
+    this.matchSaved = data;
+    try {
+      localStorage.setItem(MATCH_KEY, data);
+    } catch {
+      /* private mode: the match lasts for this visit */
+    }
+  }
+  private clearMatchSave() {
+    this.matchSaved = "";
+    try {
+      if (typeof localStorage !== "undefined") localStorage.removeItem(MATCH_KEY);
+    } catch {
+      /* nothing saved */
+    }
+  }
+  /** After load(): picks up a match left in the middle (same player, same day). */
+  resumeMatch(): boolean {
+    try {
+      const m = JSON.parse(localStorage.getItem(MATCH_KEY) ?? "null"),
+        c = this.state.career;
+      if (
+        !m ||
+        m.v !== 1 ||
+        m.name !== c.name ||
+        m.day !== c.day ||
+        m.games !== c.games ||
+        (m.phase !== "ready" && m.phase !== "between") ||
+        typeof m.fields !== "object"
+      ) {
+        this.clearMatchSave();
+        return false;
+      }
+      const prev = this.state,
+        st = initial(c, "match", m.fields.maxInnings === 9 ? 9 : 3);
+      for (const k of [
+        "sound",
+        "difficulty",
+        "autoField",
+        "autoCamera",
+        "nameTags",
+        "rainOn",
+      ] as const)
+        (st as Record<string, unknown>)[k] = prev[k];
+      for (const k of MATCH_FIELDS)
+        if (m.fields[k] !== undefined) (st as Record<string, unknown>)[k] = m.fields[k];
+      st.phase = m.phase;
+      st.timer = 1.5;
+      st.message = "경기를 이어서 합니다";
+      st.detail = `${st.inning}회${st.half === "top" ? "초" : "말"} · ${st.score[1]} : ${st.score[0]}`;
+      this.state = st;
+      this.recorded = false;
+      this.matchStrikeouts = Number(m.extra?.matchStrikeouts) || 0;
+      this.matchHits = Number(m.extra?.matchHits) || 0;
+      this.matchRuns = Number(m.extra?.matchRuns) || 0;
+      this.xpParts = new Map(Array.isArray(m.extra?.xpParts) ? m.extra.xpParts : []);
+      this.fullCountKey = typeof m.extra?.fullCountKey === "string" ? m.extra.fullCountKey : "";
+      this.matchSaved = JSON.stringify(m);
+      this.emit();
+      return true;
+    } catch {
+      return false;
+    }
   }
   set<K extends keyof GameState>(key: K, value: GameState[K]) {
     this.state[key] = value;
@@ -2332,6 +2479,7 @@ export class BaseballEngine {
   }
   start(mode: Mode, maxInnings = this.state.maxInnings) {
     const previous = this.state;
+    this.clearMatchSave();
     this.state = initial(previous.career, mode, maxInnings === 9 ? 9 : 3);
     this.state.sound = previous.sound;
     this.state.difficulty = previous.difficulty;
