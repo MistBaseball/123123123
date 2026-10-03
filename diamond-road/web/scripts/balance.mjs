@@ -1,7 +1,7 @@
 // Balance check: like playtime.mjs, plus results per tier (MLB=n plays n MLB games after signing).
 // Real time = engine clock (every tick) + human think/menu time (assumptions in T).
 // Usage (web folder): MLB=12 node --experimental-strip-types scripts/balance.mjs [normal|good] [seed]
-//   INN=9 for 9-inning matches.
+//   INN=9 for 9-inning matches. DIFF=impossible (etc.) for another difficulty and its rival AI.
 import {
   BaseballEngine,
   newCareer,
@@ -54,6 +54,12 @@ c.created = true;
 c.team = "triples";
 c.name = "테스트";
 const g = new BaseballEngine(c, rng);
+// DIFF=baby|easy|normal|hard|impossible: difficulty, with that level's rival AI.
+if (process.env.DIFF) {
+  const { applyLevel } = await import("../lib/ai/levels.ts");
+  g.state.difficulty = process.env.DIFF;
+  applyLevel(g, process.env.DIFF);
+}
 let real = 0;
 const milestones = {};
 const stats = { matches: 0, wins: 0, k: 0, hits: 0, runsAllowed: 0, matchSec: [] };

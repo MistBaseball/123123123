@@ -5593,3 +5593,39 @@ kbd {
     flex: 1;
   }
 }
+
+/* Difficulty with the rival AI's strength next to it */
+.difficulty-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.difficulty-row > button {
+  flex: 1;
+  min-width: 0;
+}
+.ai-power {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.ai-power small {
+  opacity: 0.7;
+}
+.ai-power-meter {
+  display: inline-flex;
+  gap: 2px;
+}
+.ai-power-meter i {
+  width: 8px;
+  height: 12px;
+  border-radius: 2px;
+  background: rgba(127, 127, 127, 0.3);
+}
+.ai-power-meter i.on {
+  background: #e3a93a;
+}

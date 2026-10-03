@@ -695,12 +695,36 @@ export const STAGES: Record<
     trainGain: 2,
   },
 };
+/**
+ * Difficulty (settings): timing room for the player, the rival's hitting, training speed,
+ * and the rival team's runner/fielder AI (learned in the AI training ground, lib/ai/levels.ts;
+ * "normal" keeps the hand-written AI). Remembered in this browser.
+ */
+export type Difficulty = "baby" | "easy" | "normal" | "hard" | "impossible";
+export const DIFFICULTIES: { id: Difficulty; label: string; note: string }[] = [
+  { id: "impossible", label: "불가능", note: "아주 빠른 승부" },
+  { id: "hard", label: "어려움", note: "빠른 승부" },
+  { id: "normal", label: "보통", note: "" },
+  { id: "easy", label: "쉬움", note: "여유로운 타이밍 · 훈련 2배" },
+  { id: "baby", label: "응애", note: "아주 여유로운 타이밍 · 훈련 2배" },
+];
+const DIFF_KEY = "diamond-road-difficulty";
+const isDifficulty = (v: unknown): v is Difficulty => DIFFICULTIES.some((d) => d.id === v);
+export const difficultySetting = (): Difficulty => {
+  try {
+    const v = typeof localStorage === "undefined" ? null : localStorage.getItem(DIFF_KEY);
+    return isDifficulty(v) ? v : "normal";
+  } catch {
+    return "normal";
+  }
+};
+const byDifficulty = <T,>(d: Difficulty, v: Record<Difficulty, T>) => v[d] ?? v.normal;
 export const swingWindow = (
-  difficulty: "easy" | "normal" | "hard",
+  difficulty: Difficulty,
   stage: Stage = "high",
   style: SwingStyle = "contact",
 ) =>
-  (difficulty === "easy" ? 0.26 : difficulty === "normal" ? 0.18 : 0.12) *
+  byDifficulty(difficulty, { baby: 0.3, easy: 0.26, normal: 0.18, hard: 0.12, impossible: 0.1 }) *
   STAGES[stage].swingWindow *
   SWING_STYLES[style].window;
 /** Wild-pitch chance for one pitch; rises sharply as the pitcher tires. */
@@ -755,8 +779,8 @@ export const batReach = (contact: number, style: SwingStyle) =>
   (0.12 + clamp(over(contact), 0, 150) * 0.001) * SWING_STYLES[style].reach;
 /** Experience points: in-match plays, match result and daily actions. */
 /** Training stat gain multiplier: easy mode doubles it, otherwise ×1.5 (v11.4). */
-export const trainMultiplier = (difficulty: "easy" | "normal" | "hard") =>
-  difficulty === "easy" ? 2 : 1.5;
+export const trainMultiplier = (difficulty: Difficulty) =>
+  difficulty === "easy" || difficulty === "baby" ? 2 : 1.5;
 /** Experience (구종 상점). Raised ×1.5 in v11.3: friends found the first days slow. */
 export const XP = {
   strikeout: 8,
@@ -1161,10 +1185,10 @@ export const SPEED_LOOK_REF = 135;
 export const visualFlightTime = (
   duration: number,
   speed: number,
-  difficulty: "easy" | "normal" | "hard",
+  difficulty: Difficulty,
 ) =>
   duration *
-  (difficulty === "easy" ? 2.5 : difficulty === "normal" ? 1.8 : 1.2) *
+  byDifficulty(difficulty, { baby: 2.8, easy: 2.5, normal: 1.8, hard: 1.2, impossible: 1.05 }) *
   clamp((SPEED_LOOK_REF / speed) ** 0.9, 0.72, 1.4);
 export function insideZone(p: Vec) {
   return Math.abs(p.x) <= 0.2515 && p.y >= 0.5135 && p.y <= 1.3865;
@@ -1898,7 +1922,7 @@ export type GameState = {
   aim: Vec;
   selected: PitchId;
   effort: number;
-  difficulty: "easy" | "normal" | "hard";
+  difficulty: Difficulty;
   swingStyle: "contact" | "power" | "bunt";
   sound: boolean;
   message: string;
@@ -2001,7 +2025,7 @@ const initial = (career: Career, mode: Mode = "match", maxInnings = 3): GameStat
   aim: V(0, 0.95, 0),
   selected: "fastball",
   effort: 90,
-  difficulty: "normal",
+  difficulty: difficultySetting(),
   swingStyle: "contact",
   sound: false,
   message: mode === "batting" ? "타석에 들어섰습니다" : "첫 공, 어디로 던질까요?",
@@ -2066,6 +2090,16 @@ export class BaseballEngine {
   /** Learned AI for runners / for the fielder with the ball (null: the hand-written AI). */
   runnerBrain: Chooser | null = null;
   fielderBrain: Chooser | null = null;
+  /** Learned AI of the other team (set from the difficulty, lib/ai/levels.ts); our own
+   * runners and fielders always use the hand-written AI. */
+  opponentAI: { runner: Chooser | null; fielder: Chooser | null } = { runner: null, fielder: null };
+  /** Who decides for the runners / the ball holder on this play (null: hand-written AI). */
+  get runnerAI(): Chooser | null {
+    return this.runnerBrain ?? (this.batting ? null : this.opponentAI.runner);
+  }
+  get fielderAI(): Chooser | null {
+    return this.fielderBrain ?? (this.batting ? this.opponentAI.fielder : null);
+  }
   /** Training ground metrics: sees every throw decision (learned or hand-written AI). */
   throwObserver: ((ctx: number[], options: number[][], pick: number) => void) | null = null;
   constructor(career?: Career, rng = Math.random) {
@@ -2562,6 +2596,16 @@ export class BaseballEngine {
     }
     s.detail = note;
   }
+  setDifficulty(d: Difficulty) {
+    if (!isDifficulty(d)) return;
+    this.state.difficulty = d;
+    try {
+      if (typeof localStorage !== "undefined") localStorage.setItem(DIFF_KEY, d);
+    } catch {
+      /* private mode: lasts for this visit */
+    }
+    this.emit();
+  }
   set<K extends keyof GameState>(key: K, value: GameState[K]) {
     this.state[key] = value;
     this.emit();
@@ -3031,7 +3075,13 @@ export class BaseballEngine {
       const swing = this.rng() < (zone ? 0.69 : chase * Math.max(0.1, 1.6 - edge * 0.5));
       f.aiSwing = swing;
       if (swing) {
-        const difficulty = s.difficulty === "hard" ? 0.1 : s.difficulty === "easy" ? -0.12 : 0,
+        const difficulty = byDifficulty(s.difficulty, {
+            baby: -0.18,
+            easy: -0.12,
+            normal: 0,
+            hard: 0.1,
+            impossible: 0.14,
+          }),
           prob = clamp(
             0.3 +
               b.contact * 0.005 -
@@ -3931,7 +3981,8 @@ export class BaseballEngine {
    * that beats its runner (after a caught fly, nobody throws just to hold runners).
    */
   private chooseThrow(l: LivePlay, forceOnly = false, sureOnly = false) {
-    if (this.fielderBrain && l.kind === "batted" && !sureOnly) {
+    const fielderAI = this.fielderAI;
+    if (fielderAI && l.kind === "batted" && !sureOnly) {
       const opts = [{ base: 0, f: this.holdOption() }];
       for (let base = 1; base <= 4; base++) {
         const forced = this.forcedRunner(l, base),
@@ -3941,7 +3992,7 @@ export class BaseballEngine {
       if (opts.length === 1) return 0;
       const ctx = this.playContext(l),
         rows = opts.map((o) => o.f),
-        pick = this.fielderBrain(ctx, rows);
+        pick = fielderAI(ctx, rows);
       this.throwObserver?.(ctx, rows, pick);
       return opts[pick]?.base ?? 0;
     }
@@ -4203,12 +4254,12 @@ export class BaseballEngine {
         continue;
       }
       r.thinkAt =
-        now + (this.runnerBrain && l.kind === "batted" ? RULES.brainThink : RULES.runThink);
+        now + (this.runnerAI && l.kind === "batted" ? RULES.brainThink : RULES.runThink);
       // He misjudges a loose ball more than one already in a fielder's hands.
       r.read ??= (this.rng() + this.rng() + this.rng() - 1.5) * 2 * RULES.runRead;
       const misread = r.read * (l.fieldedAt === null || l.state === "포구" ? 1 : 0.3);
       const options: { base: number; p: number; f?: number[] }[] = [];
-      const brain = this.runnerBrain && l.kind === "batted" ? this.runnerBrain : null,
+      const brain = l.kind === "batted" ? this.runnerAI : null,
         t = l.throw;
       for (const b of [k, k + 1, k + 2]) {
         if (b < Math.max(1, r.from) || b > 4) continue;
@@ -4364,7 +4415,7 @@ export class BaseballEngine {
       bag = BASES[b - 1],
       heading = Math.hypot(bag.x - pos.x, bag.z - pos.z) > 1.5;
     if (
-      this.fielderBrain &&
+      this.fielderAI &&
       l.kind === "batted" &&
       auto &&
       heading &&
@@ -4375,7 +4426,7 @@ export class BaseballEngine {
       if ((l.holdThinkAt ?? 0) <= l.elapsed + 1e-9) {
         l.holdThinkAt = l.elapsed + RULES.holdThink;
         const forced = this.forcedRunner(l, b) === r,
-          pick = this.fielderBrain(this.playContext(l), [
+          pick = this.fielderAI!(this.playContext(l), [
             this.holdOption(),
             this.throwOption(l, b, r, forced, ready),
           ]);

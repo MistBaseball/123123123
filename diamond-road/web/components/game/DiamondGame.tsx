@@ -37,6 +37,7 @@ import { PatchNotesButton } from "@/components/game/PatchNotes";
 import { HallOfFameButton, HofResetForm } from "@/components/game/HallOfFame";
 import { CloudSave, pullCareer, syncCareer } from "@/components/game/CloudSave";
 import { AiLab } from "@/components/game/AiLab";
+import { AI_LEVELS, applyLevel } from "@/lib/ai/levels";
 import { saveCode } from "@/lib/cloud-save";
 import { GuideDialog, GuideNotice } from "@/components/game/Guide";
 import {
@@ -105,6 +106,8 @@ import {
   josa,
   type StatKey,
   type GameState,
+  type Difficulty,
+  DIFFICULTIES,
   type Mode,
   type Camera,
   type Career,
@@ -2467,6 +2470,10 @@ export default function DiamondGame() {
     }
   }, [devUnlocked, s.career, engine]);
   // Personal save code: the career goes up after every match (and day / stage change).
+  // Difficulty sets the rival team's runner/fielder AI.
+  useEffect(() => {
+    applyLevel(engine, s.difficulty);
+  }, [engine, s.difficulty]);
   // The first sync after opening the game is also the check for a newer save elsewhere.
   const staleAsked = useRef(false);
   useEffect(() => {
@@ -3599,19 +3606,36 @@ export default function DiamondGame() {
           </div>
           <div className="settings-row">
             <label>난이도</label>
-            <Select
-              value={s.difficulty}
-              onValueChange={(v) => engine.set("difficulty", v as GameState["difficulty"])}
-            >
-              <SelectTrigger aria-label="난이도">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="easy">쉬움 · 여유로운 타이밍 · 훈련 2배</SelectItem>
-                <SelectItem value="normal">보통</SelectItem>
-                <SelectItem value="hard">어려움 · 빠른 승부</SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="difficulty-row">
+              <Select
+                value={s.difficulty}
+                onValueChange={(v) => engine.setDifficulty(v as Difficulty)}
+              >
+                <SelectTrigger aria-label="난이도">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {DIFFICULTIES.map((d) => (
+                    <SelectItem key={d.id} value={d.id}>
+                      {d.label}
+                      {d.note ? ` · ${d.note}` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <span
+                className="ai-power"
+                title={`상대 팀 주자·수비 AI: ${AI_LEVELS[s.difficulty].detail}`}
+              >
+                <small>AI 성능</small>
+                <span className="ai-power-meter" aria-hidden>
+                  {[1, 2, 3, 4, 5].map((i) => (
+                    <i key={i} className={i <= AI_LEVELS[s.difficulty].meter ? "on" : undefined} />
+                  ))}
+                </span>
+                <b>{AI_LEVELS[s.difficulty].name}</b>
+              </span>
+            </div>
           </div>
           <div className="settings-row">
             <label>다음 경기 길이</label>

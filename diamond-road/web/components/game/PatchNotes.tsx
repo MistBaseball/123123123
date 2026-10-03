@@ -17,6 +17,16 @@ type Patch = { version: string; date: string; title: string; items: string[] };
 
 export const PATCHES: Patch[] = [
   {
+    version: "v11.15",
+    date: "10/03",
+    title: "난이도 5단계 · 학습한 상대 AI",
+    items: [
+      "난이도가 응애 · 쉬움 · 보통 · 어려움 · 불가능 5단계가 됐습니다. 고른 난이도는 이 브라우저에 기억됩니다.",
+      "난이도마다 상대 팀의 주자·수비 AI가 달라집니다(AI 훈련장에서 학습한 AI). 난이도 옆 'AI 성능'에서 확인하세요. 우리 팀 AI는 그대로입니다.",
+      "불가능은 가장 강한 학습 AI에 가장 빠른 승부, 응애는 학습 전 AI에 아주 여유로운 타이밍입니다.",
+    ],
+  },
+  {
     version: "v11.14",
     date: "10/03",
     title: "AI 훈련장 (개발자 메뉴)",

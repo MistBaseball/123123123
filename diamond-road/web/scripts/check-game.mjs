@@ -73,7 +73,8 @@ import {
   BAG_HALF,
   LEAD,
 } from "../lib/game/hitbox.ts";
-import { randomSituation, runPlay, lcg as aiSeed } from "../lib/ai/scenario.ts";
+import { randomSituation, runPlay, engineFor, lcg as aiSeed } from "../lib/ai/scenario.ts";
+import { applyLevel } from "../lib/ai/levels.ts";
 
 let passed = 0;
 const check = (name, fn) => {
@@ -3167,5 +3168,50 @@ check("AI training ground: batted balls from the settings, learned-AI hooks stay
     assert(stats.reward.every(Number.isFinite));
   }
   assert(asked > 80, `the AI was asked ${asked} times`);
+});
+check("Difficulty: five levels, saved, and the learned AI plays for the rival team only", () => {
+  const order = ["baby", "easy", "normal", "hard", "impossible"];
+  for (let i = 1; i < order.length; i++) {
+    assert(swingWindow(order[i - 1]) > swingWindow(order[i]), order[i]);
+    assert(visualFlightTime(1, 140, order[i - 1]) > visualFlightTime(1, 140, order[i]));
+  }
+  const store = new Map(),
+    had = globalThis.localStorage;
+  globalThis.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => store.set(k, String(v)),
+    removeItem: (k) => store.delete(k),
+  };
+  try {
+    new BaseballEngine(newCareer()).setDifficulty("impossible");
+    assert.equal(new BaseballEngine().state.difficulty, "impossible", "remembered");
+  } finally {
+    globalThis.localStorage = had;
+  }
+  // Every level builds; "normal" keeps the hand-written AI.
+  const e = new BaseballEngine(newCareer());
+  for (const d of order) {
+    applyLevel(e, d);
+    assert.equal(e.opponentAI.runner === null, d === "normal", d);
+    assert.equal(e.opponentAI.fielder === null, d === "normal", d);
+  }
+  // The rival AI decides for the rival's runners (we pitch) or fielders (we bat), never ours.
+  const rnd = aiSeed(5);
+  const asked = { top: { runner: 0, fielder: 0 }, bottom: { runner: 0, fielder: 0 } };
+  for (let i = 0; i < 60; i++) {
+    const sit = randomSituation(rnd);
+    for (const half of ["top", "bottom"]) {
+      const g = engineFor(sit);
+      g.state.half = half;
+      g.opponentAI = {
+        runner: (_c, o) => (asked[half].runner++, 0),
+        fielder: (_c, o) => (asked[half].fielder++, 0),
+      };
+      runPlay(sit, null, null, { g });
+      assert.equal(g.state.phase, "result");
+    }
+  }
+  assert(asked.top.runner > 0 && asked.top.fielder === 0, JSON.stringify(asked));
+  assert(asked.bottom.fielder > 0 && asked.bottom.runner === 0, JSON.stringify(asked));
 });
 console.log(`\n${passed} gameplay checks passed.`);
