@@ -97,7 +97,9 @@ begin
     -- 불명예도 한 번 붙으면 지워지지 않는다.
     dishonor = cur.dishonor or excluded.dishonor,
     updated_at = now()
-  where cur.secret_hash = excluded.secret_hash;
+  -- v11.12: 경기 수·날짜가 줄어드는 기록(다른 컴퓨터에 남은 옛 기록)은 받지 않는다.
+  where cur.secret_hash = excluded.secret_hash
+    and (excluded.games, excluded.day) >= (cur.games, cur.day);
 end;
 $$;
 

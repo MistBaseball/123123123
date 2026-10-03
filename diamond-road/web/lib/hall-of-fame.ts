@@ -43,11 +43,28 @@ export function loadProfile(): HofProfile | null {
     return null;
   }
 }
+/**
+ * The career's own nickname#tag (it travels with the save code); else this browser's, which a
+ * new career here starts with.
+ */
+export function profileOf(c: Career): HofProfile | null {
+  if (typeof c.hofNick === "string" && c.hofNick.trim() && /^\d{4}$/.test(c.hofTag ?? ""))
+    return { nickname: c.hofNick.trim().slice(0, NICK_MAX), tag: c.hofTag! };
+  return loadProfile();
+}
+/** Writes the nickname#tag into the career. True if it changed (save it). */
+export function attachProfile(c: Career, p: HofProfile) {
+  if (c.hofNick === p.nickname && c.hofTag === p.tag) return false;
+  c.hofNick = p.nickname;
+  c.hofTag = p.tag;
+  return true;
+}
 /** Saves the ranking nickname; the 4-digit tag is made once and kept when the name changes. */
-export function saveProfile(nickname: string): HofProfile | null {
+export function saveProfile(nickname: string, current: HofProfile | null = null): HofProfile | null {
   const name = nickname.trim().slice(0, NICK_MAX);
   if (!name) return null;
-  const tag = loadProfile()?.tag ?? String(Math.floor(Math.random() * 10000)).padStart(4, "0");
+  const tag =
+    current?.tag ?? loadProfile()?.tag ?? String(Math.floor(Math.random() * 10000)).padStart(4, "0");
   const p = { nickname: name, tag };
   try {
     localStorage.setItem(PROFILE_KEY, JSON.stringify(p));

@@ -3038,7 +3038,7 @@ check(
     assert(!tagReaches(holder, V(2.5, 0, 36.3), dir, "slide"));
   },
 );
-check("A refresh picks the match up again; a bad save code career is refused", () => {
+check("A refresh picks the match up again (a pitch under way counts against you); a bad save code career is refused", () => {
   const store = new Map(),
     had = globalThis.localStorage;
   globalThis.localStorage = {
@@ -3069,6 +3069,47 @@ check("A refresh picks the match up again; a bad save code career is refused", (
     k.state.career.day += 1;
     assert(!k.resumeMatch());
     assert(!store.has("diamond-road-match-v1"));
+    // A refresh with the ball in play counts against the player: pitching, the batter reaches.
+    {
+      const e = new BaseballEngine();
+      e.load();
+      e.start("match", 3);
+      Object.assign(e.state, { half: "top", balls: 0, strikes: 0, outs: 0, bases: [false, false, false], pitchCount: [5, 5], order: [2, 2], phase: "ready" });
+      e.emit();
+      let inPlay = false;
+      for (let n = 0; n < 60 && !inPlay; n++) {
+        Object.assign(e.state, { half: "top", balls: 0, strikes: 0, outs: 0, bases: [false, false, false], phase: "ready", timer: 0 });
+        e.emit();
+        e.throwAt(0, 0.75);
+        for (let i = 0; i < 400 && (e.state.phase === "windup" || e.state.phase === "flight"); i++) e.tick(1 / 60);
+        inPlay = e.state.phase === "inplay";
+        if (inPlay) e.tick(1 / 60);
+      }
+      assert(inPlay, "some pitch was put in play");
+      const r = new BaseballEngine();
+      r.load();
+      assert(r.resumeMatch());
+      assert.equal(r.state.phase, "result");
+      assert.deepEqual([r.state.outs, r.state.bases[0]], [0, true], "the batter reached first");
+      assert.match(r.state.detail, /새로고침/);
+    }
+    // A refresh while a result is shown keeps that result (no penalty, nothing replayed).
+    {
+      const e = new BaseballEngine();
+      e.load();
+      e.start("match", 3);
+      Object.assign(e.state, { half: "top", balls: 1, strikes: 0, pitchCount: [5, 5], order: [2, 2], phase: "ready", timer: 0 });
+      e.emit();
+      e.throwAt(0.9, 1.9);
+      for (let i = 0; i < 600 && e.state.phase !== "result"; i++) e.tick(1 / 60);
+      const shown = [e.state.balls, e.state.strikes, e.state.outs, e.state.message];
+      const r = new BaseballEngine();
+      r.load();
+      assert(r.resumeMatch());
+      assert.deepEqual([r.state.balls, r.state.strikes, r.state.outs, r.state.message], shown);
+      for (let i = 0; i < 300 && r.state.phase === "result"; i++) r.tick(1 / 60);
+      assert.equal(r.state.phase, "ready", "play goes on after the resumed result");
+    }
     // Loading a career by code: junk is refused and the old career stays.
     const name = h.state.career.name;
     assert(!h.importCareer({ hello: 1 }));

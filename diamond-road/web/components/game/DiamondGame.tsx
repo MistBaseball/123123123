@@ -35,7 +35,8 @@ import {
 import { TrainingMinigame, TRAINING_GAMES } from "@/components/game/Minigames";
 import { PatchNotesButton } from "@/components/game/PatchNotes";
 import { HallOfFameButton, HofResetForm } from "@/components/game/HallOfFame";
-import { CloudSave, syncCareer } from "@/components/game/CloudSave";
+import { CloudSave, pullCareer, syncCareer } from "@/components/game/CloudSave";
+import { saveCode } from "@/lib/cloud-save";
 import { GuideDialog, GuideNotice } from "@/components/game/Guide";
 import {
   Dialog,
@@ -2459,11 +2460,39 @@ export default function DiamondGame() {
     }
   }, [devUnlocked, s.career, engine]);
   // Personal save code: the career goes up after every match (and day / stage change).
+  // The first sync after opening the game is also the check for a newer save elsewhere.
+  const staleAsked = useRef(false);
   useEffect(() => {
-    const t = window.setTimeout(() => void syncCareer(s.career), 1500);
+    const t = window.setTimeout(() => {
+      void syncCareer(s.career).then((r) => {
+        if (r === "stale" && !staleAsked.current) {
+          staleAsked.current = true;
+          toast("다른 컴퓨터에서 더 진행한 기록이 있어요", {
+            description: "이 컴퓨터의 기록은 저장 코드에 올리지 않았어요. 최신 기록을 불러올까요?",
+            duration: Infinity,
+            action: {
+              label: "불러오기",
+              onClick: () =>
+                void pullCareer(engine).then((ok) => {
+                  staleAsked.current = false;
+                  if (ok) {
+                    setView("life");
+                    toast.success("최신 기록을 불러왔어요");
+                  } else toast.error("불러오지 못했어요 · 잠시 뒤 설정에서 다시 해 주세요");
+                }),
+            },
+          });
+        } else if (r === "other-career") {
+          saveCode(null);
+          toast("저장 코드 연결을 풀었어요", {
+            description: "그 코드는 다른 선수의 기록이에요. 이 선수는 설정에서 새 코드를 받아 주세요.",
+          });
+        }
+      });
+    }, 1500);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [s.career.games, s.career.day, s.career.stage, s.career.league, s.career.name]);
+  }, [s.career.games, s.career.day, s.career.stage, s.career.league, s.career.name, s.career.hofNick]);
   const stage = useRef<HTMLDivElement>(null);
   const audio = useRef<AudioContext | null>(null);
   const [innings, setInnings] = useState(3);
@@ -3655,6 +3684,8 @@ export default function DiamondGame() {
                 )
               ) {
                 engine.resetCareer();
+                // The save code belongs to the old player.
+                saveCode(null);
                 setSettings(false);
                 setView("life");
               }

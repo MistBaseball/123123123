@@ -5,6 +5,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import type { BaseballEngine, Career } from "@/lib/game/engine";
+import { ensureIdentity } from "@/lib/hall-of-fame";
 import {
   cloudConfigured,
   downloadCareer,
@@ -37,6 +38,8 @@ export function CloudSave({
   const issue = async () => {
     const c = newCode();
     setBusy(true);
+    // The code is tied to this player (its id), so another career cannot overwrite it.
+    if (ensureIdentity(career)) engine.persist();
     try {
       await uploadCareer(c, career);
       saveCode(c);
@@ -126,12 +129,28 @@ export function CloudSave({
   );
 }
 
-/** After every match (and day / stage change): the career goes up under the saved code. */
-export function syncCareer(career: Career) {
+export type SyncResult = "off" | "ok" | "stale" | "other-career" | "fail";
+/**
+ * After every match (and day / stage change): the career goes up under the saved code.
+ * "stale": the code already holds a career further along (played on another computer), so
+ * this one was not saved over it. "other-career": the code belongs to another player.
+ */
+export async function syncCareer(career: Career): Promise<SyncResult> {
   const code = loadCode();
-  if (!code || !cloudConfigured()) return Promise.resolve(false);
-  return uploadCareer(code, career).then(
-    () => true,
-    () => false,
-  );
+  if (!code || !cloudConfigured()) return "off";
+  try {
+    await uploadCareer(code, career);
+    return "ok";
+  } catch (err) {
+    const m = (err as Error).message;
+    return m === "stale" || m === "other-career" ? m : "fail";
+  }
+}
+
+/** Loads the career saved under this browser's code (after "stale"). */
+export async function pullCareer(engine: BaseballEngine): Promise<boolean> {
+  const code = loadCode();
+  if (!code) return false;
+  const data = await downloadCareer(code).catch(() => null);
+  return !!data && engine.importCareer(data);
 }

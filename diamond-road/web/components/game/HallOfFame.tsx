@@ -22,7 +22,8 @@ import {
   ensureIdentity,
   fetchBoard,
   hofConfigured,
-  loadProfile,
+  attachProfile,
+  profileOf,
   recordOf,
   resetHallOfFame,
   saveProfile,
@@ -32,10 +33,12 @@ import {
 } from "@/lib/hall-of-fame";
 
 type Sync = "idle" | "sending" | "ok" | "fail";
+/** How often an open hall of fame asks for the boards again. */
+const LIVE_MS = 10_000;
 
 export function HallOfFameButton({ engine, career }: { engine: BaseballEngine; career: Career }) {
   const [open, setOpen] = useState(false),
-    [profile, setProfile] = useState<HofProfile | null>(loadProfile),
+    [profile, setProfile] = useState<HofProfile | null>(() => profileOf(career)),
     [draft, setDraft] = useState(""),
     [editing, setEditing] = useState(false),
     [sync, setSync] = useState<Sync>("idle"),
@@ -43,10 +46,21 @@ export function HallOfFameButton({ engine, career }: { engine: BaseballEngine; c
     [rows, setRows] = useState<HofRow[] | null>(null),
     [error, setError] = useState(false);
 
+  // Another career (loaded with a save code, or a new one): its own nickname#tag.
+  useEffect(() => {
+    const next = profileOf(career);
+    setProfile((prev) =>
+      prev && next && prev.nickname === next.nickname && prev.tag === next.tag ? prev : next,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [career.hofId, career.hofNick, career.hofTag]);
+
   // Auto update: after every match (and when the career moves up a stage).
   useEffect(() => {
     if (!profile || !hofConfigured()) return;
-    if (ensureIdentity(career)) engine.persist();
+    const named = attachProfile(career, profile),
+      id = ensureIdentity(career);
+    if (named || id) engine.persist();
     let alive = true;
     setSync("sending");
     submitRecord(career, profile).then((ok) => alive && setSync(ok ? "ok" : "fail"));
@@ -56,23 +70,38 @@ export function HallOfFameButton({ engine, career }: { engine: BaseballEngine; c
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile, career.games, career.day, career.stage, career.proGoal, career.league, career.name]);
 
-  // Boards load when the window opens or the board changes (after our own row is sent).
+  // Boards load when the window opens or the board changes (after our own row is sent), then
+  // again every 10 s while the window is open and the tab is on screen: friends' records live.
   useEffect(() => {
     if (!open || !hofConfigured()) return;
-    let alive = true;
+    let alive = true,
+      shown = false;
     setRows(null);
     setError(false);
-    fetchBoard(board)
-      .then((r) => alive && setRows(r))
-      .catch(() => alive && setError(true));
+    // A failed refresh keeps the board on screen; only a first load that fails says so.
+    const pull = () =>
+      fetchBoard(board)
+        .then((r) => {
+          if (!alive) return;
+          shown = true;
+          setRows(r);
+          setError(false);
+        })
+        .catch(() => alive && !shown && setError(true));
+    void pull();
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void pull();
+    }, LIVE_MS);
     return () => {
       alive = false;
+      window.clearInterval(timer);
     };
   }, [open, board, sync]);
 
   const register = () => {
-    const p = saveProfile(draft);
+    const p = saveProfile(draft, profile);
     if (!p) return;
+    if (attachProfile(career, p)) engine.persist();
     setProfile(p);
     setEditing(false);
   };
@@ -141,7 +170,7 @@ export function HallOfFameButton({ engine, career }: { engine: BaseballEngine; c
                       ? "기록 올리는 중…"
                       : sync === "fail"
                         ? "올리기 실패 · 다음 경기 뒤 다시 시도"
-                        : "경기마다 자동 갱신"}
+                        : "경기마다 자동 갱신 · 순위는 10초마다"}
                 </span>
                 <button
                   onClick={() => {
@@ -216,7 +245,7 @@ export function HallOfFameButton({ engine, career }: { engine: BaseballEngine; c
                 ))}
               </div>
               {error ? (
-                <p className="hof-note">랭킹을 불러오지 못했어요. 잠시 뒤 다시 열어 주세요.</p>
+                <p className="hof-note">랭킹을 불러오지 못했어요. 10초 뒤 다시 시도해요.</p>
               ) : !rows ? (
                 <p className="hof-note">불러오는 중…</p>
               ) : rows.length === 0 ? (

@@ -51,14 +51,21 @@ export function saveCode(code: string | null) {
   }
 }
 
-/** Uploads the career under the code. Throws "no-function" if the server part is missing. */
+/**
+ * Uploads the career under the code. Throws "no-function" if the server part is missing,
+ * "stale" if the code holds a career further along (another computer played on), and
+ * "other-career" if the code belongs to a different player.
+ */
 export async function uploadCareer(code: string, career: Career): Promise<void> {
   const res = await fetch(`${HOF_URL}/rest/v1/rpc/cloud_save`, {
     method: "POST",
     headers: headers(),
     body: JSON.stringify({ p_code: code, p_data: career }),
   });
-  if (!res.ok) throw new Error(res.status === 404 ? "no-function" : "failed");
+  if (res.ok) return;
+  if (res.status === 404) throw new Error("no-function");
+  const why = String(((await res.json().catch(() => null)) as { message?: string } | null)?.message);
+  throw new Error(why === "stale" ? "stale" : why === "other career" ? "other-career" : "failed");
 }
 
 /** The career saved under the code, or null if there is none. */

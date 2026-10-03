@@ -400,6 +400,7 @@ const MATCH_FIELDS = [
   "pineTar",
   "cheerUsed",
   "cheerInning",
+  "coin",
 ] as const;
 export const rainSetting = () => {
   try {
@@ -1648,6 +1649,9 @@ export type Career = {
   /** Hall-of-fame identity of this career: row id and the secret that lets it update its row. */
   hofId?: string;
   hofSecret?: string;
+  /** Ranking nickname and #tag of this career (travels with the save code). */
+  hofNick?: string;
+  hofTag?: string;
 };
 /** Highest a stat can go for this career (the pro cap for a legend start). */
 export const statCapOf = (
@@ -2367,10 +2371,15 @@ export class BaseballEngine {
     return true;
   }
   /**
-   * The match in progress is kept between pitches (this browser), so a refresh or a closed
-   * tab picks it up again (`resumeMatch`).
+   * The match in progress is kept in this browser, so a refresh or a closed tab picks it up
+   * again (`resumeMatch`). Between pitches the state itself is saved; once a pitch is on its
+   * way (or the ball is in play) the save says so, and coming back counts that pitch against
+   * the player (`refreshPenalty`) so a refresh cannot take a pitch back.
    */
   private matchSaved = "";
+  /** The last between-pitches save, and what is under way since: a pitch, or a ball in play. */
+  private calmSave: Record<string, unknown> | null = null;
+  private underway: "pitch" | "play" | null = null;
   private autoSaveMatch() {
     const s = this.state;
     if (s.mode !== "match") return;
@@ -2378,9 +2387,12 @@ export class BaseballEngine {
       this.clearMatchSave();
       return;
     }
-    if ((s.phase !== "ready" && s.phase !== "between") || !this.matchActive) return;
-    const fields = Object.fromEntries(MATCH_FIELDS.map((k) => [k, s[k]])),
-      data = JSON.stringify({
+    if (!this.matchActive) return;
+    let save: Record<string, unknown>;
+    if (s.phase === "ready" || s.phase === "between" || s.phase === "result") {
+      this.underway = null;
+      const fields = Object.fromEntries(MATCH_FIELDS.map((k) => [k, s[k]]));
+      save = this.calmSave = {
         v: 1,
         name: s.career.name,
         day: s.career.day,
@@ -2393,8 +2405,19 @@ export class BaseballEngine {
           matchRuns: this.matchRuns,
           xpParts: [...this.xpParts],
           fullCountKey: this.fullCountKey,
+          // The verdict on screen, when the save is made while it is shown.
+          ...(s.phase === "result"
+            ? { message: s.message, detail: s.detail, resultTone: s.resultTone }
+            : {}),
         },
-      });
+      };
+    } else {
+      // windup / flight / in play: the last calm save, marked with what is under way.
+      if (s.phase === "windup" || s.phase === "flight") this.underway ??= "pitch";
+      if (!this.calmSave || !this.underway) return;
+      save = { ...this.calmSave, underway: this.underway };
+    }
+    const data = JSON.stringify(save);
     if (data === this.matchSaved) return;
     this.matchSaved = data;
     try {
@@ -2405,6 +2428,8 @@ export class BaseballEngine {
   }
   private clearMatchSave() {
     this.matchSaved = "";
+    this.calmSave = null;
+    this.underway = null;
     try {
       if (typeof localStorage !== "undefined") localStorage.removeItem(MATCH_KEY);
     } catch {
@@ -2422,7 +2447,7 @@ export class BaseballEngine {
         m.name !== c.name ||
         m.day !== c.day ||
         m.games !== c.games ||
-        (m.phase !== "ready" && m.phase !== "between") ||
+        !["ready", "between", "result"].includes(m.phase) ||
         typeof m.fields !== "object"
       ) {
         this.clearMatchSave();
@@ -2445,6 +2470,11 @@ export class BaseballEngine {
       st.timer = 1.5;
       st.message = "경기를 이어서 합니다";
       st.detail = `${st.inning}회${st.half === "top" ? "초" : "말"} · ${st.score[1]} : ${st.score[0]}`;
+      if (m.phase === "result" && typeof m.extra?.message === "string") {
+        st.message = m.extra.message;
+        st.detail = String(m.extra.detail ?? "");
+        st.resultTone = String(m.extra.resultTone ?? "neutral");
+      }
       this.state = st;
       this.recorded = false;
       this.matchStrikeouts = Number(m.extra?.matchStrikeouts) || 0;
@@ -2452,12 +2482,35 @@ export class BaseballEngine {
       this.matchRuns = Number(m.extra?.matchRuns) || 0;
       this.xpParts = new Map(Array.isArray(m.extra?.xpParts) ? m.extra.xpParts : []);
       this.fullCountKey = typeof m.extra?.fullCountKey === "string" ? m.extra.fullCountKey : "";
-      this.matchSaved = JSON.stringify(m);
+      this.matchSaved = "";
+      if ((m.underway === "pitch" || m.underway === "play") && st.phase === "ready")
+        this.refreshPenalty(m.underway);
       this.emit();
       return true;
     } catch {
       return false;
     }
+  }
+  /**
+   * The page was refreshed with a pitch on its way or a ball in play: that pitch counts
+   * against the player. Pitching: a ball (in play: the batter reaches, like a walk).
+   * Batting: a strike (in play: the batter is out, runners hold).
+   */
+  private refreshPenalty(kind: "pitch" | "play") {
+    const s = this.state,
+      note = "새로고침 · 던지던 공은 내 손해로 처리";
+    if (kind === "pitch") {
+      if (this.batting) this.strike(false, note);
+      else this.ball();
+    } else if (this.batting) {
+      s.outs++;
+      this.advanceBatter();
+      this.result("OUT", note, "red");
+    } else {
+      this.walk();
+      this.result("SAFE", note, "red");
+    }
+    s.detail = note;
   }
   set<K extends keyof GameState>(key: K, value: GameState[K]) {
     this.state[key] = value;
@@ -3246,6 +3299,7 @@ export class BaseballEngine {
       }
     }
     s.phase = "inplay";
+    this.underway = "play";
     // In-play text only describes the ball; the verdict comes when the fielder acts.
     s.message = hr ? "담장을 향해!" : ground ? "땅볼 타구" : "뜬공 타구";
     s.detail = ground
