@@ -466,6 +466,13 @@ export const RULES = {
    * read is less sure than the real race (`runSpread`), and turning around costs `turnTime`.
    */
   runThink: 0.1,
+  /** Learned AI (training ground): runners decide every brainThink s, a chasing holder every
+   * holdThink s (fewer, weightier choices than the hand-written AI's 0.1 s reads). */
+  brainThink: 0.1,
+  brainEvery: 1,
+  /** Turns a learned runner may make on one play. */
+  brainTurns: 2,
+  holdThink: 0.15,
   runGo: 0.3,
   runGo2: 0.45,
   runKeep: 0.55,
@@ -1254,10 +1261,15 @@ export type RunnerTrack = {
   /** Runner AI: next time he re-reads the play, and whether he has turned back (taggable). */
   thinkAt?: number;
   turned?: boolean;
+  /** Times he has turned around on this play (learned AI: limited outside a rundown). */
+  reversals?: number;
   /** Play time he last turned around (turning takes RULES.turnTime: the animation's clock). */
   turnAt?: number;
   /** His misread of the ball this play (s, + = thinks it is slower than it is). */
   read?: number;
+  /** Learned AI: what the play looked like at his last choice, and when he chooses anyway. */
+  brainKey?: string;
+  brainAt?: number;
   /** Play time he tripped and fell (down until `delay`). */
   fellAt?: number;
   /** Sliding into `base` since play time `at`: feet first ("slide") or head first ("dive"). */
@@ -1846,7 +1858,20 @@ export type LivePlay = {
   errorKind?: "field" | "drop" | "throw";
   /** A runner caught between two bases (the holder chases him or they throw him back). */
   rundown?: { runnerId: number; since: number; base: number; tagAt?: number; end?: number };
+  /** Learned fielder AI chasing a runner: when it decides again, and what it decided. */
+  holdThinkAt?: number;
+  holdPlan?: number;
 };
+/**
+ * A learned decision maker (AI training ground, `lib/ai`): gets the play's context and one
+ * feature row per legal option and returns the index of the option it takes. Only batted-ball
+ * plays ask it; what is legal (forces, tags, who may go where) is still the engine's.
+ */
+export type Chooser = (ctx: number[], options: number[][]) => number;
+/** Sizes of the context row and of one option row (runner / ball holder). */
+export const AI_CTX = 10,
+  AI_RUNNER = 12,
+  AI_HOLDER = 13;
 export type GameState = {
   mode: Mode;
   phase: Phase;
@@ -2038,6 +2063,11 @@ export class BaseballEngine {
   private recorded = false;
   private soundCallback: (kind: string) => void = () => {};
   keys = new Set<string>();
+  /** Learned AI for runners / for the fielder with the ball (null: the hand-written AI). */
+  runnerBrain: Chooser | null = null;
+  fielderBrain: Chooser | null = null;
+  /** Training ground metrics: sees every throw decision (learned or hand-written AI). */
+  throwObserver: ((ctx: number[], options: number[][], pick: number) => void) | null = null;
   constructor(career?: Career, rng = Math.random) {
     // A career handed in is this engine's own; the empty default waits for load().
     this.loaded = career !== undefined;
@@ -3193,7 +3223,44 @@ export class BaseballEngine {
         : clamp(timing * 4 + (this.rng() - 0.5) * 1.05, -0.76, 0.76),
       range = bunt
         ? clamp(RULES.buntSweet + (this.rng() - 0.5) * 2 * miss * 5, RULES.buntMin, RULES.buntMax)
-        : (8 + q * q * 115) * carryScale(formOf(this.batter).power),
+        : (8 + q * q * 115) * carryScale(formOf(this.batter).power);
+    this.launchBall({ q, bunt, angle, range });
+  }
+  /**
+   * A batted ball given directly (AI training ground: drawn from the ball settings in
+   * lib/ai/config.ts). angle: radians from the middle (+ = third-base side), distance in m,
+   * flightTime in s (ground balls: until the ball reaches `distance`).
+   */
+  battedBall(spec: {
+    kind: "ground" | "line" | "fly" | "bunt";
+    distance: number;
+    angle: number;
+    flightTime: number;
+  }) {
+    this.sound("hit");
+    const range = Math.max(1, spec.distance),
+      bunt = spec.kind === "bunt",
+      q = bunt ? 0.18 : clamp(Math.sqrt(Math.max(0, range - 8) / 115), 0, 1.15);
+    this.launchBall({
+      q,
+      bunt,
+      angle: clamp(spec.angle, -0.76, 0.76),
+      range,
+      kind: spec.kind,
+      flightTime: spec.flightTime,
+    });
+  }
+  /** Starts the live play of a batted ball (contact() or battedBall()). */
+  private launchBall(b: {
+    q: number;
+    bunt: boolean;
+    angle: number;
+    range: number;
+    kind?: "ground" | "line" | "fly" | "bunt";
+    flightTime?: number;
+  }) {
+    const s = this.state,
+      { q, bunt, angle, range } = b,
       // A home run (past HOME_RUN_DISTANCE) always flies over the outfield wall: it lands at
       // least HR_CLEARANCE beyond it (never in front of the wall or through the padding).
       flyTo =
@@ -3210,20 +3277,31 @@ export class BaseballEngine {
         fielder = i;
       }
     });
-    const hr = range > HOME_RUN_DISTANCE,
+    const hr = range > HOME_RUN_DISTANCE && !bunt,
       bases = hr ? 4 : range > 78 ? 3 : range > 46 ? 2 : 1,
-      ground = q <= 0.42;
-    const lineDrive = !ground && !hr && this.rng() < 0.4;
-    const flightTime = bunt
-        ? range / RULES.buntSpeed
-        : hr
-          ? 4.5
-          : ground
-            ? clamp(range / 24, 0.55, 1.8)
-            : lineDrive
-              ? clamp(range / 32, 1.1, 2.7)
-              : clamp(HANG_BASE + range / HANG_DIV, 1.8, 4.2),
-      height = hr ? homerArc(Math.hypot(land.x, land.z)) : lineDrive ? 3.5 : q > 0.7 ? 17 : 9;
+      ground = b.kind ? b.kind === "ground" || bunt : q <= 0.42;
+    const lineDrive = b.kind ? b.kind === "line" && !hr : !ground && !hr && this.rng() < 0.4;
+    const flightTime = hr
+        ? 4.5
+        : b.flightTime !== undefined
+          ? b.flightTime
+          : bunt
+            ? range / RULES.buntSpeed
+            : ground
+              ? clamp(range / 24, 0.55, 1.8)
+              : lineDrive
+                ? clamp(range / 32, 1.1, 2.7)
+                : clamp(HANG_BASE + range / HANG_DIV, 1.8, 4.2),
+      height = hr
+        ? homerArc(Math.hypot(land.x, land.z))
+        : lineDrive
+          ? 3.5
+          : b.kind === "fly"
+            ? // Apex of a fly in the air that long (g·t²/8).
+              clamp((9.81 * flightTime * flightTime) / 8, 6, 26)
+            : q > 0.7
+              ? 17
+              : 9;
     // Find the descending, glove-height point of this exact flight.
     let lo = 0.5,
       hi = 1;
@@ -3853,6 +3931,20 @@ export class BaseballEngine {
    * that beats its runner (after a caught fly, nobody throws just to hold runners).
    */
   private chooseThrow(l: LivePlay, forceOnly = false, sureOnly = false) {
+    if (this.fielderBrain && l.kind === "batted" && !sureOnly) {
+      const opts = [{ base: 0, f: this.holdOption() }];
+      for (let base = 1; base <= 4; base++) {
+        const forced = this.forcedRunner(l, base),
+          r = forced ?? (!forceOnly ? this.candidateRunner(l, base) : null);
+        if (r) opts.push({ base, f: this.throwOption(l, base, r, !!forced, 0) });
+      }
+      if (opts.length === 1) return 0;
+      const ctx = this.playContext(l),
+        rows = opts.map((o) => o.f),
+        pick = this.fielderBrain(ctx, rows);
+      this.throwObserver?.(ctx, rows, pick);
+      return opts[pick]?.base ?? 0;
+    }
     // Every base with a runner to get: how likely the throw beats him there, weighted by
     // how much that out is worth (a force, and the lead runner, count more).
     const options: { base: number; priority: number }[] = [];
@@ -3870,12 +3962,93 @@ export class BaseballEngine {
         });
     }
     const best = options.sort((a, b) => b.priority - a.priority)[0]?.base;
+    if (this.throwObserver && l.kind === "batted" && !sureOnly) this.observeThrow(l, forceOnly, best);
     if (best || forceOnly || sureOnly) return best ?? 0;
     // No sure out: still throw ahead of the lead runner who is still running.
     const running = l.runners
       .filter((r) => !r.out && r.progress < r.target - 1e-6)
       .sort((a, b) => b.progress - a.progress)[0];
     return running ? Math.min(4, Math.floor(running.progress + 1e-9) + 1) : 0;
+  }
+  /** Metrics: the hand-written AI's throw choice, in the learned AI's terms. */
+  private observeThrow(l: LivePlay, forceOnly: boolean, best: number | undefined) {
+    const opts = [{ base: 0, f: this.holdOption() }];
+    for (let base = 1; base <= 4; base++) {
+      const forced = this.forcedRunner(l, base),
+        r = forced ?? (!forceOnly ? this.candidateRunner(l, base) : null);
+      if (r) opts.push({ base, f: this.throwOption(l, base, r, !!forced, 0) });
+    }
+    if (opts.length === 1) return;
+    let pick = opts.findIndex((o) => o.base === (best ?? -1));
+    if (pick < 0 && !best && !forceOnly) {
+      // No sure out: the hand-written AI still throws ahead of the lead runner.
+      const running = l.runners
+        .filter((r) => !r.out && r.progress < r.target - 1e-6)
+        .sort((a, b) => b.progress - a.progress)[0];
+      const ahead = running ? Math.min(4, Math.floor(running.progress + 1e-9) + 1) : 0;
+      pick = Math.max(0, opts.findIndex((o) => o.base === ahead));
+    }
+    this.throwObserver!(
+      this.playContext(l),
+      opts.map((o) => o.f),
+      Math.max(0, pick),
+    );
+  }
+  /** The play as the learned AI sees it (AI_CTX numbers, about 0–1). */
+  private playContext(l: LivePlay): number[] {
+    const s = this.state,
+      t = l.throw,
+      inAir = !!t && t.receivedAt === null,
+      live = l.runners.filter((r) => !r.out && r.progress < 4);
+    return [
+      s.outs / 2,
+      l.fieldedAt === null ? 1 : 0,
+      inAir ? 1 : 0,
+      l.fieldedAt !== null && !inAir ? 1 : 0,
+      Math.hypot(s.ball.x, s.ball.z) / 60,
+      Math.min(l.elapsed, 15) / 10,
+      live.length / 4,
+      live.reduce((m, r) => Math.max(m, r.progress), 0) / 4,
+      l.outs.length / 2,
+      l.ground ? 1 : 0,
+    ];
+  }
+  /** Ball holder option "keep the ball" (no throw / run at the runner): AI_HOLDER numbers. */
+  private holdOption(): number[] {
+    return [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  }
+  /** Ball holder option "throw to `base` for runner r" (`wait`: s before he can let it go). */
+  private throwOption(l: LivePlay, base: number, r: RunnerTrack, forced: boolean, wait: number) {
+    const bag = BASES[base - 1],
+      route = this.throwRoute(l, l.fielderPos, base, l.fielder),
+      travel = wait + this.throwTime(l, base) + (forced ? 0 : RULES.tagSweep),
+      arrival = this.arriveTime(l, r, base);
+    return [
+      0,
+      clamp(arrival - travel, -4, 4) / 2,
+      Math.min(travel, 8) / 4,
+      Math.min(arrival, 8) / 4,
+      forced ? 1 : 0,
+      base / 4,
+      base === 4 ? 1 : 0,
+      r.id === 0 ? 1 : 0,
+      r.target < r.progress ? 1 : 0,
+      "relay" in route && route.relay ? 1 : 0,
+      Math.hypot(bag.x - l.fielderPos.x, bag.z - l.fielderPos.z) / 60,
+      // Is he running at that bag, and how soon could he be safe on another one instead?
+      // (A runner who can just turn back is not worth a throw.)
+      r.target === base ? 1 : 0,
+      Math.min(this.escapeTime(l, r, base), 8) / 4,
+    ];
+  }
+  /** Seconds until runner r could be safe on a bag other than `base` (8: nowhere to go). */
+  private escapeTime(l: LivePlay, r: RunnerTrack, base: number) {
+    const k = Math.floor(r.progress + 1e-9),
+      other = r.target !== base ? r.target : base === k + 1 ? k : k + 1;
+    // The batter cannot go back home; nobody can stay on a bag a forced runner must leave.
+    if (other < 1 || other > 4 || (r.id === 0 && other < 1) || other === base) return 8;
+    const turn = Math.sign(other - r.progress) !== Math.sign(r.target - r.progress);
+    return this.arriveTime(l, r, other, r.fullPace ?? r.pace) + (turn ? RULES.turnTime : 0);
   }
   private beginThrow(l: LivePlay, base: number, runner?: RunnerTrack) {
     if (!base) {
@@ -4029,11 +4202,14 @@ export class BaseballEngine {
         limit = r.target === 4 ? limit : Math.min(limit, r.target);
         continue;
       }
-      r.thinkAt = now + RULES.runThink;
+      r.thinkAt =
+        now + (this.runnerBrain && l.kind === "batted" ? RULES.brainThink : RULES.runThink);
       // He misjudges a loose ball more than one already in a fielder's hands.
       r.read ??= (this.rng() + this.rng() + this.rng() - 1.5) * 2 * RULES.runRead;
       const misread = r.read * (l.fieldedAt === null || l.state === "포구" ? 1 : 0.3);
-      const options: { base: number; p: number }[] = [];
+      const options: { base: number; p: number; f?: number[] }[] = [];
+      const brain = this.runnerBrain && l.kind === "batted" ? this.runnerBrain : null,
+        t = l.throw;
       for (const b of [k, k + 1, k + 2]) {
         if (b < Math.max(1, r.from) || b > 4) continue;
         if (b < forcedTo) continue;
@@ -4049,12 +4225,57 @@ export class BaseballEngine {
             onBag && Math.round(r.progress) === b && b >= forcedTo
               ? 0
               : 1 / (1 + Math.exp(-(runT - ball - misread - 0.05) / RULES.runSpread));
-        options.push({ base: b, p });
+        options.push({
+          base: b,
+          p,
+          f: brain
+            ? [
+                // How he sees it: + = he gets there before the ball (and the glove).
+                clamp(ball + misread - runT, -4, 4) / 2,
+                Math.min(runT, 10) / 5,
+                Math.min(ball, 10) / 5,
+                b === forcedTo ? 1 : 0,
+                (b - r.progress) / 2,
+                b === r.target ? 1 : 0,
+                b === 4 ? 1 : 0,
+                b < r.progress ? 1 : 0,
+                turn ? 1 : 0,
+                onBag && Math.round(r.progress) === b ? 1 : 0,
+                r.id === 0 ? 1 : 0,
+                t && t.receivedAt === null && t.base === b ? 1 : 0,
+              ]
+            : undefined,
+        });
       }
       if (options.length) {
         const cur = options.find((o) => o.base === r.target);
-        let pick = [...options].sort((a, b) => b.base - a.base).find((o) => o.p < go);
-        if (cur && cur.p < RULES.runKeep && (!pick || pick.base < cur.base)) pick = cur;
+        let pick: (typeof options)[number] | undefined;
+        // Learned AI: a new choice only when the play changes for him (the ball is picked
+        // up, thrown or caught, he reaches a bag) or every RULES.brainEvery s; otherwise he
+        // keeps going where he was going.
+        const key = brain
+          ? `${l.fieldedAt !== null}|${l.throws}|${l.throw?.receivedAt != null}|${l.fielder}|${k}|${r.progress >= r.target - 1e-6}`
+          : "";
+        // Real runners do not dance: after RULES.brainTurns turns (rundowns included) he is
+        // committed and may not turn around again. (Learned runners found that flip-flopping
+        // on every throw makes the fielders throw back and forth while everyone scores.)
+        const allowed =
+          brain && (r.reversals ?? 0) >= RULES.brainTurns && dir !== 0
+            ? options.filter((o) => Math.sign(o.base - r.progress) !== -dir)
+            : options;
+        if (
+          brain &&
+          allowed.length > 1 &&
+          (!cur || key !== r.brainKey || now >= (r.brainAt ?? 0))
+        ) {
+          r.brainKey = key;
+          r.brainAt = now + RULES.brainEvery;
+          pick = allowed[brain(this.playContext(l), allowed.map((o) => o.f!))] ?? allowed[0];
+        } else if (brain) pick = cur ?? allowed[0] ?? options[0];
+        else {
+          pick = [...options].sort((a, b) => b.base - a.base).find((o) => o.p < go);
+          if (cur && cur.p < RULES.runKeep && (!pick || pick.base < cur.base)) pick = cur;
+        }
         pick ??= [...options].sort((a, b) => a.p - b.p)[0];
         // Just turned around: give it a moment unless he is sure to be out.
         const fresh = r.turnAt !== undefined && now - r.turnAt < 0.6 && (cur?.p ?? 1) < 0.85;
@@ -4062,6 +4283,7 @@ export class BaseballEngine {
           const turn = Math.sign(pick.base - r.progress);
           if (dir !== 0 && turn !== 0 && turn !== dir) {
             r.turned = true;
+            r.reversals = (r.reversals ?? 0) + 1;
             r.turnAt = now;
             r.delay = Math.max(r.delay, now + RULES.turnTime);
           }
@@ -4142,6 +4364,30 @@ export class BaseballEngine {
       bag = BASES[b - 1],
       heading = Math.hypot(bag.x - pos.x, bag.z - pos.z) > 1.5;
     if (
+      this.fielderBrain &&
+      l.kind === "batted" &&
+      auto &&
+      heading &&
+      Math.abs(b - r.progress) * BASE_PATH_LENGTH > 0.45 &&
+      l.throws < RULES.maxThrows
+    ) {
+      // Learned holder: every RULES.holdThink s, throw ahead of him or keep running at him.
+      if ((l.holdThinkAt ?? 0) <= l.elapsed + 1e-9) {
+        l.holdThinkAt = l.elapsed + RULES.holdThink;
+        const forced = this.forcedRunner(l, b) === r,
+          pick = this.fielderBrain(this.playContext(l), [
+            this.holdOption(),
+            this.throwOption(l, b, r, forced, ready),
+          ]);
+        l.holdPlan = pick === 1 ? b : 0;
+      }
+      if (l.holdPlan === b) {
+        if (ready > 0) return; // gets set to throw
+        l.holdPlan = 0;
+        this.beginThrow(l, b, r);
+        return;
+      }
+    } else if (
       auto &&
       heading &&
       Math.abs(b - r.progress) * BASE_PATH_LENGTH > 0.45 &&

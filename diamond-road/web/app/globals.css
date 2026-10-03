@@ -5528,3 +5528,68 @@ kbd {
   opacity: 0.75;
   line-height: 1.4;
 }
+
+/* AI training ground (developer menu) */
+.ai-lab {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  background: #0d161d;
+  color: #eef2ef;
+}
+.ai-lab-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+.ai-lab-stat {
+  display: flex;
+  flex-direction: column;
+  min-width: 108px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+}
+.ai-lab-stat small {
+  font-size: 12px;
+  opacity: 0.7;
+}
+.ai-lab-stat b {
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+}
+.ai-lab-stat em {
+  font-size: 11px;
+  font-style: normal;
+  opacity: 0.6;
+}
+.ai-lab-buttons {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+.ai-lab-note {
+  margin: 0;
+  padding: 6px 16px;
+  font-size: 12px;
+  line-height: 1.5;
+  opacity: 0.75;
+}
+.ai-lab-field {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+@media (max-width: 640px) {
+  .ai-lab-bar {
+    flex-wrap: wrap;
+  }
+  .ai-lab-stat {
+    min-width: 0;
+    flex: 1;
+  }
+}

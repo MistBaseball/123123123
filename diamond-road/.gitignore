@@ -12,3 +12,4 @@ web/dist/
 **/Build/
 **/Builds/
 !**/.env.example
+web/ai-runs/

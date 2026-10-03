@@ -209,18 +209,22 @@ export class BaseballField {
   private raycaster = new THREE.Raycaster();
   private plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
   private cameraKey = "";
+  /** Light mode (AI training ground): no crowd, no shadows, plain pixel ratio. */
+  private lite: boolean;
   constructor(
     private host: HTMLElement,
     private engine: BaseballEngine,
+    opts: { lite?: boolean } = {},
   ) {
+    this.lite = !!opts.lite;
     this.hitboxes = new HitboxView(this.scene, engine);
     this.renderer = new THREE.WebGLRenderer({
-      antialias: true,
+      antialias: !this.lite,
       alpha: false,
       powerPreference: "high-performance",
     });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.7));
-    this.renderer.shadowMap.enabled = true;
+    this.renderer.setPixelRatio(this.lite ? 1 : Math.min(window.devicePixelRatio, 1.7));
+    this.renderer.shadowMap.enabled = !this.lite;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -915,7 +919,7 @@ export class BaseballField {
         }
       }
     fans.count = count;
-    this.scene.add(fans);
+    if (!this.lite) this.scene.add(fans);
     // Behind-home sign on the backstop padding.
     this.label("MISAN BASEBALL", "#ead7a8", "#1f4038", 5.2, 1.3, 0, 0.75, -25.5, 0);
     // Scoreboard above the centre-field bleachers.

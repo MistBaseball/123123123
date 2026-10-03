@@ -73,6 +73,7 @@ import {
   BAG_HALF,
   LEAD,
 } from "../lib/game/hitbox.ts";
+import { randomSituation, runPlay, lcg as aiSeed } from "../lib/ai/scenario.ts";
 
 let passed = 0;
 const check = (name, fn) => {
@@ -3130,5 +3131,41 @@ check("A refresh picks the match up again (a pitch under way counts against you)
   } finally {
     globalThis.localStorage = had;
   }
+});
+check("AI training ground: batted balls from the settings, learned-AI hooks stay within the rules", () => {
+  // A ball given directly comes off the bat as asked.
+  for (const kind of ["ground", "line", "fly", "bunt"]) {
+    const g = new BaseballEngine(newCareer(), seed(3));
+    g.battedBall({ kind, distance: kind === "bunt" ? 8 : 40, angle: 0.2, flightTime: 1.5 });
+    const l = g.state.live;
+    assert.equal(g.state.phase, "inplay");
+    assert.equal(l.ground, kind === "ground" || kind === "bunt", kind);
+    assert.equal(l.lineDrive, kind === "line", kind);
+    assert.equal(l.bunt, kind === "bunt", kind);
+  }
+  // Random choices for every runner and ball holder: plays still settle by the rules.
+  const rnd = aiSeed(11),
+    pickAny = (ctx, options) => Math.floor(rnd() * options.length);
+  let asked = 0;
+  for (let i = 0; i < 80; i++) {
+    const sit = randomSituation(rnd),
+      choose = (ctx, options) => {
+        asked++;
+        assert(options.length > 1 && options.every((o) => o.every(Number.isFinite)));
+        return pickAny(ctx, options);
+      },
+      { g, stats } = runPlay(sit, choose, choose);
+    assert.equal(g.state.phase, "result", `play ${i} settles`);
+    const l = g.state.live,
+      on = l.runners.filter((x) => !x.out && x.progress < 4);
+    if (g.state.outs < 3) {
+      for (const x of on) assert(Number.isInteger(x.progress), `play ${i}: runner on a bag`);
+      assert.equal(on.length, g.state.bases.filter(Boolean).length, `play ${i}: one per bag`);
+    }
+    // A learned runner turns around at most RULES.brainTurns times on a play.
+    for (const x of l.runners) assert((x.reversals ?? 0) <= RULES.brainTurns, `play ${i}: turns`);
+    assert(stats.reward.every(Number.isFinite));
+  }
+  assert(asked > 80, `the AI was asked ${asked} times`);
 });
 console.log(`\n${passed} gameplay checks passed.`);

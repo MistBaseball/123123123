@@ -17,6 +17,16 @@ type Patch = { version: string; date: string; title: string; items: string[] };
 
 export const PATCHES: Patch[] = [
   {
+    version: "v11.14",
+    date: "10/03",
+    title: "AI 훈련장 (개발자 메뉴)",
+    items: [
+      "개발자 메뉴에 AI 훈련장을 넣었습니다. 주자 AI와 수비 AI가 서로 겨루며 강화학습(PPO)을 하고, 학습 중인 AI의 플레이를 10배속 화면으로 볼 수 있어요.",
+      "위쪽에 수비수 승률 · 주자 승률 · 학습 횟수가 나오고, 브라우저를 닫았다 열어도 이어서 학습합니다.",
+      "실제 경기의 AI는 아직 그대로입니다(학습한 AI가 확실히 나을 때만 바꿀 예정).",
+    ],
+  },
+  {
     version: "v11.13",
     date: "10/03",
     title: "새로고침하면 처음부터 시작되던 버그 수정",

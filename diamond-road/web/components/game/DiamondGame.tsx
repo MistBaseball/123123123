@@ -36,6 +36,7 @@ import { TrainingMinigame, TRAINING_GAMES } from "@/components/game/Minigames";
 import { PatchNotesButton } from "@/components/game/PatchNotes";
 import { HallOfFameButton, HofResetForm } from "@/components/game/HallOfFame";
 import { CloudSave, pullCareer, syncCareer } from "@/components/game/CloudSave";
+import { AiLab } from "@/components/game/AiLab";
 import { saveCode } from "@/lib/cloud-save";
 import { GuideDialog, GuideNotice } from "@/components/game/Guide";
 import {
@@ -225,8 +226,11 @@ function StatGuide({ c }: { c: Career }) {
   );
 }
 
-function Field({ engine }: { engine: BaseballEngine }) {
+function Field({ engine, frozen = false }: { engine: BaseballEngine; frozen?: boolean }) {
   const host = useRef<HTMLDivElement>(null);
+  // Frozen (AI training ground open on top): the match waits and the field is not drawn.
+  const still = useRef(frozen);
+  still.current = frozen;
   const [error, setError] = useState("");
   useEffect(() => {
     let field: BaseballField | SoftwareField | undefined,
@@ -256,8 +260,10 @@ function Field({ engine }: { engine: BaseballEngine }) {
       // Slow motion (a rundown tag about to land) slows the rules and the picture alike.
       const dt = Math.min((now - last) / 1000, 0.05) * engine.timeScale;
       last = now;
-      engine.tick(dt);
-      field?.update(dt);
+      if (!still.current) {
+        engine.tick(dt);
+        field?.update(dt);
+      }
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
@@ -2421,7 +2427,8 @@ export default function DiamondGame() {
     [manualPause, setManualPause] = useState(false),
     [pending, setPending] = useState<Mode | null>(null),
     [guideNotice, setGuideNotice] = useState(false),
-    [rouletteDone, setRouletteDone] = useState(false);
+    [rouletteDone, setRouletteDone] = useState(false),
+    [aiLab, setAiLab] = useState(false);
   // "Read the guide" notice, once per browser: after the starting roulette (a start that skips
   // it, or a career that already had it, gets it as soon as nothing else is on screen).
   const startedAtLoad = useRef(s.career.created && s.career.blessing !== "");
@@ -2884,7 +2891,7 @@ export default function DiamondGame() {
               className={`game-stage ${batting && (s.phase === "windup" || s.phase === "flight") ? "batting-live" : ""}`}
               ref={stage}
             >
-              <Field engine={engine} />
+              <Field engine={engine} frozen={aiLab} />
               <div className="field-top">
                 <div className="chip-stack">
                   <span className="inning-chip">{batting ? "공격 · 타격" : "수비 · 투구"}</span>
@@ -3577,6 +3584,15 @@ export default function DiamondGame() {
                 >
                   {s.showHitboxes ? "히트박스 숨기기" : "히트박스 보기"}
                 </button>
+                <button
+                  className="subtle-button"
+                  onClick={() => {
+                    setSettings(false);
+                    setAiLab(true);
+                  }}
+                >
+                  AI 훈련장 열기 (주자·수비 강화학습)
+                </button>
                 <HofResetForm />
               </div>
             )}
@@ -3724,6 +3740,7 @@ export default function DiamondGame() {
           </button>
         </DialogContent>
       </Dialog>
+      {aiLab && <AiLab onClose={() => setAiLab(false)} />}
     </main>
   );
 }
