@@ -323,7 +323,7 @@ export class SoftwareField {
     c.textAlign = "center";
     c.fillText(text, q.x, q.y);
   }
-  update(dt: number) {
+  update(dt: number, _real = dt) {
     if (!this.host.clientWidth || !this.host.clientHeight) return;
     this.time += dt;
     this.setupCamera();

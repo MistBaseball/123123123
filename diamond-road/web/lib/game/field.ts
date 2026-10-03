@@ -84,10 +84,9 @@ const SWING_TIME = 0.42;
 /** Highlight replay: slow-motion speed and the window around the catch (s of play time). */
 /** Batter keeps swinging this long into the play before the runner takes over (s). */
 const BAT_FOLLOW = 0.34;
-/** Drawn ball radius (enlarged to read on screen) and the real one the strike call uses
- * (insideZone adds it to the zone's edges: 0.2515 = 0.215 + 0.0365). */
-const BALL_DRAWN = 0.075,
-  BALL_RADIUS = 0.0365;
+/** Drawn ball radius: enlarged to read on screen (the real ball, 0.0365 m, is what the
+ * strike call uses). */
+const BALL_DRAWN = 0.082;
 const REPLAY_SLOW = 0.4,
   REPLAY_BEFORE = 1.3,
   REPLAY_AFTER = 1.1;
@@ -192,6 +191,8 @@ export class BaseballField {
     null;
   private replayBall: THREE.Mesh | null = null;
   private replayCam = new THREE.PerspectiveCamera(36, 16 / 9, 0.1, 500);
+  /** Real time for the replay window, so fast-forward does not rush the slow motion. */
+  private replayClock = 0;
   private tv: {
     scene: THREE.Scene;
     cam: THREE.OrthographicCamera;
@@ -1404,7 +1405,7 @@ export class BaseballField {
       if (!over) return true;
       const frames = this.tape.filter((f) => f.t >= r.at - REPLAY_BEFORE && f.t <= r.at + after);
       // At most two replays from one play (a double play shows both calls).
-      if (frames.length < 10 || this.replayQueue.filter((q) => q.play === play).length >= 2)
+      if (frames.length < 5 || this.replayQueue.filter((q) => q.play === play).length >= 2)
         return false;
       // A runner who is called out leaves the main picture at once; in the replay he stays
       // where he was tagged/forced, so the call is seen with him in it.
@@ -1445,7 +1446,7 @@ export class BaseballField {
     // One replay at a time, in order; a new one never cuts off the one on screen.
     if (!this.replay && this.replayQueue.length && this.replayAvatars.length) {
       const next = this.replayQueue.shift()!;
-      next.startedAt = this.time;
+      next.startedAt = this.replayClock;
       this.replay = next;
       next.cast.forEach((c, k) => {
         const a = this.replayAvatars[k];
@@ -1499,7 +1500,7 @@ export class BaseballField {
     g.textAlign = "left";
     this.tv.tex.needsUpdate = true;
   }
-  /** The small TV window (bottom-left): the highlight again, in slow motion. */
+  /** The small TV window (top-right): the highlight again, in slow motion. */
   private renderReplay() {
     const R = this.replay,
       ball = this.replayBall;
@@ -1507,7 +1508,7 @@ export class BaseballField {
     const fr = R.frames,
       t0 = fr[0].t,
       t1 = fr[fr.length - 1].t,
-      real = this.time - R.startedAt;
+      real = this.replayClock - R.startedAt;
     // The replay plays once, holds the last frame a moment, then the window closes.
     // (A close play holds the call on screen a little longer.)
     if (real > (t1 - t0) / REPLAY_SLOW + (R.base ? 1.8 : 1.2)) {
@@ -1623,8 +1624,10 @@ export class BaseballField {
       size = r.getSize(new THREE.Vector2()),
       w = Math.round(Math.min(size.x * 0.36, 440)),
       h = Math.round((w * 9) / 16),
-      x = 12,
-      y = 12,
+      // Top-right, under the pause/sound/fullscreen buttons. (Bottom-left was hidden behind
+      // the key guide pinned to the bottom of the window, and below the fold on short screens.)
+      x = size.x - w - 12,
+      y = size.y - h - 60,
       clear = r.getClearColor(new THREE.Color()),
       alpha = r.getClearAlpha(),
       shadows = r.shadowMap.autoUpdate;
@@ -2062,7 +2065,9 @@ export class BaseballField {
     )
       this.engine.setAim(target.x, target.y);
   }
-  update(dt: number) {
+  /** `real`: wall-clock seconds (fast-forward passes the sped-up `dt`; replays use real time). */
+  update(dt: number, real = dt) {
+    this.replayClock += real;
     if (this.disposed || !this.host.clientWidth || !this.host.clientHeight) return;
     this.time += dt;
     const s = this.engine.state,
@@ -2546,23 +2551,15 @@ export class BaseballField {
         dt * (s.phase === "flight" && s.flight && pitchData(s.flight.pitch).flutter ? 1.2 : 30);
     this.ball.visible = s.phase === "flight" || s.phase === "inplay" || s.phase === "result";
     const ballDistance = this.camera.position.distanceTo(this.ball.position);
-    // The ball is drawn about twice its real size (and bigger far away) so it reads on screen.
-    // From the catcher's view that made pitches just off the plate look like they clipped the
-    // zone and were still called balls: near the plate it shrinks to its real size (the call
-    // uses the real ball, BALL_RADIUS), and the glow goes, so what touches the box is a strike.
-    const real = BALL_RADIUS / BALL_DRAWN,
-      nearPlate =
-        cam === "catcher" && (s.phase === "flight" || s.phase === "result")
-          ? clamp(1 - this.ball.position.z / 4, 0, 1)
-          : // From the mound the call is read where the ball came to rest at the plate.
-            cam === "pitcher" && s.phase === "result" && !s.live
-            ? 1
-            : 0;
-    this.ball.scale.setScalar(lerp(Math.max(1, ballDistance / 18), real, nearPlate));
+    // The ball is drawn about twice its real size (and bigger far away) so it reads on screen,
+    // the same size all the way in. (v11.17 shrank it to real size near the plate so close
+    // calls read right from the catcher's view; the sudden shrink looked wrong and made the
+    // ball hard to hit, so the close-call text "존에서 N cm 빠짐" explains those calls instead.)
+    this.ball.scale.setScalar(Math.max(1, ballDistance / 18));
     this.halo.position.copy(this.ball.position);
     this.halo.quaternion.copy(this.camera.quaternion);
     this.halo.scale.copy(this.ball.scale);
-    this.halo.visible = this.ball.visible && s.phase !== "result" && nearPlate < 0.5;
+    this.halo.visible = this.ball.visible && s.phase !== "result";
     this.zone.visible = s.phase !== "inplay" && (cam === "pitcher" || cam === "catcher");
     this.target.visible = this.zone.visible && s.phase !== "result";
     const aim = s.flight && !this.engine.batting ? s.flight.aim : s.aim;

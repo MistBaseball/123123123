@@ -285,7 +285,7 @@ function Field({
           engine.tick(step);
           left -= step;
         }
-        field?.update(dt * mult);
+        field?.update(dt * mult, dt);
       }
       frame = requestAnimationFrame(tick);
     };
