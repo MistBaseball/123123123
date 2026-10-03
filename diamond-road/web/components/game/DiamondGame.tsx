@@ -2368,7 +2368,7 @@ const triggerPineTar = (engine: BaseballEngine) => {
 function SkillBar({ engine, s }: { engine: BaseballEngine; s: GameState }) {
   const cheerOpen = s.career.stage === "pro",
     limitOpen = engine.canLimitBreak,
-    tarOpen = !!s.career.pineTar;
+    tarOpen = !!s.career.pineTar && engine.role !== "batter";
   if (s.mode !== "match" || (!cheerOpen && !limitOpen && !tarOpen)) return null;
   return (
     <div className="skill-bar" aria-label="스킬">
@@ -3011,6 +3011,28 @@ export default function DiamondGame() {
                       📣 응원 효과 · 상대 능력치 −{CHEER_DROP} ({s.cheerInning}회)
                     </span>
                   )}
+                  {/* Pine tar (once unlocked): a button on the field itself while pitching,
+                      so it is seen without looking at the side panel. */}
+                  {s.mode === "match" &&
+                    !!s.career.pineTar &&
+                    engine.role !== "batter" &&
+                    !batting &&
+                    !s.ejected &&
+                    (s.pineTar ? (
+                      <span className="xp-chip skill-chip tar">
+                        🫙 파인타르 효과 중 · 투구 +{PINE_TAR_BOOST} · 검사{" "}
+                        {Math.round(RULES.pineTarCatch * 100)}%/구
+                      </span>
+                    ) : (
+                      <button
+                        className="xp-chip skill-chip tar tar-use"
+                        onClick={() => triggerPineTar(engine)}
+                        title={`이번 경기 동안 구속·구위·제구 +${PINE_TAR_BOOST}. 공을 던질 때마다 ${Math.round(RULES.pineTarCatch * 100)}% 확률로 심판이 검사 · 걸리면 퇴장(패배)·모든 능력치 −${PINE_TAR_PENALTY}·불명예`}
+                      >
+                        🫙 파인타르 바르기 <kbd>V</kbd>
+                        <small>투구 +{PINE_TAR_BOOST} · 위험</small>
+                      </button>
+                    ))}
                   {engine.limitActive && (
                     <span className="xp-chip skill-chip limit">
                       ⚡ 한계 돌파 · 이번 1구 모든 능력치 {LIMIT_BREAK}
@@ -3207,6 +3229,8 @@ export default function DiamondGame() {
               <h2>{batting ? "타격 플랜" : "투구 플랜"}</h2>
               <span className="status-pill">{status}</span>
             </div>
+            {/* Skills at the top: at the bottom the long pitch list pushed them off screen. */}
+            <SkillBar engine={engine} s={s} />
             {engine.autoHalf && (
               <p className="auto-note">
                 {engine.role === "pitcher"
@@ -3462,7 +3486,6 @@ export default function DiamondGame() {
                 </div>
               </>
             )}
-            <SkillBar engine={engine} s={s} />
           </aside>
         </div>
         <div className="controls-footer">

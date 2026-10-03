@@ -4838,7 +4838,7 @@ kbd {
 .skill-bar {
   display: flex;
   gap: 6px;
-  margin-top: 8px;
+  margin: 2px 0 8px;
 }
 .skill-bar .skill {
   flex: 1;
@@ -4885,6 +4885,39 @@ kbd {
 .skill-chip.limit {
   border-color: #d8c3ff !important;
   color: #d8c3ff !important;
+}
+.skill-chip.tar {
+  border-color: #c98a4b !important;
+  color: #f0c08a !important;
+}
+/* The pine tar button on the field (the chip column ignores clicks; this one takes them). */
+.skill-chip.tar-use {
+  pointer-events: auto;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  border-top: 0;
+  border-right: 0;
+  border-bottom: 0;
+  background: #3a220fd9;
+  padding: 7px 11px;
+}
+.skill-chip.tar-use:hover {
+  background: #57331a;
+}
+.skill-chip.tar-use kbd {
+  font-size: 0.68rem;
+  padding: 0 5px;
+  border: 1px solid #f0c08a88;
+  border-radius: 3px;
+}
+.skill-chip.tar-use small {
+  font-weight: 500;
+  opacity: 0.8;
 }
 
 /* The overlay's main button stays visible at the bottom even when the recap scrolls. */

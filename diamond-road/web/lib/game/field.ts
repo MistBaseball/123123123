@@ -1502,7 +1502,21 @@ export class BaseballField {
     g.textAlign = "left";
     this.tv.tex.needsUpdate = true;
   }
-  /** The small TV window (top-right): the highlight again, in slow motion. */
+  /**
+   * How far (CSS px) the canvas's bottom-left corner is hidden: below the window's bottom, or
+   * under the key guide or the pitcher/batter badge drawn over it.
+   */
+  private replayLift(w: number) {
+    const host = this.renderer.domElement.getBoundingClientRect();
+    let bottom = Math.min(host.bottom, window.innerHeight);
+    for (const sel of [".controls-footer", ".field-bottom .pitcher-badge"]) {
+      const r = document.querySelector(sel)?.getBoundingClientRect();
+      if (r && r.height && r.left < host.left + w + 12 && r.top < bottom && r.bottom > host.top)
+        bottom = Math.min(bottom, r.top);
+    }
+    return Math.max(0, host.bottom - bottom);
+  }
+  /** The small TV window (bottom-left): the highlight again, in slow motion. */
   private renderReplay() {
     const R = this.replay,
       ball = this.replayBall;
@@ -1626,10 +1640,10 @@ export class BaseballField {
       size = r.getSize(new THREE.Vector2()),
       w = Math.round(Math.min(size.x * 0.36, 440)),
       h = Math.round((w * 9) / 16),
-      // Top-right, under the pause/sound/fullscreen buttons. (Bottom-left was hidden behind
-      // the key guide pinned to the bottom of the window, and below the fold on short screens.)
-      x = size.x - w - 12,
-      y = size.y - h - 60,
+      // Bottom-left, lifted above whatever covers that corner: the bottom of the window, the
+      // key guide pinned there, and the pitcher/batter badge.
+      x = 12,
+      y = clamp(this.replayLift(w) + 12, 12, Math.max(12, size.y - h - 60)),
       clear = r.getClearColor(new THREE.Color()),
       alpha = r.getClearAlpha(),
       shadows = r.shadowMap.autoUpdate;
