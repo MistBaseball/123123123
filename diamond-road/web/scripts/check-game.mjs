@@ -3244,6 +3244,34 @@ check("Close pitches: the call says by how much it missed or clipped the zone", 
     for (let y = 0.3; y <= 1.6; y += 0.017)
       assert.equal(zoneMiss(V(x, y, 0)) <= 0, insideZone(V(x, y, 0)));
 });
+check("Our own fielders go for more dives and leaps than the rival's (the out rate stays)", () => {
+  const rate = (half) => {
+    const o = { plays: 0, show: 0, outs: 0 };
+    for (let i = 1; i <= 700; i++) {
+      const g = new BaseballEngine(newCareer(), seed(i));
+      g.start("match");
+      g.state.half = half;
+      const r = seed(i * 7 + 3);
+      g.contact(0.21 + r() * 0.75, (r() - 0.5) * 0.2);
+      const l = g.state.live;
+      if (!l || l.kind !== "batted") continue;
+      let k = 0,
+        show = false;
+      while (g.state.phase === "inplay" && k++ < 3000) {
+        g.tick(1 / 60);
+        if (l.diveTried || l.catchStyle === "jump") show = true;
+      }
+      o.plays++;
+      if (show) o.show++;
+      if (g.state.outs > 0) o.outs++;
+    }
+    return { show: o.show / o.plays, outs: o.outs / o.plays };
+  };
+  const home = rate("top"),
+    away = rate("bottom");
+  assert(home.show > away.show * 1.8, `dives + leaps: ours ${home.show} vs theirs ${away.show}`);
+  assert(home.outs > 0.55 && home.outs < 0.75, `our out rate ${home.outs}`);
+});
 check("Difficulty chosen at creation is the career's hall-of-fame board from the start", () => {
   const g = new BaseballEngine(newCareer(), seed(6));
   g.setDifficulty("impossible");

@@ -551,6 +551,14 @@ export const RULES = {
   /** A throw and a runner this close at a base (s) make a slow-motion replay of the call. */
   closePlay: 0.35,
   groundDiveReach: 4.0,
+  /** Our own fielders (the player's team in the field) go for more: they dive from farther
+   *  (fly / grounder, m past reach) and leap more often (line drive / deep fly gap, m). The
+   *  far dives mostly miss (the success chance still falls with distance from the normal
+   *  reach), so it is the show more than the outs. */
+  homeDiveReach: 4.6,
+  homeGroundDiveReach: 6.5,
+  homeJumpLine: 0.55,
+  homeJumpFly: 0.25,
   /** Dive success: base chance at the edge of reach, + per point of (speed+eye)/2 over 65,
    *  − scaled by how far the ball is; capped. Rain takes some off. */
   diveBase: 0.45,
@@ -3733,9 +3741,25 @@ export class BaseballEngine {
     }
     return this.liveBall(l, l.elapsed + 12);
   }
-  /** Leap rule for a fly he reaches (see the fly catch). */
+  /** Leap rule for a fly he reaches (see the fly catch). Our own fielders leap more. */
   private jumpCatch(l: LivePlay, gap: number) {
+    if (this.homeFielding)
+      return (
+        (l.lineDrive && gap > RULES.homeJumpLine) ||
+        (Math.hypot(l.land.x, l.land.z) > 45 && gap > RULES.homeJumpFly)
+      );
     return (l.lineDrive && gap > 1.15) || (Math.hypot(l.land.x, l.land.z) > 80 && gap > 0.6);
+  }
+  /** The player's team is in the field (a match, the rival batting). */
+  private get homeFielding() {
+    return this.state.mode === "match" && !this.batting;
+  }
+  /** How far past reach a fielder still dives for a fly / a grounder (ours go farther). */
+  private get flyDiveReach() {
+    return this.homeFielding ? RULES.homeDiveReach : RULES.diveReach;
+  }
+  private get groundDiveReach() {
+    return this.homeFielding ? RULES.homeGroundDiveReach : RULES.groundDiveReach;
   }
   /**
    * Fly ball, automatic fielding: `planLead` s before the catch, predict where his run puts
@@ -3765,7 +3789,7 @@ export class BaseballEngine {
       gap = d - step;
     if (gap <= CATCH_REACH)
       l.plan = { style: this.jumpCatch(l, gap) ? "jump" : "catch", at: l.catchAt, gap, foot };
-    else if (gap <= RULES.diveReach && !l.bunt && l.fielder !== 1) {
+    else if (gap <= this.flyDiveReach && !l.bunt && l.fielder !== 1) {
       const success = this.rng() < this.diveChance(l.fielder, gap, RULES.diveReach, CATCH_REACH),
         k = success ? 0.85 : 0.6;
       l.plan = {
@@ -3806,7 +3830,7 @@ export class BaseballEngine {
         g = Math.hypot(b.x - fp.x, b.z - fp.z);
       if (g < GROUND_REACH) return; // he gets it on foot
       if (k > 0 && g >= prev) {
-        if (prev <= RULES.groundDiveReach && prevBall.y < 1.1) {
+        if (prev <= this.groundDiveReach && prevBall.y < 1.1) {
           const at = l.elapsed + prevT,
             success =
               this.rng() < this.diveChance(l.fielder, prev, RULES.groundDiveReach, GROUND_REACH),
@@ -4984,7 +5008,13 @@ export class BaseballEngine {
             base,
           };
       }
-      if (cut && cut.who !== l.fielder) this.moveFielder(l.defenders[cut.who], cut.spot, dt);
+      // (Not a fielder still on the ground after a missed dive: he gets up first.)
+      if (
+        cut &&
+        cut.who !== l.fielder &&
+        !(cut.who === l.diver && l.elapsed < (l.downUntil ?? 0))
+      )
+        this.moveFielder(l.defenders[cut.who], cut.spot, dt);
     }
     if (l.resultBases === 4) {
       s.ball = this.liveBall(l, l.elapsed);
@@ -5052,7 +5082,7 @@ export class BaseballEngine {
         let dove = false;
         if (
           gap > CATCH_REACH &&
-          gap <= RULES.diveReach &&
+          gap <= this.flyDiveReach &&
           !l.diveTried &&
           l.kind === "batted" &&
           !l.bunt &&
@@ -5176,7 +5206,7 @@ export class BaseballEngine {
           : canDive &&
             !auto &&
             ballGap >= GROUND_REACH &&
-            ballGap <= RULES.groundDiveReach &&
+            ballGap <= this.groundDiveReach &&
             s.ball.y < 1.1
       ) {
         // The ball is going by right now (closest it will get) and he cannot reach it on foot.
